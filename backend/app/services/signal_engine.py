@@ -30,6 +30,7 @@ from app.core.config import (
     DISABLED_LEAGUES,
     OVER_GOALS_SUPPRESSED_LEAGUES,
     MAX_DAILY_EXPOSURE,
+    WOMEN_LEAGUE_KEYWORDS,
 )
 from app.engines import bayesian as bay_engine
 from app.services.form_service import get_team_form_lambdas
@@ -355,6 +356,22 @@ def _team_total_context_penalty(
     return round(max(0.78, penalty), 3), severe
 
 
+def _is_end_of_northern_season(d: date) -> bool:
+    """
+    True during the Northern Hemisphere end-of-season risk window (May 10 – June 30).
+    Most European leagues finish in this period; Tier 3 matches become dead rubbers
+    with teams already promoted/relegated, leading to 0-0 and defensive results.
+    """
+    return (d.month == 5 and d.day >= 10) or d.month == 6
+
+
+_OVER_GOALS_MARKETS: frozenset = frozenset({
+    "Over 0.5", "Over 1.5", "Over 2.5", "Over 3.5",
+    "Home Over 0.5", "Home Over 1.5",
+    "Away Over 0.5", "Away Over 1.5",
+})
+
+
 async def _get_underperforming_leagues(
     db: AsyncSession,
     min_bets: int = 5,
@@ -517,6 +534,39 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             # Skip markets that have been permanently disabled (e.g. BTTS No, Under 3.5).
             if market in DISABLED_MARKETS:
                 continue
+
+            # ── Improvement: Tier restriction for Over 1.5 markets ────────────
+            # Home/Away Over 1.5 requires a team to score 2+ goals — unreliable
+            # in Tier 3 leagues (weaker attack, more defensive play, end-of-season).
+            if market in {"Home Over 1.5", "Away Over 1.5"} and (fixture.league_tier or 3) >= 3:
+                continue
+
+            # ── Improvement: End-of-season gate ──────────────────────────────
+            # May 10 – June 30: Northern Hemisphere leagues are finishing their
+            # seasons. Tier 3 over-goals signals are unreliable — dead-rubber
+            # matches, rotated squads, and 0-0 results dominate.
+            if (
+                market in _OVER_GOALS_MARKETS
+                and (fixture.league_tier or 3) >= 3
+                and _is_end_of_northern_season(run_date)
+            ):
+                continue
+
+            # ── Improvement: Women's league away-over odds ceiling ────────────
+            # Women's football averages fewer goals than men's. The Poisson model
+            # (calibrated on mixed data) over-estimates away scoring rates. Cap
+            # Away Over 0.5 / 1.5 at 2.30 for women's competitions to avoid
+            # backing long-shot away scorers in defensively-oriented games.
+            if market in {"Away Over 0.5", "Away Over 1.5"}:
+                league_lower = (fixture.league or "").lower()
+                if any(kw in league_lower for kw in WOMEN_LEAGUE_KEYWORDS):
+                    # Check the best available odds from the Bayesian result
+                    _women_best_odd = None
+                    _b_candidate = bay_by_market.get(market)
+                    if _b_candidate:
+                        _women_best_odd = _b_candidate.best_actual_odd
+                    if _women_best_odd is not None and _women_best_odd > 2.30:
+                        continue
 
             # League × market granular suppression: skip this specific combination
             # if historical performance shows it consistently loses money (ROI < 0,

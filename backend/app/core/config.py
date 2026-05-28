@@ -273,6 +273,7 @@ DISABLED_MARKETS: frozenset = frozenset({
 # or when you want an immediate, restart-proof ban.
 DISABLED_LEAGUES: frozenset = frozenset({
     "ekstraklasa",   # consistent negative ROI across tracked history
+    "regionalliga",  # Austrian Regionalliga (Ost/West/Mitte) — 0% win rate across 16 bets, end-of-season Tier 3
 })
 
 MARKET_PROB_BOUNDS: dict = {
@@ -357,6 +358,11 @@ MARKET_MIN_EDGE: dict[str, float] = {
     "Exactly 3 Goals": 0.08,
 }
 
+# Maximum signals to surface from any single Tier 3 league per day.
+# Prevents catastrophic cluster losses when one lower-tier league misbehaves
+# (e.g. all 7 Austrian Regionalliga Ost fixtures going 0-0 on the same day).
+MAX_SIGNALS_PER_TIER3_LEAGUE: int = 3
+
 # Maximum fraction of bankroll that can be committed across all signals in a day.
 # Stakes are normalized to this cap after per-signal Kelly sizing, preserving
 # relative weights so the strongest picks still get the largest share.
@@ -376,7 +382,7 @@ MARKET_MIN_ODDS: dict = {
     "Home Under 0.5": 1.55,
     "Home Over 1.5": 1.75,   # raised from 1.25 — 1.50-1.70 band had -20.8% ROI on 27 signals
     "Home Under 1.5": 1.35,
-    "Away Over 0.5": 1.15,
+    "Away Over 0.5": 1.70,  # raised from 1.15 — 1.50-1.69 band hit only 53.8% (below breakeven at those odds)
     "Away Under 0.5": 1.45,
     "Away Over 1.5": 2.00,   # raised from 1.30 — 1.50-1.90 bands had -17.6% to -47.9% ROI on 31 signals
     "Away Under 1.5": 1.30,
@@ -548,5 +554,8 @@ POISSON_RULES = {
     "under35_max_odds": 1.85,
     # Marginal Poisson (team overs / match overs): stricter edge floor (%).
     "team_over_min_edge_pct": 4.0,
+    # Away side needs a higher edge cushion — away teams score less reliably,
+    # especially in Tier 3 and end-of-season contexts.
+    "away_team_over_min_edge_pct": 5.5,
     "match_total_over_min_edge_pct": 3.0,
 }

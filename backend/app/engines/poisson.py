@@ -501,7 +501,12 @@ def _marginal_team_over_result(
     lh = _blend_lam(lh0, form_lambdas.get("lambda_h") if form_lambdas else None, fw)
     la = _blend_lam(la0, form_lambdas.get("lambda_a") if form_lambdas else None, fw)
     lam_side = lh if side == "h" else la
-    min_e = float(R.get("team_over_min_edge_pct", 4.0))
+    # Away side requires a higher edge cushion: away teams score less reliably,
+    # especially in Tier 3 and end-of-season contexts.
+    if side == "a":
+        min_e = float(R.get("away_team_over_min_edge_pct", R.get("team_over_min_edge_pct", 4.0)))
+    else:
+        min_e = float(R.get("team_over_min_edge_pct", 4.0))
     mo = signal_odds.get(odds_key)
     min_odd = MARKET_MIN_ODDS.get(market)
     if mo is not None and min_odd is not None and mo < min_odd:

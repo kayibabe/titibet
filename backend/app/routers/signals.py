@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_optional, get_current_user
 from app.core.database import get_db
 from sqlalchemy import func
-from app.core.config import get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES
+from app.core.config import get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES, MAX_SIGNALS_PER_TIER3_LEAGUE
 from app.models import Signal, Fixture
 from app.models.odds import MarketSnapshot
 from app.models.user import User
@@ -296,6 +296,20 @@ async def list_signals(
         rows.sort(key=lambda row: _sort_metric(row[0], sort_by, row[1], clv_ranks), reverse=reverse)
 
     results = [_to_signal_out(sig, fix) for sig, fix in rows]
+
+    # ── Diversity cap: max MAX_SIGNALS_PER_TIER3_LEAGUE picks per Tier 3 league ──
+    # Prevents a single lower-division league flooding the list and causing
+    # cluster losses when the whole league behaves defensively on one day.
+    tier3_league_counts: dict[str, int] = {}
+    capped: list = []
+    for r in results:
+        if (r.league_tier or 3) >= 3:
+            n = tier3_league_counts.get(r.league or "", 0)
+            if n >= MAX_SIGNALS_PER_TIER3_LEAGUE:
+                continue
+            tier3_league_counts[r.league or ""] = n + 1
+        capped.append(r)
+    results = capped
 
     # Enforce free-tier signal limit — pro/elite users see all signals
     is_pro = (
