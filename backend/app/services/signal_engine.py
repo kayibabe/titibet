@@ -541,32 +541,34 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             if market in {"Home Over 1.5", "Away Over 1.5"} and (fixture.league_tier or 3) >= 3:
                 continue
 
-            # ── Improvement: End-of-season gate ──────────────────────────────
-            # May 10 – June 30: Northern Hemisphere leagues are finishing their
-            # seasons. Tier 3 over-goals signals are unreliable — dead-rubber
-            # matches, rotated squads, and 0-0 results dominate.
-            if (
-                market in _OVER_GOALS_MARKETS
-                and (fixture.league_tier or 3) >= 3
-                and _is_end_of_northern_season(run_date)
-            ):
-                continue
 
-            # ── Improvement: Women's league away-over odds ceiling ────────────
+            # ── Improvement: Women's league over-goals odds ceiling ───────────
             # Women's football averages fewer goals than men's. The Poisson model
-            # (calibrated on mixed data) over-estimates away scoring rates. Cap
-            # Away Over 0.5 / 1.5 at 2.30 for women's competitions to avoid
-            # backing long-shot away scorers in defensively-oriented games.
-            if market in {"Away Over 0.5", "Away Over 1.5"}:
+            # (calibrated on mixed data) over-estimates scoring rates. Cap both
+            # away and home over-goals at tighter odds in women's competitions.
+            if market in {"Away Over 0.5", "Away Over 1.5", "Home Over 0.5", "Home Over 1.5"}:
                 league_lower = (fixture.league or "").lower()
                 if any(kw in league_lower for kw in WOMEN_LEAGUE_KEYWORDS):
-                    # Check the best available odds from the Bayesian result
                     _women_best_odd = None
                     _b_candidate = bay_by_market.get(market)
                     if _b_candidate:
                         _women_best_odd = _b_candidate.best_actual_odd
-                    if _women_best_odd is not None and _women_best_odd > 2.30:
+                    # Away ceiling: 2.30; Home ceiling: 2.50 (home teams more predictable)
+                    _women_ceil = 2.30 if market.startswith("Away") else 2.50
+                    if _women_best_odd is not None and _women_best_odd > _women_ceil:
                         continue
+
+            # ── Improvement: Tier 3 away-over high-odds ceiling ──────────────
+            # Away teams in lower-tier leagues are particularly unpredictable at
+            # long odds. Cap Away Over 0.5 at 2.50 for Tier 3 leagues to avoid
+            # backing low-probability away scorers in volatile markets.
+            if market == "Away Over 0.5" and (fixture.league_tier or 3) >= 3:
+                _t3_best_odd = None
+                _b_candidate = bay_by_market.get(market)
+                if _b_candidate:
+                    _t3_best_odd = _b_candidate.best_actual_odd
+                if _t3_best_odd is not None and _t3_best_odd > 2.50:
+                    continue
 
             # League × market granular suppression: skip this specific combination
             # if historical performance shows it consistently loses money (ROI < 0,

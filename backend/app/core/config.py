@@ -443,6 +443,19 @@ TIER_2_LEAGUES = {
     "greek super league", "super league greece",
     "swiss super league", "swiss super",
     "liga profesional", "liga profesional argentina",
+    # Promoted from Tier 3 based on tracked performance data:
+    # Superettan (Sweden 2nd div): 100% WR across 5 tracked bets
+    "superettan",
+    # Premijer Liga (Bosnia): 83.3% WR across 6 tracked bets
+    "premijer liga",
+    # HNL (Croatia top flight): consistent signal quality
+    "hnl",
+    # III Liga groups (Poland 3rd div): 100% WR across 4 tracked bets
+    "iii liga",
+    # Norwegian/Faroese top flights often misclassified
+    "meistaradeildin", "veikkausliiga",
+    # Georgian, Icelandic, Bosnian top flights
+    "erovnuli liga", "urvalsdeild",
 }
 
 # Leagues where under-goals signals (Under 2.5, Under 3.5) are suppressed.

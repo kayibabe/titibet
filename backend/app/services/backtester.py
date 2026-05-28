@@ -20,6 +20,7 @@ from app.core.config import (
     OVER_GOALS_SUPPRESSED_LEAGUES,
     POISSON_RULES,
     UNDER_GOALS_SUPPRESSED_LEAGUES,
+    WOMEN_LEAGUE_KEYWORDS,
     get_settings,
 )
 from app.engines import bayesian as bay_engine
@@ -35,6 +36,7 @@ from app.services.signal_engine import (
     _build_win_to_nil_home, _build_win_to_nil_away, _build_exact_goals,
     MARKET_TO_POISSON_KEY, _get_underperforming_leagues, _latest_snapshots,
     _team_total_context_penalty,
+    _is_end_of_northern_season, _OVER_GOALS_MARKETS,
 )
 from app.services.form_service import get_team_form_lambdas
 from app.services.staking import kelly_stake_pct
@@ -175,6 +177,8 @@ async def run_backtest(
         all_markets = set(bay_by_market.keys()) | set(poi_by_market.keys())
         fixture_league = (fixture.league or "").strip()
 
+        fixture_date = fixture.event_date or date_from or date.today()
+
         for mkt in all_markets:
             if mkt not in MARKETS:
                 continue
@@ -182,6 +186,11 @@ async def run_backtest(
                 continue
             if mkt in DISABLED_MARKETS:
                 continue
+
+            # Mirror new signal_engine gates so backtest ROI is representative
+            if mkt in {"Home Over 1.5", "Away Over 1.5"} and (fixture.league_tier or 3) >= 3:
+                continue
+
             if perf_weights is not None and perf_weights.should_suppress_league_market(fixture_league, mkt):
                 continue
 
@@ -233,6 +242,21 @@ async def run_backtest(
             if mkt in over_markets:
                 league_lower = (fixture.league or "").lower()
                 if any(k in league_lower for k in OVER_GOALS_SUPPRESSED_LEAGUES):
+                    continue
+
+            # Women's league over-goals odds ceiling (mirror of signal_engine gate)
+            if mkt in {"Away Over 0.5", "Away Over 1.5", "Home Over 0.5", "Home Over 1.5"}:
+                league_lower = (fixture.league or "").lower()
+                if any(kw in league_lower for kw in WOMEN_LEAGUE_KEYWORDS):
+                    _wo = b.best_actual_odd if b else None
+                    _women_ceil = 2.30 if mkt.startswith("Away") else 2.50
+                    if _wo is not None and _wo > _women_ceil:
+                        continue
+
+            # Tier 3 away-over high-odds ceiling (mirror of signal_engine gate)
+            if mkt == "Away Over 0.5" and (fixture.league_tier or 3) >= 3:
+                _wo = b.best_actual_odd if b else None
+                if _wo is not None and _wo > 2.50:
                     continue
 
             final_confidence = ds.confidence
