@@ -262,7 +262,8 @@ BAYESIAN_EXTRA_MARKETS: set = set()
 # Historical analytics/backtest data for these markets is preserved, but the
 # signal engine will not generate new picks for them.
 DISABLED_MARKETS: frozenset = frozenset({
-    "BTTS No",    # poor historical strike rate
+    "BTTS No",        # poor historical strike rate
+    "Home Under 1.5", # -45.2% ROI across backtest; home-team scoring ceiling is hard to model reliably
     # "Under 3.5" re-enabled 2026-05-21: 67.5% natural hit rate across 1,045 fixtures;
     # Tier 1 72.4%, Tier 2 71.1%. Min odds floor raised to 1.65 for positive EV.
 })
@@ -362,6 +363,23 @@ MARKET_MIN_EDGE: dict[str, float] = {
 # Prevents catastrophic cluster losses when one lower-tier league misbehaves
 # (e.g. all 7 Austrian Regionalliga Ost fixtures going 0-0 on the same day).
 MAX_SIGNALS_PER_TIER3_LEAGUE: int = 3
+
+# Per-market daily signal cap enforced at serving time (after ranking).
+# Highest-ranked signals get priority. Markets not listed are uncapped.
+# Prevents a single prolific market from dominating exposure on a given day.
+MAX_SIGNALS_PER_MARKET: dict[str, int] = {
+    "Home Over 0.5": 30,   # was 40% of total volume; cap forces diversification
+    "Away Over 0.5": 25,   # second-highest volume market
+}
+
+# Per-market maximum bookmaker odds accepted by the backtester and signal engine.
+# Blocks odds that are almost certainly from exotic/Asian book variants with different
+# market semantics (e.g. "Home Over 1.5" quoted at 11.5 by an Asian handicap provider
+# vs. the standard 2.5-4.0 range at European books).
+MARKET_MAX_ODDS: dict[str, float] = {
+    "Home Over 1.5": 6.0,  # home team scores 2+ — realistic ceiling ~5.0 in standard markets
+    "Away Over 1.5": 6.0,  # away team scores 2+ — similar realistic ceiling
+}
 
 # Maximum fraction of bankroll that can be committed across all signals in a day.
 # Stakes are normalized to this cap after per-signal Kelly sizing, preserving
@@ -477,7 +495,9 @@ UNDER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
 # so even the lowest-bar Over picks land as losers at a high rate.
 # Matched by substring against lower(trim(league)), same pattern as UNDER_GOALS_SUPPRESSED_LEAGUES.
 OVER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
-    "ekstraklasa",   # 100% of recent games under 2.5 goals; Over 0.5/1.5 bets consistently lose
+    "ekstraklasa",      # 100% of recent games under 2.5 goals; Over 0.5/1.5 bets consistently lose
+    "usl championship", # 25% WR on 4 bets (-56% ROI); physical US league, low-scoring style
+    "usl league one",   # 33% WR on 3 bets (-40% ROI); mirrors USL Championship pattern
 })
 
 # Leagues where away-scoring signals (Away Over 0.5/1.5) are surgically suppressed.

@@ -30,6 +30,7 @@ from app.core.config import (
     DISABLED_LEAGUES,
     OVER_GOALS_SUPPRESSED_LEAGUES,
     AWAY_GOALS_SUPPRESSED_LEAGUES,
+    MARKET_MAX_ODDS,
     MAX_DAILY_EXPOSURE,
     WOMEN_LEAGUE_KEYWORDS,
 )
@@ -582,6 +583,17 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 ):
                     continue
 
+            # ── Market maximum odds cap ───────────────────────────────────────
+            # Some bookmakers (especially Asian) price team-total markets with
+            # exotic semantics that inflate odds to 8–11+. Cap at a realistic
+            # ceiling so the Poisson fallback doesn't latch onto mis-priced lines.
+            _max_odd = MARKET_MAX_ODDS.get(market)
+            if _max_odd:
+                _b_cand = bay_by_market.get(market)
+                _best = _b_cand.best_actual_odd if _b_cand else None
+                if _best is not None and _best > _max_odd:
+                    continue
+
             # League × market granular suppression: skip this specific combination
             # if historical performance shows it consistently loses money (ROI < 0,
             # 5+ settled bets). More surgical than whole-league suppression — e.g.
@@ -701,6 +713,12 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 lm_factor = perf_weights.factor_for_league_market(fixture_league, market)
                 if lm_factor < 0.85:
                     continue
+
+            # Low confidence in Tier 3 = near-zero edge in highest-variance context.
+            # Backtest shows Low confidence overall at +0.6% ROI — not worth the risk
+            # in leagues with structural unpredictability.
+            if final_confidence == "Low" and (fixture.league_tier or 3) >= 3:
+                continue
 
             # Performance-weighted stake sizing.
             # Multiply the engine's recommended stake by a combined factor derived

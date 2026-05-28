@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_optional, get_current_user
 from app.core.database import get_db
 from sqlalchemy import func
-from app.core.config import get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES, MAX_SIGNALS_PER_TIER3_LEAGUE
+from app.core.config import get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES, MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET
 from app.models import Signal, Fixture
 from app.models.odds import MarketSnapshot
 from app.models.user import User
@@ -321,6 +321,22 @@ async def list_signals(
             tier3_league_counts[r.league or ""] = n + 1
         capped.append(r)
     results = capped
+
+    # ── Per-market daily cap ───────────────────────────────────────────────────
+    # Some high-volume markets (Home/Away Over 0.5) can dominate the signal list,
+    # creating concentrated single-market exposure. Highest-ranked signals win.
+    if MAX_SIGNALS_PER_MARKET:
+        mkt_counts: dict[str, int] = {}
+        mkt_capped: list = []
+        for r in results:
+            mkt_cap = MAX_SIGNALS_PER_MARKET.get(r.market or "", 0)
+            if mkt_cap:
+                n = mkt_counts.get(r.market or "", 0)
+                if n >= mkt_cap:
+                    continue
+                mkt_counts[r.market or ""] = n + 1
+            mkt_capped.append(r)
+        results = mkt_capped
 
     # Enforce free-tier signal limit — pro/elite users see all signals
     is_pro = (

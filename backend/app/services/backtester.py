@@ -17,6 +17,7 @@ from app.core.config import (
     BACKTEST_FLAT_STAKE,
     DISABLED_LEAGUES,
     DISABLED_MARKETS,
+    MARKET_MAX_ODDS,
     MARKETS,
     OVER_GOALS_SUPPRESSED_LEAGUES,
     POISSON_RULES,
@@ -268,6 +269,13 @@ async def run_backtest(
                 ):
                     continue
 
+            # Market maximum odds cap (mirror of signal_engine gate)
+            _max_odd = MARKET_MAX_ODDS.get(mkt)
+            if _max_odd:
+                _best_for_cap = b.best_actual_odd if b else None
+                if _best_for_cap is not None and _best_for_cap > _max_odd:
+                    continue
+
             final_confidence = ds.confidence
             if (
                 perf_weights is not None
@@ -290,6 +298,10 @@ async def run_backtest(
                 lm_factor = perf_weights.factor_for_league_market(fixture_league, mkt)
                 if lm_factor < 0.85:
                     continue
+
+            # Low confidence in Tier 3 = near-zero edge in highest-variance context
+            if final_confidence == "Low" and (fixture.league_tier or 3) >= 3:
+                continue
 
             if allowed_confidence and final_confidence not in allowed_confidence:
                 continue
