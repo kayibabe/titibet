@@ -299,6 +299,15 @@ async def run_backtest(
             # Determine bet outcome
             won = condition(fixture.home_score, fixture.away_score)
             best_odd = b.best_actual_odd if b else 0.0
+            # For Poisson-only signals (b is None or b has no Bayesian odds),
+            # fall back to the actual bookmaker odds captured in poi_signal_odds.
+            # Without this, every Poisson-only win still books as a loss because
+            # profit = stake * (0 - 1) = -stake.
+            if best_odd <= 1 and p_key:
+                best_odd = float(poi_signal_odds.get(p_key) or 0.0)
+            if best_odd <= 1:
+                # No valid bookmaker odds available — skip this signal from P&L
+                continue
             flat_stake = BACKTEST_FLAT_STAKE
             ks = kelly_stake_pct(b.derived_prob, best_odd) * 100 if b and best_odd > 1 else 0.0
 
