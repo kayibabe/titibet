@@ -17,6 +17,7 @@ from app.services.api_client import get_quota_info
 from app.services.settlement import refresh_stale_fixtures_and_settle
 from app.services.loss_analysis_agent import run_loss_analysis_pipeline
 from app.services.strategy_pipeline import run_strategy_pipeline
+from app.services.league_watch_guard import get_watchlist_status, run_league_watch_guard
 from app.services.telegram import (
     _send_to as telegram_send_to,
     push_titibet_tickets as telegram_push_titibet,
@@ -473,4 +474,44 @@ async def trigger_strategy_pipeline(
         "proposals_generated": report.proposals_generated,
         "proposals_accepted":  report.proposals_accepted,
         "error":               report.error,
+    }
+
+
+@router.get("/watchguard")
+async def get_watchguard_status(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Read-only view of the league watch guard — current state of every monitored league,
+    including ROI, bet count, warning/suppression thresholds, and active proposal ID.
+    """
+    return {"watchlist": await get_watchlist_status(db)}
+
+
+@router.post("/watchguard/run")
+async def trigger_watchguard(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Manually trigger the league watch guard cycle.
+    Evaluates all watched leagues and creates/deactivates suppression proposals as needed.
+    """
+    statuses = await run_league_watch_guard(db)
+    return {
+        "evaluated": len(statuses),
+        "results": [
+            {
+                "keyword":      s.keyword,
+                "state":        s.state,
+                "action_taken": s.action_taken,
+                "total_bets":   s.total_bets,
+                "wins":         s.wins,
+                "roi_pct":      s.roi_pct,
+                "proposal_id":  s.proposal_id,
+                "message":      s.message,
+            }
+            for s in statuses
+        ],
     }

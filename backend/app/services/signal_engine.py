@@ -380,14 +380,16 @@ async def _get_underperforming_leagues(
     min_roi_pct: float = 20.0,
 ) -> frozenset[str]:
     """
-    Queries tracked_bets to find leagues that have delivered poor returns.
-    Returns a frozenset of lowercased league names where:
-      - at least min_bets settled bets exist (Won or Lost)
-      - ROI = sum(profit_loss) / sum(stake) * 100  <  min_roi_pct
+    Returns a frozenset of lowercased league names to suppress, combining:
+      1. tracked_bets ROI: leagues with >= min_bets settled bets and ROI < min_roi_pct
+      2. Active LearningProposal(change_type="league_suppression") rows written by the
+         league watch guard when a watched league crosses its suppression threshold.
 
     Called once per signal batch so the suppression list is always current.
     """
     from sqlalchemy import text
+    from app.models.learning_proposal import LearningProposal
+
     result = await db.execute(text("""
         SELECT league,
                COUNT(*)        AS n,
@@ -407,6 +409,22 @@ async def _get_underperforming_leagues(
         roi = (total_pl / total_stake) * 100 if total_stake else -100.0
         if roi < min_roi_pct:
             bad.add(league.lower().strip())
+
+    # Also include watch-guard-triggered suppressions.
+    # These are substring keywords, not exact names — any league whose name contains
+    # the keyword is suppressed (same matching logic used by the watch guard).
+    try:
+        lp_result = await db.execute(
+            select(LearningProposal.target)
+            .where(LearningProposal.change_type == "league_suppression")
+            .where(LearningProposal.is_active == True)  # noqa: E712
+        )
+        for (target,) in lp_result.all():
+            if target:
+                bad.add(target.lower().strip())
+    except Exception:
+        pass  # table may not exist on first run — fail silently
+
     return frozenset(bad)
 
 

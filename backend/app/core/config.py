@@ -509,6 +509,53 @@ AWAY_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
     "primera b metropolitana",   # Argentine Tier 3 — away scoring 3W/4L at 2.22–2.64 odds, -9.1 net
 })
 
+# ─────────────────────────────────────────────────────────────────────────────
+# League Watch Guard — automated monitoring of borderline leagues.
+#
+# Each entry is a substring matched against lower(league_name). When a league
+# accumulates enough bets (min_bets_act) AND its ROI falls below suppress_roi_pct,
+# the watch guard writes a LearningProposal(change_type="league_suppression") to
+# the DB. The signal engine and accumulator generator pick this up on the next
+# cycle — no restart required.
+#
+# When ROI recovers above recover_roi_pct, the proposal is deactivated so the
+# league re-enters the signal pool.
+#
+# Fields:
+#   min_bets_warn   — start logging warnings at this bet count
+#   min_bets_act    — minimum bets before auto-suppression can trigger
+#   warn_roi_pct    — ROI below this → WARNING log only
+#   suppress_roi_pct — ROI below this (with min_bets_act) → auto-suppress
+#   recover_roi_pct — ROI must rise above this to auto-recover (default: suppress + 15pp)
+#   note            — human-readable reason for watching this league
+# ─────────────────────────────────────────────────────────────────────────────
+LEAGUE_WATCHLIST: dict[str, dict] = {
+    "regionalliga - mitte": {
+        "min_bets_warn":    6,
+        "min_bets_act":     12,
+        "warn_roi_pct":     -10.0,
+        "suppress_roi_pct": -20.0,
+        "recover_roi_pct":  -5.0,
+        "note": "German Regionalliga Mitte at -17.5% ROI / 8 bets; trending toward Austrian Regionalliga (banned) pattern.",
+    },
+    "segunda divisi": {           # substring covers all variants: española, chilena, etc.
+        "min_bets_warn":    3,
+        "min_bets_act":     6,
+        "warn_roi_pct":     -20.0,
+        "suppress_roi_pct": -35.0,
+        "recover_roi_pct":  -15.0,
+        "note": "Multiple Segunda División competitions showing 0% WR on 3 early bets; sample building.",
+    },
+    "hnl": {
+        "min_bets_warn":    5,
+        "min_bets_act":     10,
+        "warn_roi_pct":     -10.0,
+        "suppress_roi_pct": -20.0,
+        "recover_roi_pct":  -5.0,
+        "note": "Croatian HNL at -17.8% ROI / 6 bets despite Tier 2 classification; may revert to Tier 3.",
+    },
+}
+
 
 def get_league_tier(league_name: str, country: str = "") -> int:
     lower_country = country.lower().strip()

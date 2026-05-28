@@ -34,6 +34,7 @@ from app.services.signal_engine import compute_signals_for_date
 from app.services.settlement import settle_bets_for_date, FINAL_STATUSES
 from app.services.loss_analysis_agent import run_loss_analysis_pipeline
 from app.services.strategy_pipeline import run_strategy_pipeline, check_suppression_reactivations
+from app.services.league_watch_guard import run_league_watch_guard
 from app.services.telegram import (
     push_kickoff_alerts,
     push_titibet_tickets,
@@ -144,6 +145,21 @@ async def catchup_past_dates() -> int:
                 )
             except Exception:
                 logger.exception("Suppression reactivation check failed — continuing normally")
+            try:
+                wg_statuses = await run_league_watch_guard(db)
+                suppressed = [s for s in wg_statuses if s.action_taken == "suppressed"]
+                recovered  = [s for s in wg_statuses if s.action_taken == "reactivated"]
+                warned     = [s for s in wg_statuses if s.state == "WARNING"]
+                logger.info(
+                    "League watch guard: %d watched  %d suppressed  %d recovered  %d warnings",
+                    len(wg_statuses), len(suppressed), len(recovered), len(warned),
+                )
+                for s in suppressed:
+                    logger.warning("Watch guard suppressed: '%s'  ROI=%+.1f%%  bets=%d", s.keyword, s.roi_pct, s.total_bets)
+                for s in recovered:
+                    logger.info("Watch guard recovered: '%s'  ROI=%+.1f%%", s.keyword, s.roi_pct)
+            except Exception:
+                logger.exception("League watch guard failed — continuing normally")
         return n_settled
 
 
@@ -206,6 +222,21 @@ async def sync_and_compute(run_date: date | None = None) -> None:
                         )
                     except Exception:
                         logger.exception("Suppression reactivation check failed — continuing normally")
+                    try:
+                        wg_statuses = await run_league_watch_guard(db)
+                        suppressed = [s for s in wg_statuses if s.action_taken == "suppressed"]
+                        recovered  = [s for s in wg_statuses if s.action_taken == "reactivated"]
+                        warned     = [s for s in wg_statuses if s.state == "WARNING"]
+                        logger.info(
+                            "League watch guard: %d watched  %d suppressed  %d recovered  %d warnings",
+                            len(wg_statuses), len(suppressed), len(recovered), len(warned),
+                        )
+                        for s in suppressed:
+                            logger.warning("Watch guard suppressed: '%s'  ROI=%+.1f%%  bets=%d", s.keyword, s.roi_pct, s.total_bets)
+                        for s in recovered:
+                            logger.info("Watch guard recovered: '%s'  ROI=%+.1f%%", s.keyword, s.roi_pct)
+                    except Exception:
+                        logger.exception("League watch guard failed — continuing normally")
         except Exception:
             logger.exception("Scheduler error for %s", run_date)
             raise
