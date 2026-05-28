@@ -12,16 +12,12 @@ from datetime import date
 sys.path.insert(0, ".")
 sys.stdout.reconfigure(encoding="utf-8")
 
-FLAT_STAKE = 10_000.0
+FLAT_STAKE = 10_000.0   # now the permanent config default
 DATE_FROM  = date(2026, 5, 17)
 DATE_TO    = date(2026, 5, 28)
 
 
 async def run():
-    # Patch stake before backtester module caches the config value
-    import app.services.backtester as bt_mod
-    bt_mod.BACKTEST_FLAT_STAKE = FLAT_STAKE
-
     from app.core.database import AsyncSessionLocal
     from app.services.backtester import run_backtest
 

@@ -117,8 +117,7 @@ def get_settings() -> Settings:
 
 
 # Flat stake used in backtest P&L calculations.
-# 10.0 = $10 per bet when default_bankroll is $100 (10% flat stake).
-BACKTEST_FLAT_STAKE: float = 10.0
+BACKTEST_FLAT_STAKE: float = 10_000.0
 
 
 # =============================================================================
