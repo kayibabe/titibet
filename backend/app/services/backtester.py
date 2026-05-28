@@ -13,6 +13,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import (
+    AWAY_GOALS_SUPPRESSED_LEAGUES,
     BACKTEST_FLAT_STAKE,
     DISABLED_LEAGUES,
     DISABLED_MARKETS,
@@ -257,6 +258,14 @@ async def run_backtest(
             if mkt == "Away Over 0.5" and (fixture.league_tier or 3) >= 3:
                 _wo = b.best_actual_odd if b else None
                 if _wo is not None and _wo > 2.50:
+                    continue
+
+            # Targeted away-goals suppression (mirror of signal_engine gate)
+            if mkt in {"Away Over 0.5", "Away Over 1.5"}:
+                league_lower = (fixture.league or "").lower()
+                if AWAY_GOALS_SUPPRESSED_LEAGUES and any(
+                    k in league_lower for k in AWAY_GOALS_SUPPRESSED_LEAGUES
+                ):
                     continue
 
             final_confidence = ds.confidence

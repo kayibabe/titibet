@@ -29,6 +29,7 @@ from app.core.config import (
     DISABLED_MARKETS,
     DISABLED_LEAGUES,
     OVER_GOALS_SUPPRESSED_LEAGUES,
+    AWAY_GOALS_SUPPRESSED_LEAGUES,
     MAX_DAILY_EXPOSURE,
     WOMEN_LEAGUE_KEYWORDS,
 )
@@ -568,6 +569,17 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 if _b_candidate:
                     _t3_best_odd = _b_candidate.best_actual_odd
                 if _t3_best_odd is not None and _t3_best_odd > 2.50:
+                    continue
+
+            # ── Targeted away-goals suppression ──────────────────────────────
+            # Leagues in AWAY_GOALS_SUPPRESSED_LEAGUES have structurally poor
+            # away-scoring reliability regardless of odds. Skip Away Over signals
+            # entirely to avoid losses driven by home-field dominance or
+            # defensive-style play that models cannot capture.
+            if market in {"Away Over 0.5", "Away Over 1.5"}:
+                if AWAY_GOALS_SUPPRESSED_LEAGUES and _league_matches_suppression(
+                    (fixture.league or "").lower(), AWAY_GOALS_SUPPRESSED_LEAGUES
+                ):
                     continue
 
             # League × market granular suppression: skip this specific combination

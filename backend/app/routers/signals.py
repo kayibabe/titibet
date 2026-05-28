@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_optional, get_current_user
 from app.core.database import get_db
 from sqlalchemy import func
-from app.core.config import get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES, MAX_SIGNALS_PER_TIER3_LEAGUE
+from app.core.config import get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES, MAX_SIGNALS_PER_TIER3_LEAGUE
 from app.models import Signal, Fixture
 from app.models.odds import MarketSnapshot
 from app.models.user import User
@@ -273,6 +273,17 @@ async def list_signals(
                 )
             )
 
+    # Away-goals suppression for leagues with structurally poor away-scoring reliability.
+    if AWAY_GOALS_SUPPRESSED_LEAGUES:
+        _AWAY_MKT_LIST = ["Away Over 0.5", "Away Over 1.5"]
+        for _league_key in AWAY_GOALS_SUPPRESSED_LEAGUES:
+            query = query.where(
+                ~(
+                    func.lower(func.trim(Fixture.league)).contains(_league_key)
+                    & Signal.market.in_(_AWAY_MKT_LIST)
+                )
+            )
+
     rows = (await db.execute(query)).all()
 
     # CLV market ranks: one DB query, used for all signals in this response.
@@ -386,6 +397,14 @@ async def stat_driven_picks(
                 ~(func.lower(func.trim(Fixture.league)).contains(_lk)
                   & Signal.market.in_(_STAT_MARKETS))
             )
+    if AWAY_GOALS_SUPPRESSED_LEAGUES:
+        _AWAY_STAT = [m for m in _STAT_MARKETS if "Away Over" in m]
+        if _AWAY_STAT:
+            for _lk in AWAY_GOALS_SUPPRESSED_LEAGUES:
+                query = query.where(
+                    ~(func.lower(func.trim(Fixture.league)).contains(_lk)
+                      & Signal.market.in_(_AWAY_STAT))
+                )
 
     rows = (await db.execute(query)).all()
 

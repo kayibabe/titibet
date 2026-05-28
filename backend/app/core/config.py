@@ -480,6 +480,15 @@ OVER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
     "ekstraklasa",   # 100% of recent games under 2.5 goals; Over 0.5/1.5 bets consistently lose
 })
 
+# Leagues where away-scoring signals (Away Over 0.5/1.5) are surgically suppressed.
+# These competitions show unreliable away-goal patterns that the Poisson/Bayesian
+# models overestimate — typically low-tier Argentine/South American leagues with
+# defensive home setups, artificial pitches, or late-season motivation asymmetry.
+# Matched by substring against lower(trim(league)).
+AWAY_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
+    "primera b metropolitana",   # Argentine Tier 3 — away scoring 3W/4L at 2.22–2.64 odds, -9.1 net
+})
+
 
 def get_league_tier(league_name: str, country: str = "") -> int:
     lower_country = country.lower().strip()
