@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 380">
+  <defs>
+    <!-- Wing gradient - dark leading edge fading to medium grey -->
+    <linearGradient id="wingTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#4a5c6a"/>
+      <stop offset="60%"  stop-color="#6e8090"/>
+      <stop offset="100%" stop-color="#8a9eac"/>
+    </linearGradient>
+    <linearGradient id="belly" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#e8ecee"/>
+      <stop offset="100%" stop-color="#c8d4da"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       LEFT WING — dominant, sweeps lower-left. Full solid fill.
+       ═══════════════════════════════════════════════════════════════ -->
+  <path d="
+    M 225 162
+    C 200 150, 165 132, 128 110
+    C  95  90,  58  72,  28  68
+    C  14  66,   4  68,   2  76
+    C  18  76,  40  82,  62  94
+    C  90 108, 120 126, 148 146
+    C 172 162, 195 175, 210 182
+    Z"
+    fill="url(#wingTop)"/>
+
+  <!-- Left wing — pale underside strip along trailing edge -->
+  <path d="
+    M 218 170
+    C 195 162, 160 146, 125 124
+    C  92 103,  58  85,  30  82
+    C  42  92,  72 108, 100 126
+    C 130 146, 165 164, 195 178
+    Z"
+    fill="#b8c8d2" opacity="0.7"/>
+
+  <!-- Left primary feather tips — five dark separated fingers -->
+  <path d="M  28  70  Q  12  82,   8  98" stroke="#2e3c48" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+  <path d="M  40  66  Q  24  78,  20  94" stroke="#2e3c48" stroke-width="4"   fill="none" stroke-linecap="round"/>
+  <path d="M  55  64  Q  40  76,  36  92" stroke="#3a4a58" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <path d="M  70  63  Q  56  74,  53  89" stroke="#3a4a58" stroke-width="3"   fill="none" stroke-linecap="round"/>
+  <path d="M  86  63  Q  74  74,  72  87" stroke="#4a5a68" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       RIGHT WING — raised, sweeps upper-right. Full solid fill.
+       ═══════════════════════════════════════════════════════════════ -->
+  <path d="
+    M 268 155
+    C 296 140, 338 116, 382  90
+    C 415  70, 448  54, 478  50
+    C 490  48, 498  52, 496  60
+    C 480  62, 456  70, 428  86
+    C 390 108, 348 132, 308 156
+    C 290 166, 276 172, 268 175
+    Z"
+    fill="url(#wingTop)"/>
+
+  <!-- Right wing — pale underside strip -->
+  <path d="
+    M 270 162
+    C 298 148, 340 124, 382  98
+    C 414  78, 444  64, 470  62
+    C 454  72, 424  88, 390 112
+    C 352 136, 308 160, 278 172
+    Z"
+    fill="#b8c8d2" opacity="0.7"/>
+
+  <!-- Right primary tips -->
+  <path d="M 478  52  Q 492  62, 490  78" stroke="#2e3c48" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+  <path d="M 464  50  Q 478  60, 476  76" stroke="#2e3c48" stroke-width="4"   fill="none" stroke-linecap="round"/>
+  <path d="M 450  50  Q 464  60, 460  76" stroke="#3a4a58" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <path d="M 436  52  Q 448  62, 445  76" stroke="#3a4a58" stroke-width="3"   fill="none" stroke-linecap="round"/>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       BODY — dark back, pale breast
+       ═══════════════════════════════════════════════════════════════ -->
+  <!-- Dark dorsal body -->
+  <path d="
+    M 222 118
+    C 234 106, 258 104, 272 116
+    C 292 130, 302 160, 300 195
+    C 298 228, 285 268, 270 292
+    C 260 308, 250 318, 246 320
+    C 242 318, 232 308, 222 292
+    C 207 268, 196 228, 196 195
+    C 196 160, 208 130, 222 118
+    Z"
+    fill="#38485a"/>
+
+  <!-- Pale cream belly / breast -->
+  <path d="
+    M 230 130
+    C 238 120, 256 118, 266 128
+    C 282 142, 290 168, 288 198
+    C 286 226, 275 262, 262 284
+    C 254 298, 248 306, 246 308
+    C 244 306, 238 298, 230 284
+    C 217 262, 208 226, 208 198
+    C 208 168, 218 142, 230 130
+    Z"
+    fill="url(#belly)"/>
+
+  <!-- Belly barring — dark horizontal streaks across pale breast -->
+  <path d="M 226 152 Q 247 146 266 152" stroke="#8090a0" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+  <path d="M 222 166 Q 247 160 270 166" stroke="#8090a0" stroke-width="2.1" fill="none" stroke-linecap="round"/>
+  <path d="M 220 180 Q 247 174 272 180" stroke="#8090a0" stroke-width="2"   fill="none" stroke-linecap="round"/>
+  <path d="M 218 194 Q 247 188 274 194" stroke="#8090a0" stroke-width="1.9" fill="none" stroke-linecap="round"/>
+  <path d="M 218 208 Q 247 202 274 208" stroke="#8090a0" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+  <path d="M 220 222 Q 247 216 272 222" stroke="#8090a0" stroke-width="1.7" fill="none" stroke-linecap="round"/>
+  <path d="M 222 236 Q 247 230 270 236" stroke="#8898a8" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <path d="M 224 250 Q 247 245 268 250" stroke="#8898a8" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       TAIL — short, banded
+       ═══════════════════════════════════════════════════════════════ -->
+  <path d="
+    M 230 298
+    C 226 318, 226 342, 230 358
+    C 236 352, 242 338, 246 322
+    C 250 338, 255 352, 260 358
+    C 264 342, 264 318, 260 298
+    Z"
+    fill="#3a4c5c"/>
+  <path d="M 232 314 Q 246 310 260 314" stroke="#2a3848" stroke-width="2"   fill="none"/>
+  <path d="M 232 328 Q 246 324 260 328" stroke="#2a3848" stroke-width="1.8" fill="none"/>
+  <path d="M 233 342 Q 246 338 258 342" stroke="#2a3848" stroke-width="1.5" fill="none"/>
+  <!-- pale tail tip -->
+  <path d="M 230 355 Q 246 364 260 355 Q 254 368 246 372 Q 238 368 230 355 Z" fill="#c8d4da"/>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       HEAD — dark helmet, pale cheek, moustache, yellow eye
+       ═══════════════════════════════════════════════════════════════ -->
+  <!-- Dark helmet / crown covering entire head -->
+  <ellipse cx="240" cy="108" rx="26" ry="28" fill="#28384a"/>
+
+  <!-- Pale cheek patches either side (white throat/face) -->
+  <ellipse cx="222" cy="116" rx="8"  ry="10" fill="#dfe4e0"/>
+  <ellipse cx="258" cy="116" rx="8"  ry="10" fill="#dfe4e0"/>
+
+  <!-- Dark moustache stripes — THE peregrine mark, bold teardrop -->
+  <path d="M 218 112 C 212 118, 212 128, 218 132 C 222 128, 224 118, 220 112 Z" fill="#182430"/>
+  <path d="M 262 112 C 268 118, 268 128, 262 132 C 258 128, 256 118, 260 112 Z" fill="#182430"/>
+
+  <!-- Yellow orbital ring -->
+  <circle cx="240" cy="106" r="10" fill="#cc9800"/>
+  <!-- Dark iris -->
+  <circle cx="240" cy="106" r="7"  fill="#141820"/>
+  <!-- Eye specular highlight -->
+  <circle cx="242" cy="103" r="2.5" fill="#ffffff" opacity="0.9"/>
+
+  <!-- Beak — grey hooked raptor bill -->
+  <path d="
+    M 240 120
+    C 234 123, 228 128, 226 134
+    C 229 132, 234 131, 238 132
+    C 240 133, 244 132, 248 134
+    C 250 128, 246 124, 240 120 Z"
+    fill="#9aaab8"/>
+  <!-- Yellow cere (fleshy beak base) -->
+  <ellipse cx="240" cy="121" rx="7" ry="4" fill="#cc9800"/>
+  <!-- Hook -->
+  <path d="M 226 134 C 223 138, 224 143, 228 143 C 232 142, 234 138, 232 133 Z"
+        fill="#7a8a98"/>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       WING FEATHER TEXTURE — subtle lines showing feather tracts
+       ═══════════════════════════════════════════════════════════════ -->
+  <path d="M 228 168 C 200 156, 162 136, 118 110" stroke="#8090a0" stroke-width="1.2" fill="none" opacity="0.6"/>
+  <path d="M 226 175 C 198 164, 158 144, 112 118" stroke="#8090a0" stroke-width="1"   fill="none" opacity="0.5"/>
+  <path d="M 270 165 C 304 148, 348 122, 396  96" stroke="#8090a0" stroke-width="1.2" fill="none" opacity="0.6"/>
+  <path d="M 272 172 C 306 156, 350 130, 396 104" stroke="#8090a0" stroke-width="1"   fill="none" opacity="0.5"/>
+
+</svg>

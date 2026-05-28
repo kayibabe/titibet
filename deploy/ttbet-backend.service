@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Systemd service — TTBet FastAPI backend
+#
+# Install:
+#   sudo cp ttbet-backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable ttbet-backend
+#   sudo systemctl start ttbet-backend
+#
+# Logs:
+#   sudo journalctl -u ttbet-backend -f
+# ─────────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=TTBet FastAPI Backend
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=ttbet
+Group=ttbet
+WorkingDirectory=/var/www/ttbet/backend
+EnvironmentFile=/var/www/ttbet/backend/.env
+
+# Activate the virtual environment and start the server
+ExecStart=/var/www/ttbet/venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8010 \
+    --workers 1 \
+    --log-level info
+
+# Restart policy — restart on crash, but not on deliberate stop
+Restart=on-failure
+RestartSec=5s
+
+# Resource limits
+LimitNOFILE=65536
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/www/ttbet/backend
+
+[Install]
+WantedBy=multi-user.target

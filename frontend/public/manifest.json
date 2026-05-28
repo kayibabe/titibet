@@ -1,0 +1,44 @@
+﻿{
+  "name": "TiTiBet — Value Betting Intelligence",
+  "short_name": "TiTiBet",
+  "description": "Value Betting Intelligence Platform — Signals, Tracker & Analytics",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f1117",
+  "theme_color": "#4f46e5",
+  "lang": "en",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/falcon.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [],
+  "categories": ["sports", "finance"],
+  "shortcuts": [
+    {
+      "name": "Value Signals",
+      "short_name": "Signals",
+      "description": "Today's value betting signals",
+      "url": "/?page=signals",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Bet Tracker",
+      "short_name": "Tracker",
+      "description": "Track your bets",
+      "url": "/?page=tracker",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any" }]
+    }
+  ]
+}

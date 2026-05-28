@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Environment files — NEVER commit secrets
+backend/.env
+deploy/.env.production
+*.env.local
+
+# Database
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+
+# Frontend build output
+frontend/dist/
+frontend/node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Visual Studio
+.vs/
+
+# Claude local config and worktrees
+.claude/
+
+# Logs
+backend/server.out.log
+backend/server.err.log
+
+# Root-level DB (dev artefact — real DB lives in backend/)
+sisibet.db
+
+# API-Football file cache (ephemeral, never commit)
+backend/.cache/
+
+# Temporary fix / debug scripts
+backend/fix_*.py
+backend/settle_now.py
+commitmsg.txt

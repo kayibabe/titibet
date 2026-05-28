@@ -1,0 +1,129 @@
+﻿import { useState, useEffect } from 'react'
+import { LayoutDashboard, Menu, X } from 'lucide-react'
+import Sidebar from './Sidebar'
+import BottomNav from './BottomNav'
+
+function LiveClock() {
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const date = now.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+  const time = now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })
+
+  return (
+    <div className="hidden sm:flex flex-col items-end leading-none gap-0.5">
+      <span className="font-mono text-sm font-semibold text-[var(--text-h)]">{time}</span>
+      <span className="text-[10px] text-[var(--text)] opacity-80 tracking-wide">{date}</span>
+    </div>
+  )
+}
+
+const PAGE_TITLES = {
+  signals:   'Value Signals',
+  deepdive:  'Deep Dive',
+  tracker:   'Bet Tracker',
+  analytics: 'Analytics',
+  backtest:  'Backtest',
+  settings:  'Settings',
+  admin:     'User Panel',
+  account:   'My Account',
+  pricing:   'Plans & Pricing',
+}
+
+export default function AppShell({ activePage, onNavigate, children }) {
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const pageTitle = PAGE_TITLES[activePage] ?? ''
+
+  function navigate(page) {
+    onNavigate(page)
+    setDrawerOpen(false)
+  }
+
+  return (
+    <div className="h-svh flex flex-col bg-[var(--bg)] overflow-hidden">
+
+      {/* ── Full-width sticky top header ── */}
+      <header className="sticky top-0 z-50 h-14 shrink-0 flex items-center gap-3 px-4 lg:px-6 bg-[var(--bg)] border-b border-[var(--border)]">
+
+        {/* Mobile hamburger */}
+        <button
+          onClick={() => setDrawerOpen(v => !v)}
+          className="lg:hidden p-1.5 rounded-lg text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] transition-colors"
+        >
+          {drawerOpen ? <X size={20} /> : <Menu size={20} />}
+        </button>
+
+        {/* Brand logo — always visible */}
+        <div className="flex items-center gap-0">
+          <div className="shrink-0 -my-3" style={{ width: '75px', height: '75px' }}>
+            <img
+              src="/falcon.png"
+              alt="TiTiBet"
+              className="w-full h-full object-contain"
+            />
+          </div>
+          <div className="leading-none -ml-2">
+            <span className="text-base font-bold text-[var(--text-h)] tracking-tight">TiTiBet</span>
+            <span className="block text-[10px] text-[var(--accent)] font-semibold tracking-widest uppercase mt-0.5 opacity-80">
+              Intelligence Platform
+            </span>
+          </div>
+        </div>
+
+        {/* Pillars — centred, desktop only */}
+        <span className="hidden lg:flex flex-1 justify-center text-xs font-semibold text-[var(--accent)] tracking-widest uppercase select-none pointer-events-none">
+          Value Signals&nbsp;·&nbsp;Tracker&nbsp;·&nbsp;Analytics
+        </span>
+
+        {/* Live clock — right side */}
+        <div className="ml-auto lg:ml-0">
+          <LiveClock />
+        </div>
+      </header>
+
+      {/* ── Below header: sidebar + content ── */}
+      <div className="flex flex-1 min-h-0">
+
+        {/* Mobile drawer overlay */}
+        {drawerOpen && (
+          <div
+            className="lg:hidden fixed inset-0 z-40 bg-black/60"
+            style={{ top: '3.5rem' }}
+            onClick={() => setDrawerOpen(false)}
+          />
+        )}
+
+        {/* Mobile slide-in drawer — starts below the top header */}
+        <div className={`lg:hidden fixed left-0 z-50 transition-transform duration-200 ${
+          drawerOpen ? 'translate-x-0' : '-translate-x-full'
+        }`} style={{ top: '3.5rem', height: 'calc(100% - 3.5rem)' }}>
+          <Sidebar activePage={activePage} onNavigate={navigate} />
+        </div>
+
+        {/* Desktop sidebar */}
+        <div className="hidden lg:block shrink-0">
+          <Sidebar activePage={activePage} onNavigate={navigate} />
+        </div>
+
+        {/* Main content */}
+        <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+          <main className="flex-1 px-4 py-5 lg:px-6 lg:py-6 w-full max-w-5xl space-y-5 pb-24 lg:pb-6">
+            {pageTitle && (
+              <h1 className="hidden lg:block text-base font-bold text-[var(--text-h)] tracking-tight pb-4 border-b border-[var(--border)] mb-2">
+                {pageTitle}
+              </h1>
+            )}
+            {children}
+          </main>
+        </div>
+      </div>
+
+      {/* ── Mobile bottom nav ── */}
+      <BottomNav activePage={activePage} onNavigate={navigate} />
+    </div>
+  )
+}

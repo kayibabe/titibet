@@ -1,0 +1,415 @@
+﻿"""
+settlement.py — Auto-settlement for tracked bets based on match scores.
+Ported from TiTiBet settlement.py. Supports all active markets.
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, date, timezone
+from typing import Callable
+
+from sqlalchemy import select, or_
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import Fixture, TrackedBet, AccumulatorTicket, AccumulatorLeg
+
+logger = logging.getLogger("titibet.settlement")
+
+FINAL_STATUSES = {"FT", "AET", "PEN"}
+# Terminal statuses that are not playable — treat as Void for settlement purposes
+VOID_STATUSES  = {"CANC", "ABD", "AWD", "WO", "TBD", "PST", "INT", "SUSP"}
+
+
+def _fixture_is_final(fixture: Fixture) -> bool:
+    st = (fixture.status or "").strip().upper()
+    return st in FINAL_STATUSES
+
+
+# Markets that can be auto-settled from final score (must match `market_type` on TrackedBet).
+# Keep in sync with app.core.config MARKETS for totals / team markets / exact goals.
+SCORE_SETTLEABLE_MARKETS: dict[str, Callable[[int, int], bool]] = {
+    "BTTS Yes":   lambda h, a: h >= 1 and a >= 1,
+    "BTTS No":    lambda h, a: h == 0 or a == 0,
+    "Over 0.5":   lambda h, a: (h + a) >= 1,
+    "Over 1.5":   lambda h, a: (h + a) >= 2,
+    "Over 2.5":   lambda h, a: (h + a) >= 3,
+    "Over 3.5":   lambda h, a: (h + a) >= 4,
+    "Over 4.5":   lambda h, a: (h + a) >= 5,
+    "Under 1.5":  lambda h, a: (h + a) <= 1,
+    "Under 2.5":  lambda h, a: (h + a) <= 2,
+    "Under 3.5":  lambda h, a: (h + a) <= 3,
+    "Under 4.5":  lambda h, a: (h + a) <= 4,
+    "Home Win":   lambda h, a: h > a,
+    "Draw":       lambda h, a: h == a,
+    "Away Win":   lambda h, a: h < a,
+    "1X (Home or Draw)": lambda h, a: h >= a,
+    "X2 (Draw or Away)": lambda h, a: h <= a,
+    "12 (Home or Away)": lambda h, a: h != a,
+    "Home Over 0.5":  lambda h, a: h >= 1,
+    "Home Under 0.5": lambda h, a: h == 0,
+    "Home Over 1.5":  lambda h, a: h >= 2,
+    "Home Under 1.5": lambda h, a: h <= 1,
+    "Away Over 0.5":  lambda h, a: a >= 1,
+    "Away Under 0.5": lambda h, a: a == 0,
+    "Away Over 1.5":  lambda h, a: a >= 2,
+    "Away Under 1.5": lambda h, a: a <= 1,
+    "Home Win to Nil": lambda h, a: h > a and a == 0,
+    "Away Win to Nil": lambda h, a: a > h and h == 0,
+    "Exactly 1 Goal":  lambda h, a: (h + a) == 1,
+    "Exactly 2 Goals": lambda h, a: (h + a) == 2,
+    "Exactly 3 Goals": lambda h, a: (h + a) == 3,
+}
+
+
+def _settle_bet(bet: TrackedBet, won: bool) -> None:
+    if won:
+        bet.result_status = "Won"
+        bet.profit_loss = round(bet.stake * (bet.odds - 1.0), 2)
+    else:
+        bet.result_status = "Lost"
+        bet.profit_loss = round(-bet.stake, 2)
+    bet.settled_at = datetime.now(timezone.utc)
+
+
+def _score_condition(market_type: str | None) -> Callable[[int, int], bool] | None:
+    mt = (market_type or "").strip()
+    return SCORE_SETTLEABLE_MARKETS.get(mt)
+
+
+async def settle_bets_for_date(
+    db: AsyncSession,
+    run_date: date | None = None,
+    user_id: int | None = None,
+) -> dict:
+    """
+    Auto-settle all pending bets for fixtures that are now final.
+
+    Returns a dict:
+      { settled, skip_no_fixture, skip_not_final, skip_no_score, skip_no_market }
+    """
+    query = select(TrackedBet).where(TrackedBet.result_status == "Pending")
+    if run_date:
+        # Include bets explicitly on this date AND bets with no stored event_date
+        # (manually entered picks where kickoff_at was null). The loop validates
+        # each bet against its fixture's final status anyway, so NULL-date bets
+        # that aren't ready to settle simply pass through harmlessly.
+        query = query.where(
+            or_(
+                TrackedBet.event_date == run_date,
+                TrackedBet.event_date.is_(None),
+            )
+        )
+    if user_id is not None:
+        query = query.where(TrackedBet.user_id == user_id)
+
+    result = await db.execute(query)
+    bets: list[TrackedBet] = list(result.scalars().all())
+
+    settled           = 0
+    skip_no_fixture   = 0
+    skip_not_final    = 0
+    skip_no_score     = 0
+    skip_no_market    = 0
+
+    for bet in bets:
+        if bet.fixture_id is None:
+            skip_no_fixture += 1
+            continue
+        fixture = await db.get(Fixture, bet.fixture_id)
+        if fixture is None or not _fixture_is_final(fixture):
+            skip_not_final += 1
+            logger.debug(
+                "settle: skipping bet %s — fixture %s status=%s",
+                bet.id, bet.fixture_id,
+                fixture.status if fixture else "not_found",
+            )
+            continue
+        if fixture.home_score is None or fixture.away_score is None:
+            skip_no_score += 1
+            logger.warning(
+                "settle: skipping bet %s — fixture %s (%s vs %s) is %s but score is null",
+                bet.id, bet.fixture_id,
+                fixture.home_team, fixture.away_team, fixture.status,
+            )
+            continue
+
+        condition = _score_condition(bet.market_type)
+        if condition is None:
+            skip_no_market += 1
+            logger.debug(
+                "settle: skipping bet %s — no condition for market_type=%r",
+                bet.id, bet.market_type,
+            )
+            continue
+
+        won = condition(fixture.home_score, fixture.away_score)
+        _settle_bet(bet, won)
+        settled += 1
+
+    logger.info(
+        "settle_bets_for_date: settled=%d  skip_no_fixture=%d  "
+        "skip_not_final=%d  skip_no_score=%d  skip_no_market=%d",
+        settled, skip_no_fixture, skip_not_final, skip_no_score, skip_no_market,
+    )
+
+    await db.commit()
+
+    await refresh_accumulator_tickets(db, user_id=user_id)
+    return {
+        "settled":          settled,
+        "skip_no_fixture":  skip_no_fixture,
+        "skip_not_final":   skip_not_final,
+        "skip_no_score":    skip_no_score,
+        "skip_no_market":   skip_no_market,
+    }
+
+
+async def refresh_accumulator_tickets(db: AsyncSession, user_id: int | None = None) -> None:
+    """
+    Recompute result_status + profit_loss for every *pending* accumulator ticket
+    from its legs' TrackedBet rows.
+
+    Safe to call on read paths (e.g. listing tickets) so ticket headers stay in
+    sync after leg bets settle, even if a prior refresh was skipped.
+    """
+    if user_id is not None:
+        result = await db.execute(
+            select(AccumulatorTicket)
+            .where(
+                AccumulatorTicket.result_status == "Pending",
+                AccumulatorTicket.user_id == user_id,
+            )
+        )
+    else:
+        result = await db.execute(
+            select(AccumulatorTicket).where(AccumulatorTicket.result_status == "Pending")
+        )
+    tickets: list[AccumulatorTicket] = list(result.scalars().all())
+
+    for ticket in tickets:
+        legs_result = await db.execute(
+            select(AccumulatorLeg).where(AccumulatorLeg.ticket_id == ticket.id)
+        )
+        legs: list[AccumulatorLeg] = list(legs_result.scalars().all())
+
+        if not legs:
+            continue
+
+        bet_ids = [leg.tracked_bet_id for leg in legs]
+        bets_result = await db.execute(
+            select(TrackedBet).where(TrackedBet.id.in_(bet_ids))
+        )
+        bets: list[TrackedBet] = list(bets_result.scalars().all())
+        bets_by_id = {b.id: b for b in bets}
+
+        statuses: list[str] = []
+        for leg in legs:
+            b = bets_by_id.get(leg.tracked_bet_id)
+            if b is None:
+                statuses = []
+                break
+            statuses.append(b.result_status)
+
+        if len(statuses) != len(legs):
+            continue
+
+        if any(s == "Lost" for s in statuses):
+            ticket.result_status = "Lost"
+            ticket.profit_loss = round(-ticket.stake, 2)
+        elif any(s == "Pending" for s in statuses):
+            continue
+        elif all(s in ("Won", "Void") for s in statuses):
+            active_bets = [
+                bets_by_id[leg.tracked_bet_id]
+                for leg in legs
+                if bets_by_id.get(leg.tracked_bet_id)
+                and bets_by_id[leg.tracked_bet_id].result_status == "Won"
+            ]
+            if active_bets:
+                combined_odds = 1.0
+                for b in active_bets:
+                    combined_odds *= b.odds
+                ticket.combined_odds = round(combined_odds, 4)
+                ticket.result_status = "Won"
+                ticket.profit_loss = round(ticket.stake * (combined_odds - 1.0), 2)
+            else:
+                ticket.result_status = "Void"
+                ticket.profit_loss = 0.0
+
+    await db.commit()
+
+
+async def refresh_stale_fixtures_and_settle(db: AsyncSession) -> dict:
+    """
+    Refresh stale fixture statuses and settle all pending bets.
+
+    API call strategy — batch by date, not by fixture:
+      OLD: 1 call per fixture  → N calls (quota-expensive, fails at 17+ fixtures)
+      NEW: 1 call per unique event_date → typically 1-3 calls regardless of bet count
+
+    Each date call fetches ALL fixtures for that day, so we update every
+    stale fixture for a date in a single round-trip.
+
+    Returns: { refreshed_fixtures, settled, voided, errors, api_calls_made }
+    """
+    from app.services.api_client import fetch_fixtures, get_quota_info
+
+    # 1. Load all pending bets
+    result = await db.execute(
+        select(TrackedBet).where(TrackedBet.result_status == "Pending")
+    )
+    pending: list[TrackedBet] = list(result.scalars().all())
+
+    if not pending:
+        return {
+            "refreshed_fixtures": 0, "settled": 0,
+            "voided": 0, "errors": 0, "api_calls_made": 0,
+        }
+
+    # 2. Load all relevant fixtures and group by event_date
+    fixture_ids = {b.fixture_id for b in pending if b.fixture_id is not None}
+    fixtures_by_id: dict[int, Fixture] = {}
+    for fid in fixture_ids:
+        fix = await db.get(Fixture, fid)
+        if fix:
+            fixtures_by_id[fid] = fix
+
+    # Group stale fixture IDs by their event_date (skip already-final ones)
+    now = datetime.now(timezone.utc)
+    dates_to_fetch: dict[str, list[int]] = {}   # date_str → [fixture DB ids]
+
+    for fid, fixture in fixtures_by_id.items():
+        # Already final with scores — nothing to do
+        if fixture.status in FINAL_STATUSES and fixture.home_score is not None and fixture.away_score is not None:
+            continue
+        if not fixture.external_fixture_id:
+            continue
+        # NS with future kickoff — game hasn't started, skip to save quota
+        if fixture.status == "NS" and fixture.kickoff_at is not None:
+            kickoff = fixture.kickoff_at
+            if kickoff.tzinfo is None:
+                kickoff = kickoff.replace(tzinfo=timezone.utc)
+            if kickoff > now:
+                logger.debug(
+                    "refresh_stale: skipping %s vs %s — NS, kickoff not reached",
+                    fixture.home_team, fixture.away_team,
+                )
+                continue
+
+        event_date = (
+            fixture.event_date.isoformat()
+            if fixture.event_date
+            else fixture.kickoff_at.date().isoformat()
+            if fixture.kickoff_at else None
+        )
+        if not event_date:
+            continue
+        dates_to_fetch.setdefault(event_date, []).append(fid)
+
+    if not dates_to_fetch:
+        logger.info("refresh_stale: all pending fixtures are already final or NS-future — no API calls needed")
+        settle_info = await settle_bets_for_date(db, None)
+        return {
+            "refreshed_fixtures": 0,
+            "settled":            settle_info["settled"],
+            "voided":             0,
+            "errors":             0,
+            "api_calls_made":     0,
+            **{k: settle_info[k] for k in ("skip_no_fixture", "skip_not_final", "skip_no_score", "skip_no_market")},
+        }
+
+    quota = get_quota_info()
+    logger.info(
+        "refresh_stale: %d unique date(s) to refresh for %d fixtures "
+        "(quota: %s/%s remaining)",
+        len(dates_to_fetch),
+        sum(len(v) for v in dates_to_fetch.values()),
+        quota.get("remaining", "?"), quota.get("limit", "?"),
+    )
+
+    # 3. One API call per date — fetch all fixtures for that date
+    refreshed  = 0
+    voided_bets = 0
+    errors     = 0
+    api_calls  = 0
+
+    for date_str, fids_for_date in dates_to_fetch.items():
+        try:
+            rows = await fetch_fixtures(date_str, force=True)
+            api_calls += 1
+        except Exception as exc:
+            logger.warning("refresh_stale: date batch fetch failed for %s: %s", date_str, exc)
+            errors += len(fids_for_date)
+            continue
+
+        # Build lookup: external_fixture_id → fresh data
+        fresh: dict[int, dict] = {
+            row["external_fixture_id"]: row
+            for row in rows
+            if row.get("external_fixture_id")
+        }
+
+        for fid in fids_for_date:
+            fixture = fixtures_by_id.get(fid)
+            if fixture is None:
+                continue
+
+            data = fresh.get(fixture.external_fixture_id)
+            if data is None:
+                logger.warning(
+                    "refresh_stale: ext_id=%s (%s vs %s) not found in date batch for %s",
+                    fixture.external_fixture_id,
+                    fixture.home_team, fixture.away_team, date_str,
+                )
+                errors += 1
+                continue
+
+            new_status = (data.get("status") or "").strip().upper()
+            new_home   = data.get("home_score")
+            new_away   = data.get("away_score")
+            logger.info(
+                "refresh_stale: %s (%s vs %s) %s → %s  score=%s-%s",
+                fixture.external_fixture_id,
+                fixture.home_team, fixture.away_team,
+                fixture.status, new_status,
+                new_home, new_away,
+            )
+
+            fixture.status = new_status or fixture.status
+            # Only overwrite scores when the API returns real values — never
+            # clobber an existing score with None (API-Football sometimes returns
+            # null goals for a short window even after a game goes FT).
+            if new_home is not None:
+                fixture.home_score = new_home
+            if new_away is not None:
+                fixture.away_score = new_away
+            refreshed += 1
+
+            if new_status in VOID_STATUSES:
+                for bet in pending:
+                    if bet.fixture_id == fid:
+                        bet.result_status = "Void"
+                        bet.profit_loss   = 0.0
+                        bet.settled_at    = datetime.now(timezone.utc)
+                        voided_bets += 1
+
+    await db.commit()
+
+    quota_after = get_quota_info()
+    logger.info(
+        "refresh_stale: done — %d fixture(s) refreshed via %d API call(s) "
+        "(quota remaining: %s)",
+        refreshed, api_calls, quota_after.get("remaining", "?"),
+    )
+
+    # 4. Settle all pending bets now that statuses are up to date
+    settle_info = await settle_bets_for_date(db, None)
+
+    return {
+        "refreshed_fixtures": refreshed,
+        "settled":            settle_info["settled"],
+        "voided":             voided_bets,
+        "errors":             errors,
+        "api_calls_made":     api_calls,
+        **{k: settle_info[k] for k in ("skip_no_fixture", "skip_not_final", "skip_no_score", "skip_no_market")},
+    }
