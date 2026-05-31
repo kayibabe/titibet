@@ -27,6 +27,23 @@ COLUMN_MIGRATIONS = [
     ("tracked_bets",        "dual_agreement",        "TEXT"),
     ("learning_proposals",  "updated_at",            "DATETIME"),
     ("accumulator_tickets", "ticket_source",          "TEXT DEFAULT 'manual'"),
+    # ── BOS 2.0 ───────────────────────────────────────────────────────────────
+    ("signals", "bos_si",           "REAL"),
+    ("signals", "bos_passed",       "INTEGER"),   # SQLite boolean → INTEGER
+    # ── ZINB goal model ───────────────────────────────────────────────────────
+    ("signals", "zinb_lambda_h",    "REAL"),
+    ("signals", "zinb_lambda_a",    "REAL"),
+    # ── Explicit EV score ─────────────────────────────────────────────────────
+    ("signals", "ev_score",         "REAL"),
+    # ── Glicko-2 rating differential ──────────────────────────────────────────
+    ("signals", "glicko_r_diff",    "REAL"),
+    # ── BREA (BTTS risk enrichment) ───────────────────────────────────────────
+    ("signals", "brea_ri1",         "REAL"),
+    ("signals", "brea_fss",         "REAL"),
+    # ── FHGI (enhanced FH Over 0.5) ───────────────────────────────────────────
+    ("signals", "fhgi_gpi",         "REAL"),
+    ("signals", "fhgi_fhgmi",       "REAL"),
+    ("signals", "fhgi_p_model",     "REAL"),
 ]
 
 TABLE_MIGRATIONS: list[str] = [

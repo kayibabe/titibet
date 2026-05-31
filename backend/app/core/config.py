@@ -385,6 +385,42 @@ MARKET_MAX_ODDS: dict[str, float] = {
 # relative weights so the strongest picks still get the largest share.
 MAX_DAILY_EXPOSURE: float = 0.15
 
+# =============================================================================
+# BOS 2.0 — Match Stability Index thresholds
+# =============================================================================
+BOS_SI_THRESHOLD: float = 75.0   # SI ≥ 75 → fixture is stable
+BOS_O00_MAX: float = 7.0          # Hard reject if 0-0 CS odds > 7
+BOS_CMA_MAX: float = 4.0          # CMA ceiling for H-score normalisation
+
+# =============================================================================
+# BREA — BTTS Risk-Elimination Algorithm thresholds
+# =============================================================================
+BREA_RI1_MAX: float = 0.10   # Model 2a: max P(1:1) for BTTS+U2.5 NO
+BREA_RI2_MAX: float = 0.25   # Model 2b: max P(both score AND total ≥ 4)
+BREA_RI3_MAX: float = 0.15   # Model 2c: max P(both score AND total ≥ 5)
+
+# =============================================================================
+# FHGI — First-Half Goal Intensity thresholds
+# =============================================================================
+FHGI_O11_MIN: float = 2.0    # HT 1:1 odds window lower bound
+FHGI_O11_MAX: float = 6.0    # HT 1:1 odds window upper bound
+FHGI_FHGMI_MIN: float = 1.50 # FHGMI ≥ 1.5 required to proceed
+
+# =============================================================================
+# Bayesian Kelly staking — shrinkage parameters
+# Bayesian Kelly = standard_kelly × (var_model / (var_model + var_prior))
+# =============================================================================
+BAYESIAN_KELLY_P_VARIANCE: float = 0.05
+BAYESIAN_KELLY_PRIOR_VARIANCE: float = 0.10
+
+# =============================================================================
+# Dynamic EV threshold
+# θ = base_threshold + noise_multiplier × std(recent EVs)
+# =============================================================================
+EV_BASE_THRESHOLD: float = 0.0
+EV_NOISE_MULTIPLIER: float = 0.5
+EV_DYNAMIC_WINDOW: int = 20
+
 MARKET_MIN_ODDS: dict = {
     "Over 0.5":     1.02,
     "Over 1.5":     1.30,

@@ -14,7 +14,7 @@ from app.core.config import get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, OV
 from app.models import Signal, Fixture
 from app.models.odds import MarketSnapshot
 from app.models.user import User
-from app.schemas.signal import SignalOut, BayesianOut, PoissonOut, BookmakerOdds, RecommendedTicketsResponse, TitibetTicketsResponse
+from app.schemas.signal import SignalOut, BayesianOut, PoissonOut, AdvancedModelsOut, BookmakerOdds, RecommendedTicketsResponse, TitibetTicketsResponse
 from app.services.signal_engine import compute_signals_for_date, _get_underperforming_leagues
 from app.services.telegram import push_titibet_tickets as telegram_push_titibet
 from app.services.match_info import get_match_info
@@ -136,6 +136,9 @@ def _sort_metric(
     if sort_by == "system":
         return _system_rank(sig, fixture, clv_ranks)
     if sort_by == "ev":
+        # Use pre-computed ev_score when available (Bayesian Kelly shrinkage applied)
+        if sig.ev_score is not None:
+            return sig.ev_score * 100
         if sig.bayesian_prob and sig.bayesian_best_odd:
             return (sig.bayesian_prob * sig.bayesian_best_odd - 1.0) * 100
         return float("-inf")
@@ -198,6 +201,28 @@ def _to_signal_out(
             grade=sig.poisson_grade,
             mixed_signals=sig.poisson_mixed_signals,
         )
+    # Advanced model enrichment — only populate when at least one field is non-None
+    _has_advanced = any([
+        sig.bos_si is not None, sig.zinb_lambda_h is not None,
+        sig.ev_score is not None, sig.glicko_r_diff is not None,
+        sig.brea_ri1 is not None, sig.fhgi_gpi is not None,
+    ])
+    advanced = None
+    if _has_advanced:
+        advanced = AdvancedModelsOut(
+            bos_si=sig.bos_si,
+            bos_passed=sig.bos_passed,
+            zinb_lambda_h=sig.zinb_lambda_h,
+            zinb_lambda_a=sig.zinb_lambda_a,
+            ev_score=sig.ev_score,
+            glicko_r_diff=sig.glicko_r_diff,
+            brea_ri1=sig.brea_ri1,
+            brea_fss=sig.brea_fss,
+            fhgi_gpi=sig.fhgi_gpi,
+            fhgi_fhgmi=sig.fhgi_fhgmi,
+            fhgi_p_model=sig.fhgi_p_model,
+        )
+
     return SignalOut(
         id=sig.id, fixture_id=sig.fixture_id, market=sig.market,
         bayesian=bayesian, poisson=poisson,
@@ -207,6 +232,7 @@ def _to_signal_out(
         contradiction=sig.contradiction, computed_at=sig.computed_at,
         selection_name=sig.market,
         odds_drift_pct=sig.odds_drift_pct,
+        advanced=advanced,
         bookmaker_odds=bookmaker_odds,
         home_team=fixture.home_team, away_team=fixture.away_team,
         league=fixture.league, league_tier=fixture.league_tier,

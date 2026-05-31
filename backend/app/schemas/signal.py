@@ -41,6 +41,35 @@ class PoissonOut(BaseModel):
     mixed_signals: Optional[list[str]] = None
 
 
+class AdvancedModelsOut(BaseModel):
+    """
+    Advanced model outputs attached to each signal.
+    All fields are optional — present only when the relevant engine fired.
+    """
+    # BOS 2.0 — Match Stability Index
+    bos_si: Optional[float] = None
+    bos_passed: Optional[bool] = None
+
+    # ZINB — expected goals from Zero-Inflated Negative Binomial model
+    zinb_lambda_h: Optional[float] = None
+    zinb_lambda_a: Optional[float] = None
+
+    # Explicit Expected Value (p_model × best_odd − 1)
+    ev_score: Optional[float] = None
+
+    # Glicko-2 rating differential (home_r − away_r)
+    glicko_r_diff: Optional[float] = None
+
+    # BREA — BTTS risk enrichment (BTTS Yes signals only)
+    brea_ri1: Optional[float] = None     # P(1:1) — only losing case for BTTS+U2.5 NO
+    brea_fss: Optional[float] = None     # Final Selection Score [0-1]
+
+    # FHGI — First-Half Goal Intensity (Over 0.5 1H signals only)
+    fhgi_gpi: Optional[float] = None     # Goal Probability Index = devigged P(HT 1:1)
+    fhgi_fhgmi: Optional[float] = None   # FHGMI ratio
+    fhgi_p_model: Optional[float] = None  # Logistic model P(FH Over 0.5)
+
+
 class SignalOut(BaseModel):
     id: int
     fixture_id: int
@@ -62,6 +91,9 @@ class SignalOut(BaseModel):
 
     # Line movement — negative means odds shortened (steam move confirmed our edge)
     odds_drift_pct: Optional[float] = None
+
+    # Advanced model enrichment (BOS, ZINB, Glicko-2, BREA, FHGI)
+    advanced: Optional[AdvancedModelsOut] = None
 
     # Denormalised fixture fields (populated in router)
     home_team: Optional[str] = None

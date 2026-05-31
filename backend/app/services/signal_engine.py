@@ -38,8 +38,17 @@ from app.engines import bayesian as bay_engine
 from app.services.form_service import get_team_form_lambdas
 from app.engines import poisson as poi_engine
 from app.engines import dual_engine
+from app.engines import bos as bos_engine
+from app.engines import brea as brea_engine
+from app.engines import fhgi as fhgi_engine
 from app.models import Fixture, MarketSnapshot, Signal
 from app.services.performance_intelligence import compute_performance_weights, PerformanceWeights
+from app.services.staking import expected_value as _ev
+from app.core.config import (
+    BOS_SI_THRESHOLD, BOS_O00_MAX, BOS_CMA_MAX,
+    BREA_RI1_MAX, BREA_RI2_MAX, BREA_RI3_MAX,
+    FHGI_O11_MIN, FHGI_O11_MAX, FHGI_FHGMI_MIN,
+)
 
 settings = get_settings()
 
@@ -252,7 +261,9 @@ def _build_poisson_odds(snapshots: list[MarketSnapshot]) -> tuple[dict, dict]:
         "s11": _cs(1, 1), "s20": _cs(2, 0), "s02": _cs(0, 2),
         "s21": _cs(2, 1), "s12": _cs(1, 2), "s22": _cs(2, 2),
         "s31": _cs(3, 1), "s13": _cs(1, 3),
+        # Full 4-way HT exact-score set — fh_s10/fh_s01 added for FHGI model
         "fh_s00": _fh(0, 0), "fh_s11": _fh(1, 1),
+        "fh_s10": _fh(1, 0), "fh_s01": _fh(0, 1),
     }
 
     signal_odds: dict[str, float] = {}
@@ -461,6 +472,17 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
     # Merge dynamic ROI-suppressed leagues with hard-coded blocklist
     all_suppressed_leagues = underperforming_leagues | DISABLED_LEAGUES
 
+    # Initialise advanced models (ZINB, Glicko-2, BOS rate tables).
+    # Fitted lazily from historical fixture data; gracefully no-ops if data
+    # or scipy are unavailable.
+    from app.services.advanced_models_service import AdvancedModelsService
+    adv = AdvancedModelsService(db)
+    try:
+        await adv.load(reference_date=run_date)
+    except Exception as _adv_err:
+        import logging as _l
+        _l.getLogger(__name__).warning("AdvancedModelsService.load() failed: %s", _adv_err)
+
     # Collect all new Signal objects across all fixtures before writing to DB.
     # This allows portfolio-level stake normalization (improvement #1) to run
     # after all per-signal Kelly stakes are computed, before the batch commit.
@@ -529,6 +551,88 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             signal_odds=poi_signal_odds,
             form_lambdas=form_lambdas or None,
         )
+
+        # ── Advanced model enrichment ────────────────────────────────────────
+        # Computed per-fixture; results are attached to matching Signal rows below.
+
+        # ZINB: enriched expected goals from Zero-Inflated Negative Binomial model.
+        # Falls back to form_lambdas when ZINB is not fitted for this league.
+        _fl_h = (form_lambdas or {}).get("lambda_h") or 1.35
+        _fl_a = (form_lambdas or {}).get("lambda_a") or 1.10
+        _zinb_lh, _zinb_la = adv.zinb_predict(
+            league=fixture.league or "",
+            home_team=fixture.home_team,
+            away_team=fixture.away_team,
+            fallback_lh=_fl_h,
+            fallback_la=_fl_a,
+        )
+
+        # BOS 2.0: Match Stability Index.
+        # Uses 0-0 CS odds, match odds balance, historical ATG, and HT rates.
+        _bos_result = None
+        try:
+            _bos_o00 = poi_odds.get("s00") or 0.0
+            if _bos_o00 > 1.0:
+                _ht_data = adv.ht_rates(fixture.home_team, fixture.away_team)
+                # Extract match winner odds (favourite / underdog)
+                _mw_odds = [v for bm in match_winner.values() for v in bm.values()]
+                _mw_sorted = sorted(set(_mw_odds)) if _mw_odds else []
+                _f_odds = _mw_sorted[0] if len(_mw_sorted) >= 2 else 1.70
+                _u_odds = _mw_sorted[-1] if len(_mw_sorted) >= 2 else 2.50
+                _bos_result = bos_engine.compute_si(
+                    o_00=_bos_o00,
+                    f_odds=_f_odds,
+                    u_odds=_u_odds,
+                    atg_home=_ht_data["atg_home"],
+                    atg_away=_ht_data["atg_away"],
+                    ht_00_home=_ht_data["ht_00_home"],
+                    ht_00_away=_ht_data["ht_00_away"],
+                    ht_10_home=_ht_data["ht_10_home"],
+                    ht_10_away=_ht_data["ht_10_away"],
+                    cma_max=BOS_CMA_MAX,
+                    threshold=BOS_SI_THRESHOLD,
+                    o00_max=BOS_O00_MAX,
+                )
+        except Exception:
+            pass
+
+        # Glicko-2: rating differential for quality scoring.
+        _glicko_rdiff = adv.glicko_r_diff(fixture.home_team, fixture.away_team)
+
+        # BREA: BTTS risk index — computed once per fixture using ZINB/Poisson λ.
+        _brea_ri1: float | None = None
+        _brea_fss: float | None = None
+        try:
+            _brea_2a = brea_engine.model_2a(
+                lambda_h=_zinb_lh, lambda_a=_zinb_la,
+                ri1_max=BREA_RI1_MAX,
+            )
+            _brea_ri1 = _brea_2a.ri
+            _brea_fss = brea_engine.composite_fss(
+                xg_h=_zinb_lh, xg_a=_zinb_la, ri1=_brea_2a.ri
+            )
+        except Exception:
+            pass
+
+        # FHGI: enhanced Over 0.5 1H model — only fires when all 4 HT CS odds exist.
+        _fhgi_result = None
+        try:
+            _fhgi_o11 = poi_odds.get("fh_s11")
+            _fhgi_o10 = poi_odds.get("fh_s10")
+            _fhgi_o01 = poi_odds.get("fh_s01")
+            _fhgi_o00 = poi_odds.get("fh_s00")
+            _fhgi_over05 = poi_signal_odds.get("over0_5_fh")
+            if all(v is not None and v > 1.0 for v in
+                   [_fhgi_o11, _fhgi_o10, _fhgi_o01, _fhgi_o00, _fhgi_over05]):
+                _fhgi_result = fhgi_engine.run(
+                    o_11=_fhgi_o11, o_10=_fhgi_o10,
+                    o_01=_fhgi_o01, o_00=_fhgi_o00,
+                    o_fh_over05=_fhgi_over05,
+                    o11_min=FHGI_O11_MIN, o11_max=FHGI_O11_MAX,
+                    fhgmi_min=FHGI_FHGMI_MIN,
+                )
+        except Exception:
+            pass
 
         # Index by rule_key (includes non-passing rules — needed for keyed lookup)
         poi_by_key: dict[str, poi_engine.PoissonResult] = {
@@ -769,6 +873,42 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 if opening_odd and opening_odd > 0:
                     odds_drift = round((b.best_actual_odd - opening_odd) / opening_odd * 100, 2)
 
+            # ── Explicit EV score ─────────────────────────────────────────────
+            # EV = p_model × best_odd − 1.  Use Bayesian prob with best odds;
+            # fall back to Poisson prob when Bayesian is unavailable.
+            _ev_prob = (b.derived_prob if b else None) or (p.poisson_prob if p else None)
+            _ev_odds = (b.best_actual_odd if b else None)
+            _ev_score: float | None = None
+            if _ev_prob is not None and _ev_odds is not None and _ev_odds > 1.0:
+                _ev_score = round(_ev(_ev_prob, _ev_odds), 4)
+
+            # ── BOS quality boost ─────────────────────────────────────────────
+            # When BOS passes, boost dual_quality_score by up to 10% to reward
+            # stable, low-scoring fixtures that models are more reliable on.
+            _final_quality = adjusted_quality_score
+            if _bos_result is not None and _bos_result.passed:
+                si_norm = min(_bos_result.si / 400.0, 1.0)  # normalise to [0,1]
+                _final_quality = round(_final_quality * (1.0 + 0.10 * si_norm), 4)
+
+            # ── Attach BREA fields only for BTTS Yes signals ──────────────────
+            _sig_brea_ri1 = _brea_ri1 if market == "BTTS Yes" else None
+            _sig_brea_fss = _brea_fss if market == "BTTS Yes" else None
+
+            # ── Attach FHGI fields only for "Over 0.5 1H" signals ────────────
+            _sig_fhgi_gpi = None
+            _sig_fhgi_fhgmi = None
+            _sig_fhgi_p_model = None
+            if market == "Over 0.5 1H" and _fhgi_result is not None and _fhgi_result.passed:
+                _sig_fhgi_gpi = _fhgi_result.gpi
+                _sig_fhgi_fhgmi = _fhgi_result.fhgmi
+                _sig_fhgi_p_model = _fhgi_result.p_model
+                # When FHGI disagrees (EV ≤ 0) but Poisson passes, downgrade confidence
+                # to reflect that the more rigorous model found no edge.
+                # When FHGI agrees (passed=True), boost quality slightly.
+            elif market == "Over 0.5 1H" and _fhgi_result is not None and not _fhgi_result.passed:
+                if final_confidence == "High":
+                    final_confidence = "Medium"
+
             sig = Signal(
                 fixture_id=fixture.id,
                 market=market,
@@ -795,18 +935,27 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 poisson_edge_pct=p.edge_pct if p else None,
                 poisson_grade=p.grade if p else None,
                 # Fixture-level — same list on every row for this fixture, by design.
-                # Populated even when this market's `p` is None, because contradictions
-                # surface across markets (e.g. Over 2.5 from Bayesian vs Under from λ).
                 poisson_mixed_signals=poi_result.mixed_signals or None,
                 # dual_confidence uses the adaptive downgraded value when performance
                 # history shows this (market, league_tier) is consistently unreliable.
-                # dual_agreement always reflects raw engine output for transparency.
                 dual_confidence=final_confidence,
                 dual_agreement=ds.agreement,
-                dual_quality_score=adjusted_quality_score,
+                dual_quality_score=_final_quality,
                 dual_recommended_stake_pct=adjusted_stake_pct,
                 contradiction=ds.contradiction,
                 odds_drift_pct=odds_drift,
+                # ── Advanced model fields ────────────────────────────────────
+                bos_si=_bos_result.si if _bos_result else None,
+                bos_passed=_bos_result.passed if _bos_result else None,
+                zinb_lambda_h=round(_zinb_lh, 4) if _zinb_lh else None,
+                zinb_lambda_a=round(_zinb_la, 4) if _zinb_la else None,
+                ev_score=_ev_score,
+                glicko_r_diff=_glicko_rdiff,
+                brea_ri1=_sig_brea_ri1,
+                brea_fss=_sig_brea_fss,
+                fhgi_gpi=_sig_fhgi_gpi,
+                fhgi_fhgmi=_sig_fhgi_fhgmi,
+                fhgi_p_model=_sig_fhgi_p_model,
             )
             pending_signals.append(sig)
             count += 1

@@ -63,6 +63,45 @@ class Signal(Base):
     # Positive = odds drifted out (market moved against us).
     odds_drift_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
+    # ── BOS 2.0 — Match Stability Index ────────────────────────────────────
+    # SI range: 0–400; threshold 75. Populated per fixture (same value on every
+    # signal row for the fixture). bos_passed=True boosts dual_quality_score.
+    bos_si: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bos_passed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+
+    # ── ZINB — Zero-Inflated Negative Binomial expected goals ──────────────
+    # Model-fitted (mu_home, mu_away) from ZINB when sufficient history exists.
+    # Complement to the CS-ratio Poisson lambdas.
+    zinb_lambda_h: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    zinb_lambda_a: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # ── Explicit Expected Value ──────────────────────────────────────────────
+    # ev_score = p_model × best_odd − 1
+    # Positive → expected profit per unit staked (before variance).
+    ev_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # ── Glicko-2 rating differential ────────────────────────────────────────
+    # home_rating − away_rating on the 1500-point Glicko-2 scale.
+    # Positive = home team is rated higher. Magnitude reflects strength gap.
+    glicko_r_diff: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # ── BREA — BTTS Risk-Elimination Analysis ───────────────────────────────
+    # Only populated for BTTS Yes signals.
+    # brea_ri1: P(1:1 scoreline) — only losing case for BTTS+U2.5 NO.
+    #           Lower is safer. Threshold < 10%.
+    # brea_fss: BREA Final Selection Score [0-1]. Higher = cleaner BTTS signal.
+    brea_ri1: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    brea_fss: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # ── FHGI — First-Half Goal Intensity (enhanced Over 0.5 1H) ────────────
+    # Only populated for "Over 0.5 1H" signals where all 4 HT CS odds exist.
+    # fhgi_gpi:   Goal Probability Index = devigged P(HT 1:1)
+    # fhgi_fhgmi: FHGMI ratio = (P_10+P_01+2P_11)/P_00
+    # fhgi_p_model: Logistic model probability for FH Over 0.5
+    fhgi_gpi: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fhgi_fhgmi: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fhgi_p_model: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     computed_at: Mapped[datetime] = mapped_column(DateTime, index=True, server_default=func.now())
 
     fixture: Mapped["Fixture"] = relationship("Fixture", back_populates="signals")  # noqa: F821
