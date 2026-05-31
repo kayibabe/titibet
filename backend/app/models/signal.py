@@ -102,6 +102,15 @@ class Signal(Base):
     fhgi_fhgmi: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     fhgi_p_model: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
+    # ── WTCPM — Weak Team Corner Persistence Model ───────────────────────────
+    # Only populated for "Underdog Over 1.5 Corners" signals.
+    # wtcpm_di:        Dominance Index = u_odds / f_odds (higher = stronger favourite)
+    # wtcpm_ccs:       Corner Confidence Score 0–100
+    # wtcpm_p_corners: P(underdog corners ≥ 2) under Poisson model
+    wtcpm_di: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    wtcpm_ccs: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    wtcpm_p_corners: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     computed_at: Mapped[datetime] = mapped_column(DateTime, index=True, server_default=func.now())
 
     fixture: Mapped["Fixture"] = relationship("Fixture", back_populates="signals")  # noqa: F821

@@ -69,10 +69,11 @@ def _system_rank(
       6. clv_market_rank       — market has consistent positive CLV history (≥10 bets)
       7. drift_rank            — odds shortened since opening (sharp money confirmed)
       8. dual_model_prob_flag  — both engines ≥ 0.65
-      9. tier_rank             — Tier 1 league
-     10. avg_prob              — (bayesian + poisson) / 2
-     11. quality_score         — tie-breaker only (was incorrectly overriding primary_prob)
-     12. goals_expectation     — lambda total (final tie-breaker)
+      9. glicko_certainty      — normalised |Glicko-2 rating gap| (more predictable fixtures rank higher)
+     10. tier_rank             — Tier 1 league
+     11. avg_prob              — (bayesian + poisson) / 2
+     12. quality_score         — tie-breaker only
+     13. goals_expectation     — lambda total (final tie-breaker)
 
     Later tuple items act only as tie-breakers for earlier priorities.
     """
@@ -109,6 +110,14 @@ def _system_rank(
     drift = sig.odds_drift_pct
     drift_rank = 1 if (drift is not None and drift < -3.0) else 0
 
+    # Glicko-2 certainty: |rating_diff| / 400 clamped to [0, 1].
+    # A large rating gap (e.g. +300 pts) means the fixture is more predictable
+    # regardless of direction — models are more reliable in lopsided matches.
+    # Only acts as a late tie-breaker (position 9).
+    glicko_certainty = 0.0
+    if sig.glicko_r_diff is not None:
+        glicko_certainty = min(abs(sig.glicko_r_diff) / 400.0, 1.0)
+
     return (
         confidence_rank,
         agreement_rank,
@@ -117,12 +126,11 @@ def _system_rank(
         bookmaker_support_rank,
         clv_market_rank,              # position 6 — consistent CLV edge
         drift_rank,                   # position 7 — sharp money confirmation
-        dual_model_probability_flag,
-        tier_rank,
-        # Note: fields below are rarely consulted in tuple comparison (earlier fields
-        # almost always differ first). Kept for debugging / future use.
+        dual_model_probability_flag,  # position 8 — both engines high prob
+        round(glicko_certainty, 4),   # position 9 — Glicko-2 match predictability
+        tier_rank,                    # position 10
         round(avg_prob, 6),
-        round(quality, 6),            # position 11 — tie-breaker only
+        round(quality, 6),            # position 12 — tie-breaker only
         round(goals_expectation, 6),
     )
 
@@ -206,6 +214,7 @@ def _to_signal_out(
         sig.bos_si is not None, sig.zinb_lambda_h is not None,
         sig.ev_score is not None, sig.glicko_r_diff is not None,
         sig.brea_ri1 is not None, sig.fhgi_gpi is not None,
+        sig.wtcpm_di is not None,
     ])
     advanced = None
     if _has_advanced:
@@ -221,6 +230,9 @@ def _to_signal_out(
             fhgi_gpi=sig.fhgi_gpi,
             fhgi_fhgmi=sig.fhgi_fhgmi,
             fhgi_p_model=sig.fhgi_p_model,
+            wtcpm_di=sig.wtcpm_di,
+            wtcpm_ccs=sig.wtcpm_ccs,
+            wtcpm_p_corners=sig.wtcpm_p_corners,
         )
 
     return SignalOut(

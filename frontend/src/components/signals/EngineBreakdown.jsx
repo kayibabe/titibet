@@ -46,6 +46,7 @@ function EmptyEngine({ name, accent, reason }) {
 export default function EngineBreakdown({ signal }) {
   const b = signal.bayesian
   const p = signal.poisson
+  const adv = signal.advanced
 
   // ── Bayesian derived values ─────────────────────────────────────────────
   const bayesianProb   = fmtPct(b?.prob)
@@ -73,6 +74,32 @@ export default function EngineBreakdown({ signal }) {
     b?.overround == null ? undefined :
     b.overround < 1.05   ? 'good'    :
     b.overround < 1.10   ? undefined : 'warn'
+
+  // ── Advanced model derived values ──────────────────────────────────────────
+  const zinbLambda = adv?.zinb_lambda_h != null && adv?.zinb_lambda_a != null
+    ? `${adv.zinb_lambda_h.toFixed(2)} / ${adv.zinb_lambda_a.toFixed(2)}`
+    : null
+  const zinbTotal = adv?.zinb_lambda_h != null && adv?.zinb_lambda_a != null
+    ? (adv.zinb_lambda_h + adv.zinb_lambda_a).toFixed(2)
+    : null
+  const evScoreDisplay = adv?.ev_score != null
+    ? `${adv.ev_score >= 0 ? '+' : ''}${(adv.ev_score * 100).toFixed(2)}%`
+    : null
+  const evScoreTone = adv?.ev_score == null ? undefined
+    : adv.ev_score > 0.05 ? 'good' : adv.ev_score > 0 ? 'warn' : 'bad'
+  const glickoDisplay = adv?.glicko_r_diff != null
+    ? `${adv.glicko_r_diff >= 0 ? '+' : ''}${adv.glicko_r_diff.toFixed(0)}`
+    : null
+  const glickoTone = adv?.glicko_r_diff == null ? undefined
+    : adv.glicko_r_diff > 100 ? 'good' : adv.glicko_r_diff < -100 ? 'bad' : undefined
+  const breaRiDisplay = adv?.brea_ri1 != null ? `${(adv.brea_ri1 * 100).toFixed(1)}%` : null
+  const breaRiTone = adv?.brea_ri1 == null ? undefined
+    : adv.brea_ri1 < 0.07 ? 'good' : adv.brea_ri1 < 0.10 ? 'warn' : 'bad'
+  const fhgiPDisplay = adv?.fhgi_p_model != null ? fmtPct(adv.fhgi_p_model) : null
+  const fhgiPTone = adv?.fhgi_p_model == null ? undefined
+    : adv.fhgi_p_model > 0.60 ? 'good' : adv.fhgi_p_model > 0.50 ? 'warn' : 'bad'
+
+  const hasAdvanced = adv && Object.values(adv).some(v => v != null)
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
@@ -118,6 +145,64 @@ export default function EngineBreakdown({ signal }) {
           accent={{ bg: 'bg-purple-500/5', text: 'text-purple-400' }}
           reason="No Poisson signal — market not covered by the Poisson rule set, or λ unavailable for these teams."
         />
+      )}
+
+      {/* ── Advanced Models — full-width when present ── */}
+      {hasAdvanced && (
+        <div className="md:col-span-2 rounded-lg border border-[var(--border)] px-3 py-2 bg-teal-500/5">
+          <div className="text-xs font-semibold text-teal-400 mb-2">Advanced Models</div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6">
+            {/* ZINB */}
+            <div>
+              <div className="text-[10px] text-[var(--text)] opacity-50 uppercase tracking-wider mb-1">ZINB xG</div>
+              <Row label="λH / λA (ZINB)" value={zinbLambda} />
+              <Row label="λ total"         value={zinbTotal} />
+            </div>
+            {/* BOS + Glicko */}
+            <div>
+              <div className="text-[10px] text-[var(--text)] opacity-50 uppercase tracking-wider mb-1">BOS · Glicko-2</div>
+              <Row label="BOS SI"
+                   value={adv?.bos_si != null ? adv.bos_si.toFixed(0) : null}
+                   tone={adv?.bos_passed ? 'good' : adv?.bos_si != null ? 'bad' : undefined} />
+              <Row label="Stable"
+                   value={adv?.bos_passed != null ? (adv.bos_passed ? 'Yes' : 'No') : null}
+                   tone={adv?.bos_passed ? 'good' : adv?.bos_passed === false ? 'bad' : undefined} />
+              <Row label="Rating diff"  value={glickoDisplay} tone={glickoTone} />
+            </div>
+            {/* EV + BREA/FHGI */}
+            <div>
+              <div className="text-[10px] text-[var(--text)] opacity-50 uppercase tracking-wider mb-1">EV · BREA · FHGI</div>
+              <Row label="Model EV"     value={evScoreDisplay}    tone={evScoreTone} />
+              {adv?.brea_ri1 != null && (
+                <Row label="BREA RI₁"   value={breaRiDisplay}    tone={breaRiTone} />
+              )}
+              {adv?.brea_fss != null && (
+                <Row label="BREA FSS"   value={fmtNum(adv.brea_fss)} />
+              )}
+              {adv?.fhgi_gpi != null && (
+                <Row label="FHGI GPI"   value={fmtNum(adv.fhgi_gpi, 3)} />
+              )}
+              {adv?.fhgi_fhgmi != null && (
+                <Row label="FHGMI"      value={fmtNum(adv.fhgi_fhgmi)} />
+              )}
+              {adv?.fhgi_p_model != null && (
+                <Row label="FHGI P(FH)" value={fhgiPDisplay} tone={fhgiPTone} />
+              )}
+              {adv?.wtcpm_ccs != null && (
+                <Row label="WTCPM CCS"
+                     value={adv.wtcpm_ccs.toFixed(0)}
+                     tone={adv.wtcpm_ccs >= 80 ? 'good' : adv.wtcpm_ccs >= 65 ? 'warn' : 'bad'} />
+              )}
+              {adv?.wtcpm_di != null && (
+                <Row label="DI" value={fmtNum(adv.wtcpm_di)} />
+              )}
+              {adv?.wtcpm_p_corners != null && (
+                <Row label="P(corners≥2)" value={fmtPct(adv.wtcpm_p_corners)}
+                     tone={adv.wtcpm_p_corners > 0.75 ? 'good' : 'warn'} />
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

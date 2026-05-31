@@ -41,6 +41,7 @@ from app.engines import dual_engine
 from app.engines import bos as bos_engine
 from app.engines import brea as brea_engine
 from app.engines import fhgi as fhgi_engine
+from app.engines import wtcpm as wtcpm_engine
 from app.models import Fixture, MarketSnapshot, Signal
 from app.services.performance_intelligence import compute_performance_weights, PerformanceWeights
 from app.services.staking import expected_value as _ev
@@ -48,6 +49,10 @@ from app.core.config import (
     BOS_SI_THRESHOLD, BOS_O00_MAX, BOS_CMA_MAX,
     BREA_RI1_MAX, BREA_RI2_MAX, BREA_RI3_MAX,
     FHGI_O11_MIN, FHGI_O11_MAX, FHGI_FHGMI_MIN,
+    WTCPM_CCS_MIN, WTCPM_DI_MIN,
+    WTCPM_STD_F_MAX, WTCPM_STD_U_MIN,
+    WTCPM_STRONG_F_MAX, WTCPM_STRONG_U_MIN,
+    CORNERS_TOTAL_MARKET_NAMES, CORNERS_TEAM_MARKET_NAMES,
 )
 
 settings = get_settings()
@@ -215,6 +220,42 @@ def _build_win_to_nil_away(snapshots: list[MarketSnapshot]) -> dict[str, dict[st
     for s in snapshots:
         if s.market_type in WIN_TO_NIL_AWAY_MARKET_NAMES:
             result.setdefault(s.bookmaker, {})[s.selection_name] = s.odds
+    return result
+
+
+def _build_corner_odds(snapshots: list[MarketSnapshot]) -> dict[str, float]:
+    """
+    Extract corner betting odds from market snapshots.
+
+    Returns a flat dict:
+        "total_over_X.5"  : best Over X.5 total-corners odds
+        "away_over_X.5"   : best Away Team Over X.5 corners odds
+        "home_over_X.5"   : best Home Team Over X.5 corners odds
+
+    Used by WTCPM to find "underdog Over 1.5 corners" odds — the model
+    resolves which side is the underdog based on match winner odds.
+    """
+    result: dict[str, float] = {}
+    for s in snapshots:
+        if s.market_type in CORNERS_TOTAL_MARKET_NAMES:
+            sel = s.selection_name.strip()
+            if sel.startswith("Over ") or sel.startswith("Under "):
+                key = f"total_{sel.lower().replace(' ', '_')}"
+                if key not in result or s.odds > result[key]:
+                    result[key] = s.odds
+        elif s.market_type in CORNERS_TEAM_MARKET_NAMES:
+            sel = s.selection_name.strip()
+            mt_lower = s.market_type.lower()
+            if "home" in mt_lower:
+                prefix = "home"
+            elif "away" in mt_lower:
+                prefix = "away"
+            else:
+                continue
+            if sel.startswith("Over ") or sel.startswith("Under "):
+                key = f"{prefix}_{sel.lower().replace(' ', '_')}"
+                if key not in result or s.odds > result[key]:
+                    result[key] = s.odds
     return result
 
 
@@ -512,6 +553,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         wtn_home = _build_win_to_nil_home(snapshots)
         wtn_away = _build_win_to_nil_away(snapshots)
         exact_goals = _build_exact_goals(snapshots)
+        corner_odds = _build_corner_odds(snapshots)
         poi_odds, poi_signal_odds = _build_poisson_odds(snapshots)
         opening_odds_map = _compute_opening_odds_scoped(snapshots_raw)
 
@@ -634,6 +676,35 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         except Exception:
             pass
 
+        # WTCPM: Underdog Over 1.5 Corners.
+        # Requires match winner odds (to identify favourite/underdog) and corner
+        # betting odds. Falls back to league-average corner defaults when H2H data
+        # is unavailable.
+        _wtcpm_result = None
+        try:
+            _mw_flat = [v for bm in match_winner.values() for v in bm.values()]
+            _mw_sorted = sorted(set(_mw_flat)) if _mw_flat else []
+            if len(_mw_sorted) >= 2:
+                _wtcpm_f_odds = _mw_sorted[0]    # favourite (lowest odds)
+                _wtcpm_u_odds = _mw_sorted[-1]   # underdog (highest odds)
+                # Find underdog team corner odds: try team-specific first, then total
+                _wtcpm_corner_odds = (
+                    corner_odds.get("away_over_1.5")
+                    or corner_odds.get("home_over_1.5")
+                    or 0.0
+                )
+                if _wtcpm_corner_odds > 1.0:
+                    _wtcpm_result = wtcpm_engine.run(
+                        f_odds=_wtcpm_f_odds,
+                        u_odds=_wtcpm_u_odds,
+                        odds_ud_over15_corners=_wtcpm_corner_odds,
+                        ccs_min=WTCPM_CCS_MIN, di_min=WTCPM_DI_MIN,
+                        std_f_max=WTCPM_STD_F_MAX, std_u_min=WTCPM_STD_U_MIN,
+                        strong_f_max=WTCPM_STRONG_F_MAX, strong_u_min=WTCPM_STRONG_U_MIN,
+                    )
+        except Exception:
+            pass
+
         # Index by rule_key (includes non-passing rules — needed for keyed lookup)
         poi_by_key: dict[str, poi_engine.PoissonResult] = {
             r.rule_key: r for r in poi_result.results
@@ -649,6 +720,11 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 bay_by_market[mr.market] = mr
 
         all_markets = set(bay_by_market.keys()) | set(poi_by_market.keys())
+
+        # Inject corner market when WTCPM passes — it has no Bayesian/Poisson
+        # counterpart so it won't appear in either engine's results naturally.
+        if _wtcpm_result is not None and _wtcpm_result.passed:
+            all_markets.add("Underdog Over 1.5 Corners")
 
         await db.execute(delete(Signal).where(Signal.fixture_id == fixture.id))
 
@@ -722,6 +798,50 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             # "Away Over 0.5 in Ekstraklasa" can be suppressed while other markets
             # in that league remain active.
             if perf_weights is not None and perf_weights.should_suppress_league_market(fixture_league, market):
+                continue
+
+            # Corner signals are WTCPM-only — skip Bayesian/Poisson fusion entirely.
+            # Build a synthetic dual result from WTCPM output so the rest of the
+            # pipeline (quality gate, stake sizing, etc.) works unchanged.
+            if market == "Underdog Over 1.5 Corners":
+                if _wtcpm_result is None or not _wtcpm_result.passed:
+                    continue
+                sig = Signal(
+                    fixture_id=fixture.id,
+                    market=market,
+                    bayesian_prob=None, bayesian_edge=None, bayesian_best_odd=None,
+                    bayesian_bookmaker=None, bayesian_overround=None,
+                    bayesian_coverage=None, bayesian_bookmaker_count=None,
+                    bayesian_is_value=None, bayesian_confidence=None,
+                    bayesian_quality_score=None, bayesian_kelly_pct=None,
+                    bayesian_odds_outlier=None, bayesian_consensus_odd=None,
+                    poisson_lambda_h=None, poisson_lambda_a=None,
+                    poisson_lambda_total=None, poisson_prob=_wtcpm_result.p_corners_ge2,
+                    poisson_rule_key="wtcpm", poisson_rule_pass=True,
+                    poisson_rule_strong=_wtcpm_result.qualifier_tier == "strong",
+                    poisson_edge_pct=round(_wtcpm_result.ev * 100, 2),
+                    poisson_grade="A" if _wtcpm_result.ccs >= 80 else "B",
+                    poisson_mixed_signals=None,
+                    dual_confidence="Medium" if _wtcpm_result.qualifier_tier == "standard" else "High",
+                    dual_agreement="Poisson Only",
+                    dual_quality_score=round(_wtcpm_result.ccs / 100.0 * 0.08, 4),
+                    dual_recommended_stake_pct=_wtcpm_result.kelly_stake_pct,
+                    contradiction=False,
+                    odds_drift_pct=None,
+                    bos_si=_bos_result.si if _bos_result else None,
+                    bos_passed=_bos_result.passed if _bos_result else None,
+                    zinb_lambda_h=round(_zinb_lh, 4),
+                    zinb_lambda_a=round(_zinb_la, 4),
+                    ev_score=round(_wtcpm_result.ev, 4),
+                    glicko_r_diff=_glicko_rdiff,
+                    brea_ri1=None, brea_fss=None,
+                    fhgi_gpi=None, fhgi_fhgmi=None, fhgi_p_model=None,
+                    wtcpm_di=_wtcpm_result.di,
+                    wtcpm_ccs=_wtcpm_result.ccs,
+                    wtcpm_p_corners=_wtcpm_result.p_corners_ge2,
+                )
+                pending_signals.append(sig)
+                count += 1
                 continue
 
             b = bay_by_market.get(market)
@@ -894,6 +1014,15 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             _sig_brea_ri1 = _brea_ri1 if market == "BTTS Yes" else None
             _sig_brea_fss = _brea_fss if market == "BTTS Yes" else None
 
+            # ── Attach WTCPM fields only for corner signals ───────────────────
+            _sig_wtcpm_di = None
+            _sig_wtcpm_ccs = None
+            _sig_wtcpm_p = None
+            if market == "Underdog Over 1.5 Corners" and _wtcpm_result is not None:
+                _sig_wtcpm_di = _wtcpm_result.di
+                _sig_wtcpm_ccs = _wtcpm_result.ccs
+                _sig_wtcpm_p = _wtcpm_result.p_corners_ge2
+
             # ── Attach FHGI fields only for "Over 0.5 1H" signals ────────────
             _sig_fhgi_gpi = None
             _sig_fhgi_fhgmi = None
@@ -956,6 +1085,9 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 fhgi_gpi=_sig_fhgi_gpi,
                 fhgi_fhgmi=_sig_fhgi_fhgmi,
                 fhgi_p_model=_sig_fhgi_p_model,
+                wtcpm_di=None,
+                wtcpm_ccs=None,
+                wtcpm_p_corners=None,
             )
             pending_signals.append(sig)
             count += 1

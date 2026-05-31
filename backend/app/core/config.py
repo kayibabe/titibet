@@ -153,6 +153,25 @@ BTTS_MARKET_NAMES: frozenset = frozenset({
     "BTTS",
 })
 
+# ── Corner markets — API-Football naming variants ─────────────────────────────
+# Total match corners (Over/Under bets)
+CORNERS_TOTAL_MARKET_NAMES: frozenset = frozenset({
+    "Total Corners",
+    "Corners Over/Under",
+    "Corner Kicks",
+    "Total - Corners",
+    "Asian Corners",
+})
+
+# Per-team corner totals (Home/Away Over X corners)
+CORNERS_TEAM_MARKET_NAMES: frozenset = frozenset({
+    "Total Corners - Home Team",
+    "Total Corners - Away Team",
+    "Home Team Total Corners",
+    "Away Team Total Corners",
+    "Team Corners",
+})
+
 MATCH_WINNER_MARKET_NAMES: frozenset = frozenset({
     "Match Winner",
     "Match Winner (Regular Time)",
@@ -247,6 +266,9 @@ MARKETS: dict = {
     "Exactly 1 Goal":  lambda h, a: (h + a) == 1,
     "Exactly 2 Goals": lambda h, a: (h + a) == 2,
     "Exactly 3 Goals": lambda h, a: (h + a) == 3,
+    # ── Corner market (WTCPM) ─────────────────────────────────────────────────
+    # Corner outcomes are not tracked via goal scores — settled externally.
+    "Underdog Over 1.5 Corners": lambda h, a: True,
 }
 
 # Every key in MARKETS is evaluated by the Bayesian pipeline (same as the old
@@ -265,6 +287,9 @@ DISABLED_MARKETS: frozenset = frozenset({
     "Home Under 1.5", # -45.2% ROI across backtest; home-team scoring ceiling is hard to model reliably
     # "Under 3.5" re-enabled 2026-05-21: 67.5% natural hit rate across 1,045 fixtures;
     # Tier 1 72.4%, Tier 2 71.1%. Min odds floor raised to 1.65 for positive EV.
+    # Corner market — enabled once corner odds ingestion is confirmed in production.
+    # Remove from this set after verifying CORNERS_TOTAL_MARKET_NAMES hit rate in live sync.
+    "Underdog Over 1.5 Corners",
 })
 
 # Leagues permanently disabled from signal generation AND serving.
@@ -398,6 +423,16 @@ BOS_CMA_MAX: float = 4.0          # CMA ceiling for H-score normalisation
 BREA_RI1_MAX: float = 0.10   # Model 2a: max P(1:1) for BTTS+U2.5 NO
 BREA_RI2_MAX: float = 0.25   # Model 2b: max P(both score AND total ≥ 4)
 BREA_RI3_MAX: float = 0.15   # Model 2c: max P(both score AND total ≥ 5)
+
+# =============================================================================
+# WTCPM — Weak Team Corner Persistence Model thresholds
+# =============================================================================
+WTCPM_CCS_MIN: float = 65.0    # Minimum Corner Confidence Score
+WTCPM_DI_MIN: float = 5.0      # Minimum Dominance Index (u_odds / f_odds)
+WTCPM_STD_F_MAX: float = 1.40  # Standard qualifier: favourite odds ≤ 1.40
+WTCPM_STD_U_MIN: float = 7.00  # Standard qualifier: underdog odds ≥ 7.00
+WTCPM_STRONG_F_MAX: float = 1.30  # Strong qualifier: favourite ≤ 1.30
+WTCPM_STRONG_U_MIN: float = 10.00 # Strong qualifier: underdog ≥ 10.00
 
 # =============================================================================
 # FHGI — First-Half Goal Intensity thresholds

@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react'
-import { ChevronDown, ChevronUp, Target, Clock, TrendingDown, TrendingUp, Lock, CheckCircle2, Lightbulb, Plus, X, Heart } from 'lucide-react'
+import { ChevronDown, ChevronUp, Target, Clock, TrendingDown, TrendingUp, Lock, CheckCircle2, Lightbulb, Plus, X, Heart, Shield, Activity, AlertTriangle } from 'lucide-react'
 import { ConfidenceBadge, AgreementBadge } from './SignalBadge'
 import EngineBreakdown from './EngineBreakdown'
 import ContradictionAlert from './ContradictionAlert'
@@ -82,17 +82,91 @@ function DriftBadge({ driftPct }) {
   return null
 }
 
-// ── EV badge ─────────────────────────────────────────────────────────────────
-function EVBadge({ evPct }) {
-  if (evPct == null) return null
-  const positive = evPct > 0
+// ── EV badge — prefers signal.advanced.ev_score (Bayesian-Kelly adjusted) ─────
+function EVBadge({ evPct, evScore }) {
+  // ev_score is a decimal (0.124 = +12.4%), evPct is already a percentage
+  const display = evScore != null ? evScore * 100 : evPct
+  if (display == null) return null
+  const positive = display > 0
+  const source = evScore != null ? 'Model EV' : 'EV'
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold border tracking-wide ${
-      positive
-        ? 'bg-green-500/15 text-green-400 border-green-500/30'
-        : 'bg-red-500/15 text-red-500 border-red-500/30'
-    }`}>
-      {positive ? '+' : ''}{evPct.toFixed(1)}% EV
+    <span
+      title={`${source}: ${positive ? '+' : ''}${display.toFixed(2)}% expected return per unit`}
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold border tracking-wide ${
+        positive
+          ? 'bg-green-500/15 text-green-400 border-green-500/30'
+          : 'bg-red-500/15 text-red-500 border-red-500/30'
+      }`}>
+      {positive ? '+' : ''}{display.toFixed(1)}% EV
+    </span>
+  )
+}
+
+// ── BOS stability badge ───────────────────────────────────────────────────────
+function BOSBadge({ bosSi, bosPassed }) {
+  if (bosSi == null) return null
+  if (!bosPassed) return null
+  return (
+    <span
+      title={`BOS Stability Index: ${bosSi.toFixed(0)}/400 — fixture profile supports conservative markets`}
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border bg-slate-500/10 text-slate-300 border-slate-500/25"
+    >
+      <Shield size={9} />
+      Stable {bosSi.toFixed(0)}
+    </span>
+  )
+}
+
+// ── BREA risk badge — BTTS Yes only ──────────────────────────────────────────
+function BREABadge({ breaRi1, market }) {
+  if (breaRi1 == null || market !== 'BTTS Yes') return null
+  const riPct = breaRi1 * 100
+  // Low risk: ri1 < 7% (bright green), medium: 7–10%, high: ≥ 10% (warn)
+  const tone =
+    riPct < 7  ? 'bg-emerald-500/12 text-emerald-400 border-emerald-500/25' :
+    riPct < 10 ? 'bg-amber-500/12 text-amber-400 border-amber-500/30'       :
+                 'bg-red-500/12 text-red-400 border-red-500/25'
+  const label = riPct < 7 ? 'Low risk' : riPct < 10 ? 'Med risk' : 'Hi risk'
+  return (
+    <span
+      title={`BREA RI₁: ${riPct.toFixed(1)}% — probability of 1:1 scoreline (only losing case for BTTS+U2.5 No)`}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${tone}`}
+    >
+      <Activity size={9} />
+      RI₁ {riPct.toFixed(1)}% · {label}
+    </span>
+  )
+}
+
+// ── WTCPM corner badge — Underdog Over 1.5 Corners only ──────────────────────
+function WTCPMBadge({ wtcpmCcs, wtcpmDi, market }) {
+  if (wtcpmCcs == null || market !== 'Underdog Over 1.5 Corners') return null
+  const tone =
+    wtcpmCcs >= 80 ? 'bg-orange-500/12 text-orange-300 border-orange-500/25' :
+                     'bg-amber-500/12 text-amber-300 border-amber-500/25'
+  return (
+    <span
+      title={`WTCPM — Corner Confidence Score: ${wtcpmCcs.toFixed(0)}/100 | Dominance Index: ${wtcpmDi?.toFixed(1) ?? '—'}`}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${tone}`}
+    >
+      <Target size={9} />
+      CCS {wtcpmCcs.toFixed(0)} · DI {wtcpmDi?.toFixed(1) ?? '—'}
+    </span>
+  )
+}
+
+// ── FHGI model badge — Over 0.5 1H only ──────────────────────────────────────
+function FHGIBadge({ fhgiGpi, fhgiFhgmi, fhgiPModel, market }) {
+  if (fhgiGpi == null || market !== 'Over 0.5 1H') return null
+  const modelPct = fhgiPModel != null ? (fhgiPModel * 100).toFixed(0) : null
+  return (
+    <span
+      title={`FHGI: GPI=${fhgiGpi.toFixed(3)} | FHGMI=${fhgiFhgmi?.toFixed(2) ?? '—'}${modelPct ? ` | P(FH>0.5)=${modelPct}%` : ''}`}
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border bg-violet-500/10 text-violet-300 border-violet-500/25"
+    >
+      <Activity size={9} />
+      GPI {fhgiGpi.toFixed(2)}
+      {fhgiFhgmi != null && <span className="opacity-70">· FHGMI {fhgiFhgmi.toFixed(1)}</span>}
     </span>
   )
 }
@@ -140,6 +214,9 @@ function MarketIntentBadge({ market }) {
   } else if (market === 'Exactly 1 Goal' || market === 'Exactly 2 Goals' || market === 'Exactly 3 Goals') {
     label = 'High Variance Value'
     style = 'bg-fuchsia-500/10 text-fuchsia-600 border-fuchsia-500/30'
+  } else if (market === 'Underdog Over 1.5 Corners') {
+    label = 'Corner Pressure'
+    style = 'bg-orange-500/10 text-orange-600 border-orange-500/30'
   }
 
   if (!label) return null
@@ -202,7 +279,30 @@ function getWhyMarketChips(signal) {
     chips.push('tier 1 league')
   }
 
-  return chips.slice(0, 4)
+  // Advanced model enrichment chips
+  const adv = signal.advanced
+  if (adv?.bos_passed) {
+    chips.push('stable match profile')
+  }
+  if (adv?.brea_ri1 != null && adv.brea_ri1 < 0.07 && market === 'BTTS Yes') {
+    chips.push('low BTTS risk')
+  }
+  if (adv?.fhgi_p_model != null && adv.fhgi_p_model > 0.55 && market === 'Over 0.5 1H') {
+    chips.push('FHGI confirmed')
+  }
+  if (adv?.glicko_r_diff != null && Math.abs(adv.glicko_r_diff) > 150) {
+    chips.push('rating gap confirmed')
+  }
+  if (adv?.zinb_lambda_h != null && adv?.zinb_lambda_a != null) {
+    const total = adv.zinb_lambda_h + adv.zinb_lambda_a
+    if (total > 2.8 && (market?.startsWith('Over') || market === 'BTTS Yes')) {
+      chips.push('high xG match')
+    } else if (total < 1.8 && market?.startsWith('Under')) {
+      chips.push('low xG match')
+    }
+  }
+
+  return chips.slice(0, 5)
 }
 
 function WhyMarketChips({ signal }) {
@@ -466,6 +566,7 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
 
   const isContradiction = signal.dual_agreement === 'Contradiction'
   const evPct = signal.bayesian?.ev_pct ?? null
+  const evScore = signal.advanced?.ev_score ?? null   // pre-computed, preferred
   const primaryProb = Math.max(signal.bayesian?.prob ?? 0, signal.poisson?.prob ?? 0)
   const isMediumConfidence = signal.dual_confidence === 'Medium'
   const isHighProbabilityOutcome = primaryProb >= 0.7 && !isMediumConfidence
@@ -574,11 +675,32 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
 
             {/* EV · Agreement · Drift · MarketIntent */}
             <div className="flex items-center gap-2 flex-wrap">
-              {isPro ? <EVBadge evPct={evPct} /> : <LockedPill label="EV%" />}
+              {isPro
+                ? <EVBadge evPct={evPct} evScore={evScore} />
+                : <LockedPill label="EV%" />}
               <AgreementBadge agreement={signal.dual_agreement} />
               {isPro && <DriftBadge driftPct={signal.odds_drift_pct} />}
               <MarketIntentBadge market={signal.market} />
             </div>
+
+            {/* Advanced model enrichment badges (pro) */}
+            {isPro && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <BOSBadge bosSi={signal.advanced?.bos_si} bosPassed={signal.advanced?.bos_passed} />
+                <BREABadge breaRi1={signal.advanced?.brea_ri1} market={signal.market} />
+                <FHGIBadge
+                  fhgiGpi={signal.advanced?.fhgi_gpi}
+                  fhgiFhgmi={signal.advanced?.fhgi_fhgmi}
+                  fhgiPModel={signal.advanced?.fhgi_p_model}
+                  market={signal.market}
+                />
+                <WTCPMBadge
+                  wtcpmCcs={signal.advanced?.wtcpm_ccs}
+                  wtcpmDi={signal.advanced?.wtcpm_di}
+                  market={signal.market}
+                />
+              </div>
+            )}
 
             {/* Fair odds → offered · book margin */}
             <FairOddsRow

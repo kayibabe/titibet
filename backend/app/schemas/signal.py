@@ -69,6 +69,11 @@ class AdvancedModelsOut(BaseModel):
     fhgi_fhgmi: Optional[float] = None   # FHGMI ratio
     fhgi_p_model: Optional[float] = None  # Logistic model P(FH Over 0.5)
 
+    # WTCPM — Weak Team Corner Persistence Model (corner signals only)
+    wtcpm_di: Optional[float] = None         # Dominance Index = u_odds / f_odds
+    wtcpm_ccs: Optional[float] = None        # Corner Confidence Score 0–100
+    wtcpm_p_corners: Optional[float] = None  # P(underdog corners ≥ 2)
+
 
 class SignalOut(BaseModel):
     id: int

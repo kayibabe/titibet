@@ -44,6 +44,10 @@ COLUMN_MIGRATIONS = [
     ("signals", "fhgi_gpi",         "REAL"),
     ("signals", "fhgi_fhgmi",       "REAL"),
     ("signals", "fhgi_p_model",     "REAL"),
+    # ── WTCPM (corner signals) ─────────────────────────────────────────────────
+    ("signals", "wtcpm_di",         "REAL"),
+    ("signals", "wtcpm_ccs",        "REAL"),
+    ("signals", "wtcpm_p_corners",  "REAL"),
 ]
 
 TABLE_MIGRATIONS: list[str] = [
