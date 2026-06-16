@@ -320,10 +320,23 @@ DISABLED_MARKETS: frozenset = frozenset({
 # or when you want an immediate, restart-proof ban.
 DISABLED_LEAGUES: frozenset = frozenset({
     "ekstraklasa",   # consistent negative ROI across tracked history
-    "regionalliga",  # Austrian Regionalliga (Ost/West/Mitte) — 0% win rate across 16 bets, end-of-season Tier 3
-    "esiliiga",      # Estonian top/second flight — 0% WR on 3 bets (backtest 2026-06-16)
-    "ykkösliiga",    # Finnish Div 2 — 25% WR on 4 bets (backtest 2026-06-16)
-    "friendlies",    # International/pre-season friendlies — rotation-heavy, low signal quality
+    "regionalliga",  # Austrian Regionalliga (exact name) — 0% WR across 16 bets
+    "regionalliga - mitte",           # Austrian Regionalliga Mitte (disabled 2026-06-16)
+    "regionalliga - ost",             # Austrian Regionalliga Ost  (disabled 2026-06-16)
+    "regionalliga - west",            # Austrian Regionalliga West (disabled 2026-06-16)
+    "esiliiga",      # Estonian top/second flight — 0% WR on 3 bets
+    "ykkösliiga",    # Finnish Div 2 — 25% WR on 4 bets
+    "friendlies",    # International/pre-season friendlies — rotation-heavy
+    # ── Disabled 2026-06-16 (poor analytics performance) ──────────────────────
+    "primera división femenina",
+    "pro league",
+    "reserve league",
+    "segunda división",
+    "persha liga",
+    "première division",
+    "serie c - promotion - play-offs",
+    "serie d",
+    "usl championship",
 })
 
 MARKET_PROB_BOUNDS: dict = {

@@ -703,19 +703,8 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             if severe_team_total_flag and final_confidence in ("High", "Medium"):
                 final_confidence = _CONFIDENCE_DOWNGRADE.get(final_confidence, final_confidence)
 
-            # Low-confidence quality gate.
-            # After any downgrade: if final confidence is "Low" AND the league×market
-            # factor is below 0.85 (i.e., this combo has a poor track record), skip
-            # the signal entirely rather than surfacing a weak, underperforming pick.
-            if final_confidence == "Low" and perf_weights is not None:
-                lm_factor = perf_weights.factor_for_league_market(fixture_league, market)
-                if lm_factor < 0.85:
-                    continue
-
-            # Low confidence in Tier 3 = near-zero edge in highest-variance context.
-            # Backtest shows Low confidence overall at +0.6% ROI — not worth the risk
-            # in leagues with structural unpredictability.
-            if final_confidence == "Low" and (fixture.league_tier or 3) >= 3:
+            # Low confidence disabled entirely — overall +0.6% ROI not worth variance.
+            if final_confidence == "Low":
                 continue
 
             # ── Signal tier gates ─────────────────────────────────────────────
