@@ -24,6 +24,7 @@ class BacktestResult(Base):
     actual_odd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     edge: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     dual_confidence: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    dual_agreement: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     bet_result: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 1=won, 0=lost, -1=unknown
     profit_loss: Mapped[float] = mapped_column(Float, default=0.0)
     flat_stake: Mapped[float] = mapped_column(Float, default=1.0)

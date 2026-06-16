@@ -21,12 +21,10 @@ COLUMN_MIGRATIONS = [
     ("tracked_bets",        "clv_pct",               "REAL"),
     ("signals",             "poisson_mixed_signals", "TEXT"),
     ("tracked_bets",        "user_id",               "INTEGER REFERENCES users(id)"),
-    ("accumulator_tickets", "user_id",               "INTEGER REFERENCES users(id)"),
     ("signals",             "odds_drift_pct",        "REAL"),
     ("tracked_bets",        "data_completeness",     "TEXT"),
     ("tracked_bets",        "dual_agreement",        "TEXT"),
     ("learning_proposals",  "updated_at",            "DATETIME"),
-    ("accumulator_tickets", "ticket_source",          "TEXT DEFAULT 'manual'"),
     # ── BOS 2.0 ───────────────────────────────────────────────────────────────
     ("signals", "bos_si",           "REAL"),
     ("signals", "bos_passed",       "INTEGER"),   # SQLite boolean → INTEGER
@@ -48,9 +46,41 @@ COLUMN_MIGRATIONS = [
     ("signals", "wtcpm_di",         "REAL"),
     ("signals", "wtcpm_ccs",        "REAL"),
     ("signals", "wtcpm_p_corners",  "REAL"),
+    # ── Halftime scores (needed by FHGI calibrator) ───────────────────────────
+    ("fixtures", "home_score_ht",   "INTEGER"),
+    ("fixtures", "away_score_ht",   "INTEGER"),
+    # ── Actual corner counts (needed by WTCPM H2H corner service) ──────────────
+    ("fixtures", "home_corners",    "INTEGER"),
+    ("fixtures", "away_corners",    "INTEGER"),
+    # ── Admin flag — explicit boolean; no longer inferred from tier ────────────
+    ("users",    "is_admin",        "INTEGER NOT NULL DEFAULT 0"),
+    # ── Backtest agreement column ─────────────────────────────────────────────
+    ("backtest_results", "dual_agreement", "TEXT"),
 ]
 
 TABLE_MIGRATIONS: list[str] = [
+    """
+    CREATE TABLE IF NOT EXISTS calibration_snapshots (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        snapshot_date   DATE    NOT NULL,
+        window_days     INTEGER NOT NULL DEFAULT 90,
+        n_bets          INTEGER NOT NULL,
+        win_rate        REAL,
+        brier_score     REAL,
+        brier_skill     REAL,
+        ece             REAL,
+        flagged_markets TEXT,
+        market_summary  TEXT,
+        created_at      DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS system_settings (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS telegram_push_log (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -179,3 +209,14 @@ async def run_migrations(engine: AsyncEngine) -> None:
                 log.info("Index migration applied: %s", index_name)
             except Exception as e:  # noqa: BLE001
                 log.warning("Index migration FAILED for %s: %s", index_name, e)
+
+        # ── Data migrations ───────────────────────────────────────────────────
+        # Seed is_admin=1 for any existing elite users who predate the column.
+        # Idempotent: rows already at is_admin=1 are untouched.
+        try:
+            await conn.execute(text(
+                "UPDATE users SET is_admin=1 WHERE tier='elite' AND is_admin=0"
+            ))
+            log.info("Data migration applied: seeded is_admin for elite users")
+        except Exception as e:  # noqa: BLE001
+            log.warning("Data migration FAILED (is_admin seed): %s", e)

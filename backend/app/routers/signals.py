@@ -11,14 +11,12 @@ from app.core.auth import get_current_user_optional, get_current_user
 from app.core.database import get_db
 from sqlalchemy import func
 from app.core.config import get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES, MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET
-from app.models import Signal, Fixture
+from app.models import Signal, Fixture, TrackedBet
 from app.models.odds import MarketSnapshot
 from app.models.user import User
-from app.schemas.signal import SignalOut, BayesianOut, PoissonOut, AdvancedModelsOut, BookmakerOdds, RecommendedTicketsResponse, TitibetTicketsResponse
+from app.schemas.signal import SignalOut, BayesianOut, PoissonOut, AdvancedModelsOut, BookmakerOdds
 from app.services.signal_engine import compute_signals_for_date, _get_underperforming_leagues
-from app.services.telegram import push_titibet_tickets as telegram_push_titibet
 from app.services.match_info import get_match_info
-from app.services.recommended_tickets import load_titibet_tickets
 from app.services.clv import _BET_TO_SELECTION, _MARKET_TYPE_SCOPE
 
 FREE_SIGNAL_LIMIT = 5
@@ -157,16 +155,47 @@ def _sort_metric(
     return sig.dual_quality_score if sig.dual_quality_score is not None else float("-inf")
 
 
+_UNDER_MARKETS: frozenset[str] = frozenset({"Under 2.5", "Under 3.5", "Under 1.5", "Away Under 1.5", "Home Under 1.5"})
+_OVER_MARKETS: frozenset[str] = frozenset({
+    "Over 1.5", "Over 2.5",
+    "Home Over 0.5", "Home Over 1.5", "Away Over 0.5", "Away Over 1.5",
+})
+
+
+def _market_slot(market: str) -> str:
+    """
+    Map a market to a deduplication slot.
+
+    Under markets and Over/team-scoring markets are independent betting positions —
+    you can back both 'Home Over 0.5' AND 'Under 3.5' on the same fixture.
+    Collapsing them to one signal loses valid, orthogonal picks.
+
+    Slots:
+      "under"  — Under X.5 goals (total or team)
+      "over"   — Over X.5 goals or team-scoring markets
+      "other"  — BTTS, corners, match winner, etc.
+    """
+    if market in _UNDER_MARKETS:
+        return "under"
+    if market in _OVER_MARKETS:
+        return "over"
+    return "other"
+
+
 def _best_per_fixture(
     rows: list[tuple[Signal, Fixture]],
     sort_by: str,
     clv_ranks: dict[str, int] | None = None,
 ) -> list[tuple[Signal, Fixture]]:
-    best_by_fixture: dict[int, tuple[Signal, Fixture]] = {}
+    # Key: (fixture_id, market_slot) — keeps the best Over signal AND the best
+    # Under signal per fixture, rather than collapsing all markets to one pick.
+    best: dict[tuple[int, str], tuple[Signal, Fixture]] = {}
     for sig, fix in rows:
-        current = best_by_fixture.get(sig.fixture_id)
+        slot = _market_slot(sig.market)
+        key = (sig.fixture_id, slot)
+        current = best.get(key)
         if current is None:
-            best_by_fixture[sig.fixture_id] = (sig, fix)
+            best[key] = (sig, fix)
             continue
         current_sig, _ = current
         candidate_metric = _sort_metric(sig, sort_by, fix, clv_ranks)
@@ -175,8 +204,8 @@ def _best_per_fixture(
             candidate_metric == current_metric and
             (sig.dual_quality_score or 0.0) > (current_sig.dual_quality_score or 0.0)
         ):
-            best_by_fixture[sig.fixture_id] = (sig, fix)
-    return list(best_by_fixture.values())
+            best[key] = (sig, fix)
+    return list(best.values())
 
 
 def _to_signal_out(
@@ -213,8 +242,6 @@ def _to_signal_out(
     _has_advanced = any([
         sig.bos_si is not None, sig.zinb_lambda_h is not None,
         sig.ev_score is not None, sig.glicko_r_diff is not None,
-        sig.brea_ri1 is not None, sig.fhgi_gpi is not None,
-        sig.wtcpm_di is not None,
     ])
     advanced = None
     if _has_advanced:
@@ -225,14 +252,6 @@ def _to_signal_out(
             zinb_lambda_a=sig.zinb_lambda_a,
             ev_score=sig.ev_score,
             glicko_r_diff=sig.glicko_r_diff,
-            brea_ri1=sig.brea_ri1,
-            brea_fss=sig.brea_fss,
-            fhgi_gpi=sig.fhgi_gpi,
-            fhgi_fhgmi=sig.fhgi_fhgmi,
-            fhgi_p_model=sig.fhgi_p_model,
-            wtcpm_di=sig.wtcpm_di,
-            wtcpm_ccs=sig.wtcpm_ccs,
-            wtcpm_p_corners=sig.wtcpm_p_corners,
         )
 
     return SignalOut(
@@ -299,7 +318,7 @@ async def list_signals(
     # when the league consistently produces 0-0 / 1-0 results.
     if OVER_GOALS_SUPPRESSED_LEAGUES:
         _OVER_MKT_LIST = [
-            "Over 0.5", "Over 1.5", "Over 2.5", "Over 3.5",
+            "Over 1.5", "Over 2.5",
             "Home Over 0.5", "Home Over 1.5",
             "Away Over 0.5", "Away Over 1.5",
         ]
@@ -388,22 +407,6 @@ async def list_signals(
     return results
 
 
-@router.get("/recommended-tickets", response_model=TitibetTicketsResponse)
-async def recommended_tickets(
-    date_str: Optional[str] = Query(None, alias="date"),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Returns the three TiTiBet named tickets:
-      - general: all signal matches (optional tracking)
-      - free:    3 date-seeded random picks (auto-tracked on load)
-      - pro:     4 sub-tickets — High Conf ACCA, Goals ACCA, Safe Ticket, Best Singles
-    """
-    run_date = date.fromisoformat(date_str) if date_str else date.today()
-    data = await load_titibet_tickets(db, run_date)
-    return TitibetTicketsResponse(**data)
-
-
 @router.get("/stat-picks")
 async def stat_driven_picks(
     date_str: Optional[str] = Query(None, alias="date"),
@@ -422,10 +425,8 @@ async def stat_driven_picks(
     at average odds of 2.05–2.15 — the strongest documented edge in the system.
 
     Response shape:
-      { date, singles: [...], accumulator: { legs, combined_odds, win_probability_estimate, leg_count } }
+      { date, singles: [...] }
     """
-    import math as _math
-
     target_date = date.fromisoformat(date_str) if date_str else date.today()
 
     _STAT_MARKETS = ["Home Over 0.5", "Away Over 0.5"]
@@ -508,33 +509,9 @@ async def stat_driven_picks(
 
     singles = [_leg(sig, fix) for sig, fix in rows]
 
-    # Build accumulator: start with 4 legs; include 5th only when combined odds
-    # stay within a sensible ceiling (≤ 30×) so the ticket stays winnable.
-    acca_legs = singles[:4]
-    if len(singles) >= 5:
-        current_odds = _math.prod(l["odds"] for l in acca_legs)
-        if current_odds * singles[4]["odds"] <= 30.0:
-            acca_legs = singles[:5]
-
-    combined_odds = round(_math.prod(l["odds"] for l in acca_legs), 2) if acca_legs else None
-
-    win_prob = None
-    if acca_legs:
-        p = 1.0
-        for leg in acca_legs:
-            lp = leg.get("probability") or (1.0 / leg["odds"])
-            p *= lp * 0.95          # 5 % correlation/independence discount
-        win_prob = round(p, 4)
-
     return {
         "date": str(target_date),
         "singles": singles,
-        "accumulator": {
-            "legs": acca_legs,
-            "combined_odds": combined_odds,
-            "win_probability_estimate": win_prob,
-            "leg_count": len(acca_legs),
-        },
     }
 
 
@@ -725,16 +702,9 @@ async def compute_signals(
     date_str = body.get("date")
     target_date = date.fromisoformat(date_str) if date_str else date.today()
     count = await compute_signals_for_date(db, target_date)
-    # Push to Telegram channel (no-op when TELEGRAM_BOT_TOKEN is not set).
-    telegram_sent = False
-    try:
-        telegram_sent = await telegram_push_titibet(db, target_date)
-    except Exception:
-        pass
     return {
         "signals_computed": count,
         "date": target_date.isoformat(),
-        "telegram_sent": telegram_sent,
     }
 
 

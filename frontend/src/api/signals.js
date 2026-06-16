@@ -42,22 +42,6 @@ export async function fetchSignalExplanation(fixtureId, market) {
   return res.json()
 }
 
-export async function fetchRecommendedTickets(date) {
-  const params = new URLSearchParams()
-  if (date) params.set('date', date)
-  const res = await apiFetch(`${BASE}/recommended-tickets?${params}`)
-  if (!res.ok) throw new Error(`Recommended tickets fetch failed: ${res.status}`)
-  return res.json()
-}
-
-export async function fetchStatPicks(date) {
-  const params = new URLSearchParams()
-  if (date) params.set('date', date)
-  const res = await apiFetch(`${BASE}/stat-picks?${params}`)
-  if (!res.ok) throw new Error(`Stat picks fetch failed: ${res.status}`)
-  return res.json()
-}
-
 export async function computeSignals(date) {
   const res = await apiFetch(`${BASE}/compute`, {
     method: 'POST',

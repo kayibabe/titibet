@@ -170,7 +170,7 @@ async def intelligence(
       - calibration:          Expected vs actual win rate per confidence tier
 
     This is the primary diagnostic tool for understanding WHY picks win or lose:
-      - Rules / market+tier combos with factor < 0.62 are auto-suppressed in accumulators
+      - Rules / market+tier combos with factor < 0.62 are candidates for suppression
       - Calibration errors > 10% mean the engine is overconfident in that tier
       - Use by_market_tier to find which leagues are killing a specific market's ROI
     """
@@ -238,7 +238,7 @@ async def calibration(
     too many signals at that tier — tighten the relevant thresholds in config.py:
       - High overconfident: raise min_value_edge or min_derived_prob
       - Medium overconfident: raise min_edge_pct
-      - Low overconfident: consider only using Medium+ in accumulators
+      - Low overconfident: consider raising min_derived_prob for Low confidence signals
     """
     weights = await compute_performance_weights(
         db,

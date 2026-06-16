@@ -28,7 +28,7 @@ Self-learning loop
 ------------------
 Settlement → Loss Analyst (per-bet) → Pattern Detector (batch)
           → Threshold Tuner → Backtester → LearningConfig update
-          → Accumulator generator reads LearningConfig on next run
+          → Signal engine reads LearningConfig on next run
 
 Failure categories (structured tags)
 -------------------------------------
@@ -385,7 +385,7 @@ Current thresholds context:
 - MIN_LEG_QUALITY: 0.04
 - AUTO_SUPPRESS_MIN_SAMPLES: 25
 - Tier 3 penalty: -0.006 per leg
-- No per-market odds ceiling currently exists in the accumulator (new feature)
+- No per-market odds ceiling is currently enforced (new feature)
 
 Respond with:
 {{
@@ -700,9 +700,8 @@ async def run_loss_analysis_pipeline(
             report.skipped_proposals.append({**proposal, "backtest": bt.reason})
             logger.info("Proposal REJECTED: %s — %s", proposal.get("proposal_id"), bt.reason)
 
-    # ── Step 5: Persist accepted proposals so the accumulator can read them ───
-    # Only market_odds_ceiling proposals are actionable today; persist all accepted
-    # types so future consumers can use them without a schema change.
+    # ── Step 5: Persist accepted proposals ───────────────────────────────────
+    # Persist all accepted types so future consumers can use them without a schema change.
     if report.accepted_proposals:
         for proposal in report.accepted_proposals:
             change_type = proposal.get("change_type", "")

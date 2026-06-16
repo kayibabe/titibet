@@ -1,12 +1,11 @@
 ﻿import { useState, useEffect } from 'react'
-import { ChevronDown, ChevronUp, Target, Clock, TrendingDown, TrendingUp, Lock, CheckCircle2, Lightbulb, Plus, X, Heart, Shield, Activity, AlertTriangle } from 'lucide-react'
+import { ChevronDown, ChevronUp, Target, Clock, TrendingDown, TrendingUp, Lock, CheckCircle2, Lightbulb, X, Heart, Zap, Bot } from 'lucide-react'
 import { ConfidenceBadge, AgreementBadge } from './SignalBadge'
 import EngineBreakdown from './EngineBreakdown'
 import ContradictionAlert from './ContradictionAlert'
 import OddsDisplay from '../shared/OddsDisplay'
 import { fmtKickoff } from '../../utils/format'
 import { fetchSignalExplanation } from '../../api/signals'
-import { useAccaDraft } from '../../store/useAccaDraft'
 
 const FINAL_STATUSES = new Set(['FT', 'AET', 'PEN'])
 const LIVE_STATUSES = new Set(['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT'])
@@ -102,73 +101,54 @@ function EVBadge({ evPct, evScore }) {
   )
 }
 
-// ── BOS stability badge ───────────────────────────────────────────────────────
-function BOSBadge({ bosSi, bosPassed }) {
-  if (bosSi == null) return null
-  if (!bosPassed) return null
-  return (
-    <span
-      title={`BOS Stability Index: ${bosSi.toFixed(0)}/400 — fixture profile supports conservative markets`}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border bg-slate-500/10 text-slate-300 border-slate-500/25"
-    >
-      <Shield size={9} />
-      Stable {bosSi.toFixed(0)}
-    </span>
-  )
-}
+// ── Cross-module synergy badge — high-conviction combos ──────────────────────
+// Fires when two independent models independently confirm the same thesis,
+// which is a much stronger signal than either model alone.
+// Combo A: BOS SI ≥ 85 + BREA RI₁ < 8%   → structural stability AND low BTTS risk
+// Combo B: FHGI FHGMI > 2.5 + BOS passed → strong first-half goal signal with structural support
+function SynergyBadge({ adv, market }) {
+  if (!adv) return null
 
-// ── BREA risk badge — BTTS Yes only ──────────────────────────────────────────
-function BREABadge({ breaRi1, market }) {
-  if (breaRi1 == null || market !== 'BTTS Yes') return null
-  const riPct = breaRi1 * 100
-  // Low risk: ri1 < 7% (bright green), medium: 7–10%, high: ≥ 10% (warn)
-  const tone =
-    riPct < 7  ? 'bg-emerald-500/12 text-emerald-400 border-emerald-500/25' :
-    riPct < 10 ? 'bg-amber-500/12 text-amber-400 border-amber-500/30'       :
-                 'bg-red-500/12 text-red-400 border-red-500/25'
-  const label = riPct < 7 ? 'Low risk' : riPct < 10 ? 'Med risk' : 'Hi risk'
-  return (
-    <span
-      title={`BREA RI₁: ${riPct.toFixed(1)}% — probability of 1:1 scoreline (only losing case for BTTS+U2.5 No)`}
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${tone}`}
-    >
-      <Activity size={9} />
-      RI₁ {riPct.toFixed(1)}% · {label}
-    </span>
-  )
-}
+  const bosSi   = adv.bos_si
+  const bosPassed = adv.bos_passed
+  const breaRi1 = adv.brea_ri1
+  const fhgmv   = adv.fhgi_fhgmi
 
-// ── WTCPM corner badge — Underdog Over 1.5 Corners only ──────────────────────
-function WTCPMBadge({ wtcpmCcs, wtcpmDi, market }) {
-  if (wtcpmCcs == null || market !== 'Underdog Over 1.5 Corners') return null
-  const tone =
-    wtcpmCcs >= 80 ? 'bg-orange-500/12 text-orange-300 border-orange-500/25' :
-                     'bg-amber-500/12 text-amber-300 border-amber-500/25'
-  return (
-    <span
-      title={`WTCPM — Corner Confidence Score: ${wtcpmCcs.toFixed(0)}/100 | Dominance Index: ${wtcpmDi?.toFixed(1) ?? '—'}`}
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${tone}`}
-    >
-      <Target size={9} />
-      CCS {wtcpmCcs.toFixed(0)} · DI {wtcpmDi?.toFixed(1) ?? '—'}
-    </span>
-  )
-}
+  // Combo A: high-conviction defensive / under-goals selection
+  if (
+    bosSi != null && bosSi >= 85 &&
+    breaRi1 != null && breaRi1 < 0.08 &&
+    (market === 'BTTS Yes' || market?.startsWith('Under'))
+  ) {
+    return (
+      <span
+        title={`High-conviction combo: BOS SI=${bosSi.toFixed(0)} (≥85) + BREA RI₁=${(breaRi1*100).toFixed(1)}% (<8%) — structural stability and low failure probability confirmed by two independent models`}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border bg-amber-500/15 text-amber-300 border-amber-500/40"
+      >
+        <Zap size={9} />
+        High-Conv · Dual confirmed
+      </span>
+    )
+  }
 
-// ── FHGI model badge — Over 0.5 1H only ──────────────────────────────────────
-function FHGIBadge({ fhgiGpi, fhgiFhgmi, fhgiPModel, market }) {
-  if (fhgiGpi == null || market !== 'Over 0.5 1H') return null
-  const modelPct = fhgiPModel != null ? (fhgiPModel * 100).toFixed(0) : null
-  return (
-    <span
-      title={`FHGI: GPI=${fhgiGpi.toFixed(3)} | FHGMI=${fhgiFhgmi?.toFixed(2) ?? '—'}${modelPct ? ` | P(FH>0.5)=${modelPct}%` : ''}`}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border bg-violet-500/10 text-violet-300 border-violet-500/25"
-    >
-      <Activity size={9} />
-      GPI {fhgiGpi.toFixed(2)}
-      {fhgiFhgmi != null && <span className="opacity-70">· FHGMI {fhgiFhgmi.toFixed(1)}</span>}
-    </span>
-  )
+  // Combo B: high-conviction first-half goal selection
+  if (
+    fhgmv != null && fhgmv > 2.5 &&
+    bosPassed &&
+    market === 'Over 0.5 1H'
+  ) {
+    return (
+      <span
+        title={`High-conviction combo: FHGMI=${fhgmv.toFixed(2)} (>2.50) + BOS structure stable — strong first-half scoring intensity with structural support`}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border bg-violet-500/15 text-violet-300 border-violet-500/40"
+      >
+        <Zap size={9} />
+        High-Conv · FH intensity
+      </span>
+    )
+  }
+
+  return null
 }
 
 function MarketIntentBadge({ market }) {
@@ -196,7 +176,7 @@ function MarketIntentBadge({ market }) {
     market === 'Under 3.5'
   ) {
     label = 'Goals Suppression'
-    style = 'bg-slate-500/10 text-slate-600 border-slate-500/30'
+    style = 'bg-sky-500/15 text-sky-400 border-sky-500/35'
   } else if (market === '1X (Home or Draw)' || market === 'X2 (Draw or Away)' || market === '12 (Home or Away)') {
     label = 'Safer Market'
     style = 'bg-blue-500/12 text-blue-500 border-blue-500/30'
@@ -207,7 +187,7 @@ function MarketIntentBadge({ market }) {
     market === 'Away Under 1.5'
   ) {
     label = 'Inverse Scoring Angle'
-    style = 'bg-amber-500/12 text-amber-600 border-amber-500/35'
+    style = 'bg-sky-500/12 text-sky-400 border-sky-500/30'
   } else if (market === 'Home Win to Nil' || market === 'Away Win to Nil') {
     label = 'Clean Sheet Value'
     style = 'bg-emerald-500/12 text-emerald-600 border-emerald-500/35'
@@ -302,7 +282,7 @@ function getWhyMarketChips(signal) {
     }
   }
 
-  return chips.slice(0, 5)
+  return chips.slice(0, 3)
 }
 
 function WhyMarketChips({ signal }) {
@@ -529,11 +509,22 @@ const SAVED_KEY = 'titibet_saved_signals_v1'
 const getSaved = () => { try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]') } catch { return [] } }
 
 // ── Main card ─────────────────────────────────────────────────────────────────
-export default function SignalCard({ signal, rank, isPro = true, isTracked = false, onTrackPick, onDeepDive }) {
-  const [expanded, setExpanded]       = useState(false)
+// Apply the user's odds-adjustment setting uniformly wherever odds are displayed,
+// so the same selection shows the same price on the board and in Value Bets.
+function applyOddsAdj(raw, pct) {
+  if (raw == null || !pct) return raw
+  return Math.max(1.01, raw * (1 - Math.abs(pct) / 100))
+}
+
+// Persist engine-breakdown open/closed across cards for the session, so power
+// users who want the math don't have to re-open it on every card.
+const ENGINE_OPEN_KEY = 'titibet_engine_breakdown_open_v1'
+const getEngineOpen = () => { try { return sessionStorage.getItem(ENGINE_OPEN_KEY) === '1' } catch { return false } }
+
+export default function SignalCard({ signal, rank, isPro = true, isTracked = false, isAutoTracked = false, onTrackPick, onDeepDive, oddsAdjPct = 0 }) {
+  const [expanded, setExpanded]       = useState(getEngineOpen)
   const [showDetails, setShowDetails] = useState(false)
   const [showExplain, setShowExplain] = useState(false)
-  const { hasLeg, addLeg, removeLeg } = useAccaDraft()
   const [isSaved, setIsSaved] = useState(() => getSaved().includes(signal.id))
 
   const toggleSave = (e) => {
@@ -565,21 +556,31 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
   })()
 
   const isContradiction = signal.dual_agreement === 'Contradiction'
-  const evPct = signal.bayesian?.ev_pct ?? null
-  const evScore = signal.advanced?.ev_score ?? null   // pre-computed, preferred
+  // Odds shown everywhere on the card respect the user's odds-adjustment setting.
+  const displayBestOdd = applyOddsAdj(signal.bayesian?.best_odd, oddsAdjPct)
+  // When odds are adjusted, recompute EV from the adjusted price (matches Value Bets);
+  // otherwise fall back to the pre-computed model EV.
+  const adjEvPct = (oddsAdjPct && signal.bayesian?.prob != null && displayBestOdd != null)
+    ? (signal.bayesian.prob * displayBestOdd - 1) * 100
+    : null
+  const evPct = adjEvPct != null ? adjEvPct : (signal.bayesian?.ev_pct ?? null)
+  const evScore = adjEvPct != null ? null : (signal.advanced?.ev_score ?? null)   // pre-computed, preferred
   const primaryProb = Math.max(signal.bayesian?.prob ?? 0, signal.poisson?.prob ?? 0)
   const isMediumConfidence = signal.dual_confidence === 'Medium'
   const isHighProbabilityOutcome = primaryProb >= 0.7 && !isMediumConfidence
+  const isUnderMarket = ['Under 1.5', 'Under 2.5', 'Under 3.5', 'Away Under 1.5', 'Home Under 1.5'].includes(signal.market)
 
   return (
     <div className={`rounded-xl border shadow-sm overflow-hidden transition-colors ${
       isContradiction
         ? 'border-red-400/40 border-l-4 border-l-red-400'
-        : isHighProbabilityOutcome
-          ? 'border-emerald-500/40 border-l-4 border-l-emerald-500'
-          : isMediumConfidence
-            ? 'border-amber-400/30 hover:border-amber-400/50'
-            : 'border-[var(--border)] hover:border-[var(--accent)]/40'
+        : isUnderMarket
+          ? 'border-sky-400/40 border-l-4 border-l-sky-400'
+          : isHighProbabilityOutcome
+            ? 'border-emerald-500/40 border-l-4 border-l-emerald-500'
+            : isMediumConfidence
+              ? 'border-amber-400/30 hover:border-amber-400/50'
+              : 'border-[var(--border)] hover:border-[var(--accent)]/40'
     }`}>
 
       {/* ── Header ── */}
@@ -637,8 +638,12 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
         <ProbabilityLine
           market={signal.market}
           confidence={signal.dual_confidence}
-          prob={signal.bayesian?.prob}
+          prob={primaryProb > 0 ? primaryProb : null}
         />
+
+        {/* One synthesized conviction chip on the face — fires only when two
+            independent models confirm the same thesis. A real decision input. */}
+        {isPro && <SynergyBadge adv={signal.advanced} market={signal.market} />}
 
         {isContradiction && (
           <ContradictionAlert mixedSignals={signal.poisson?.mixed_signals} />
@@ -663,8 +668,11 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
               <div className="flex items-center gap-2 flex-wrap text-xs text-[var(--text)]">
                 <span className="opacity-75">{signal.bayesian?.bookmaker}</span>
                 <span className="font-mono text-[var(--accent)] font-semibold">
-                  {Number(signal.bayesian.best_odd).toFixed(2)}
+                  {Number(displayBestOdd).toFixed(2)}
                 </span>
+                {oddsAdjPct ? (
+                  <span className="opacity-50" title="Odds shaved by your odds-adjustment setting">· adj −{Math.abs(oddsAdjPct)}%</span>
+                ) : null}
                 {signal.bayesian?.bookmaker_count != null && (
                   <span className="opacity-50">
                     · {signal.bayesian.bookmaker_count} {signal.bayesian.bookmaker_count === 1 ? 'book' : 'books'}
@@ -683,29 +691,13 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
               <MarketIntentBadge market={signal.market} />
             </div>
 
-            {/* Advanced model enrichment badges (pro) */}
-            {isPro && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <BOSBadge bosSi={signal.advanced?.bos_si} bosPassed={signal.advanced?.bos_passed} />
-                <BREABadge breaRi1={signal.advanced?.brea_ri1} market={signal.market} />
-                <FHGIBadge
-                  fhgiGpi={signal.advanced?.fhgi_gpi}
-                  fhgiFhgmi={signal.advanced?.fhgi_fhgmi}
-                  fhgiPModel={signal.advanced?.fhgi_p_model}
-                  market={signal.market}
-                />
-                <WTCPMBadge
-                  wtcpmCcs={signal.advanced?.wtcpm_ccs}
-                  wtcpmDi={signal.advanced?.wtcpm_di}
-                  market={signal.market}
-                />
-              </div>
-            )}
+            {/* Advanced-model diagnostics now live one layer deeper, in the
+                Engine breakdown panel — keeping the Details layer decision-focused. */}
 
             {/* Fair odds → offered · book margin */}
             <FairOddsRow
               bayesian={signal.bayesian}
-              bestOdd={signal.bayesian?.best_odd}
+              bestOdd={displayBestOdd}
               bookmaker={signal.bayesian?.bookmaker}
             />
 
@@ -752,7 +744,7 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
       <div className="px-5 py-2.5 border-t border-[var(--border)] flex items-center gap-2 flex-wrap">
         {isPro ? (
           <button
-            onClick={() => setExpanded(v => !v)}
+            onClick={() => setExpanded(v => { const next = !v; try { sessionStorage.setItem(ENGINE_OPEN_KEY, next ? '1' : '0') } catch { /* ignore */ } return next })}
             aria-label="Toggle engine breakdown"
             aria-expanded={expanded}
             className="flex items-center gap-1 text-xs text-[var(--text)] hover:text-[var(--accent)] transition-colors"
@@ -793,28 +785,16 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
           <Heart size={15} fill={isSaved ? 'currentColor' : 'none'} />
         </button>
 
-        {/* Add to Accumulator */}
-        {!isContradiction && !isFinished && signal.bayesian?.best_odd && (
-          (() => {
-            const inAcca = hasLeg(signal.fixture_id)
-            return (
-              <button
-                onClick={() => inAcca ? removeLeg(signal.fixture_id) : addLeg(signal)}
-                title={inAcca ? 'Remove from accumulator draft' : 'Add to accumulator draft'}
-                className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg font-semibold border transition-colors ${
-                  inAcca
-                    ? 'border-[var(--accent)]/50 text-[var(--accent)] bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20'
-                    : 'border-[var(--border)] text-[var(--text)] opacity-60 hover:opacity-100 hover:border-[var(--accent)]/40'
-                }`}
-              >
-                {inAcca ? <CheckCircle2 size={11} /> : <Plus size={11} />}
-                Acca
-              </button>
-            )
-          })()
+        {isAutoTracked && (
+          <span
+            title="This signal was automatically recorded as a system pick. View in Tracker to see results."
+            className="flex items-center gap-1 text-xs font-semibold text-violet-400 mr-1"
+          >
+            <Bot size={13} />
+            System Pick
+          </span>
         )}
-
-        {isTracked && (
+        {!isAutoTracked && isTracked && (
           <span className="flex items-center gap-1 text-xs font-semibold text-emerald-400 mr-1">
             <CheckCircle2 size={13} />
             Tracked
@@ -830,7 +810,7 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
             }`}
           >
             <Target size={12} />
-            {isTracked ? 'Track Again' : 'Track Pick'}
+            {isAutoTracked ? 'Track Manually' : isTracked ? 'Track Again' : 'Track Pick'}
           </button>
         )}
       </div>

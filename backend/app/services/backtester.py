@@ -20,9 +20,12 @@ from app.core.config import (
     MARKET_MAX_ODDS,
     MARKETS,
     OVER_GOALS_SUPPRESSED_LEAGUES,
+    POISSON_ONLY_MAX_ODDS,
     POISSON_RULES,
     UNDER_GOALS_SUPPRESSED_LEAGUES,
     WOMEN_LEAGUE_KEYWORDS,
+    YOUTH_LEAGUE_KEYWORDS,
+    exec_odd_from,
     get_settings,
 )
 from app.engines import bayesian as bay_engine
@@ -32,7 +35,7 @@ from app.models import Fixture, MarketSnapshot, BacktestResult
 from app.services.performance_intelligence import PerformanceWeights, compute_performance_weights
 from app.services.signal_engine import (
     _CONFIDENCE_DOWNGRADE,
-    _build_cs_by_bookie, _build_goals_ou, _build_btts,
+    _build_cs_by_bookie, _build_goals_ou,
     _build_match_winner, _build_double_chance, _build_poisson_odds,
     _build_home_totals, _build_away_totals,
     _build_win_to_nil_home, _build_win_to_nil_away, _build_exact_goals,
@@ -56,10 +59,20 @@ async def run_backtest(
     date_to: Optional[date] = None,
     engine: str = "dual",    # "bayesian" / "poisson" / "dual"
     confidence_filter: Optional[str] = None,
+    settle_at_exec: bool = True,
+    apply_new_gates: bool = True,
 ) -> dict:
     """
     Run backtest. Clears existing results for the same scope, then writes new BacktestResult rows.
     Returns summary statistics.
+
+    settle_at_exec (default True): book P&L and Kelly at the realistic EXECUTION
+    price — the proxy odd haircut down to what the user actually gets at their
+    book (betPawa / 888bets / Betway) — instead of the longer displayed proxy odd.
+    This makes ROI reflect reality rather than the inflated sharp/WH line.
+    Pass False to reproduce the legacy proxy-price ROI for comparison.
+    The haircut comes from config (exec_odds_haircut / EXEC_HAIRCUT_BY_MARKET);
+    with a 0% haircut exec settlement is identical to proxy settlement.
     """
     query = select(Fixture)
     if date_from:
@@ -113,6 +126,10 @@ async def run_backtest(
         if all_suppressed_leagues and (fixture.league or "").lower().strip() in all_suppressed_leagues:
             continue
 
+        _league_lower_bt = (fixture.league or "").lower()
+        if any(kw in _league_lower_bt for kw in YOUTH_LEAGUE_KEYWORDS):
+            continue
+
         snap_result = await db.execute(
             select(MarketSnapshot).where(MarketSnapshot.fixture_id == fixture.id)
         )
@@ -123,7 +140,7 @@ async def run_backtest(
 
         cs_by_bookie = _build_cs_by_bookie(snapshots)
         goals_ou = _build_goals_ou(snapshots)
-        btts_dict = _build_btts(snapshots)
+        btts_dict = {}
         match_winner = _build_match_winner(snapshots)
         double_chance = _build_double_chance(snapshots)
         home_totals = _build_home_totals(snapshots)
@@ -225,49 +242,24 @@ async def run_backtest(
                 if best_u25_odd is not None and best_u25_odd > under25_cap:
                     continue
 
-            if mkt == "Under 3.5":
-                under35_cap = float(POISSON_RULES.get("under35_max_odds", 1.85))
-                best_u35_odd = b.best_actual_odd if b else None
-                if best_u35_odd is not None and best_u35_odd > under35_cap:
-                    continue
-
-            if mkt in ("Under 2.5", "Under 3.5"):
+            if mkt == "Under 2.5":
                 league_lower = (fixture.league or "").lower()
                 if any(k in league_lower for k in UNDER_GOALS_SUPPRESSED_LEAGUES):
                     continue
 
-            over_markets = {
-                "Over 0.5", "Over 1.5", "Over 2.5", "Over 3.5",
-                "Home Over 0.5", "Home Over 1.5",
-                "Away Over 0.5", "Away Over 1.5",
-            }
+            over_markets = {"Over 1.5", "Over 2.5", "Home Over 0.5"}
             if mkt in over_markets:
                 league_lower = (fixture.league or "").lower()
                 if any(k in league_lower for k in OVER_GOALS_SUPPRESSED_LEAGUES):
                     continue
 
             # Women's league over-goals odds ceiling (mirror of signal_engine gate)
-            if mkt in {"Away Over 0.5", "Away Over 1.5", "Home Over 0.5", "Home Over 1.5"}:
+            if mkt == "Home Over 0.5":
                 league_lower = (fixture.league or "").lower()
                 if any(kw in league_lower for kw in WOMEN_LEAGUE_KEYWORDS):
                     _wo = b.best_actual_odd if b else None
-                    _women_ceil = 2.30 if mkt.startswith("Away") else 2.50
-                    if _wo is not None and _wo > _women_ceil:
+                    if _wo is not None and _wo > 2.50:
                         continue
-
-            # Tier 3 away-over high-odds ceiling (mirror of signal_engine gate)
-            if mkt == "Away Over 0.5" and (fixture.league_tier or 3) >= 3:
-                _wo = b.best_actual_odd if b else None
-                if _wo is not None and _wo > 2.50:
-                    continue
-
-            # Targeted away-goals suppression (mirror of signal_engine gate)
-            if mkt in {"Away Over 0.5", "Away Over 1.5"}:
-                league_lower = (fixture.league or "").lower()
-                if AWAY_GOALS_SUPPRESSED_LEAGUES and any(
-                    k in league_lower for k in AWAY_GOALS_SUPPRESSED_LEAGUES
-                ):
-                    continue
 
             # Market maximum odds cap (mirror of signal_engine gate)
             _max_odd = MARKET_MAX_ODDS.get(mkt)
@@ -308,6 +300,56 @@ async def run_backtest(
             if final_confidence == "None":
                 continue
 
+            # Mirror live signal_engine tier gates.
+            # Tier 1: Dual Signal — Both agreement + High confidence.
+            # Tier 2: Poisson Signal — Poisson-only + rule_strong + odds < POISSON_ONLY_MAX_ODDS.
+            _poi_bt_odd = float(poi_signal_odds.get(p_key or "") or 0.0)
+            _poi_bt_max = POISSON_ONLY_MAX_ODDS.get(mkt)
+            is_dual_bt   = final_confidence == "High" and ds.agreement == "Both"
+            is_poisson_bt = (
+                mkt == "Home Over 0.5"
+                and ds.agreement == "Poisson Only"
+                and p is not None and getattr(p, "rule_strong", False)
+                and _poi_bt_odd > 1.0
+                and (_poi_bt_max is None or _poi_bt_odd < _poi_bt_max)
+            )
+            if not is_dual_bt and not is_poisson_bt:
+                continue
+
+            # ── New gates (mirroring 2026-06-16 signal_engine improvements) ───
+            if apply_new_gates:
+                # Gate 1: ev_score hard gate.
+                # Shrink probability (mirrors signal_engine shrinkage) then check
+                # exec-price EV. If calibration-corrected EV < 0, skip the bet.
+                if b is not None and not is_poisson_bt:
+                    _shrink_threshold = float(POISSON_RULES.get("prob_shrink_threshold", 0.75))
+                    _shrink_factor    = float(POISSON_RULES.get("prob_shrink_factor", 0.88))
+                    _shrink_threshold_hi = float(POISSON_RULES.get("prob_shrink_threshold_hi", 0.80))
+                    _shrink_factor_hi    = float(POISSON_RULES.get("prob_shrink_factor_hi", 0.35))
+                    _rp = b.derived_prob
+                    if _rp is not None and _rp > _shrink_threshold:
+                        _rp = _shrink_threshold + (_rp - _shrink_threshold) * _shrink_factor
+                        if _rp > _shrink_threshold_hi:
+                            _rp = _shrink_threshold_hi + (_rp - _shrink_threshold_hi) * _shrink_factor_hi
+                    _exec = exec_odd_from(b.best_actual_odd, mkt) if b.best_actual_odd else 0.0
+                    if _rp is not None and _exec > 1.0:
+                        _ev_bt = _rp * _exec - 1.0
+                        if _ev_bt < 0:
+                            continue
+
+                # Gate 2: end-of-northern-season suppression.
+                # Tier 2+ Over-goals signals dropped May 10 – June 30.
+                # Tier 3 remaining signals confidence-downgraded.
+                if _is_end_of_northern_season(fixture_date):
+                    _bt_tier = fixture.league_tier or 3
+                    if _bt_tier >= 2 and mkt in _OVER_GOALS_MARKETS:
+                        continue
+                    if _bt_tier >= 3 and final_confidence in ("High", "Medium"):
+                        final_confidence = _CONFIDENCE_DOWNGRADE.get(final_confidence, final_confidence)
+                        is_dual_bt = final_confidence == "High" and ds.agreement == "Both"
+                        if not is_dual_bt and not is_poisson_bt:
+                            continue
+
             # Determine bet outcome
             won = condition(fixture.home_score, fixture.away_score)
             best_odd = b.best_actual_odd if b else 0.0
@@ -320,10 +362,16 @@ async def run_backtest(
             if best_odd <= 1:
                 # No valid bookmaker odds available — skip this signal from P&L
                 continue
+            # best_odd is the displayed PROXY price. Settle at the EXECUTION price
+            # (proxy haircut to the user's real book) so ROI is honest. The
+            # odds-cap gates above deliberately still use the observed proxy price.
+            settle_odd = exec_odd_from(best_odd, mkt) if settle_at_exec else best_odd
+            if settle_odd <= 1:
+                continue
             flat_stake = BACKTEST_FLAT_STAKE
-            ks = kelly_stake_pct(b.derived_prob, best_odd) * 100 if b and best_odd > 1 else 0.0
+            ks = kelly_stake_pct(b.derived_prob, settle_odd) * 100 if b and settle_odd > 1 else 0.0
 
-            profit = flat_stake * (best_odd - 1.0) if won else -flat_stake
+            profit = flat_stake * (settle_odd - 1.0) if won else -flat_stake
 
             result = BacktestResult(
                 fixture_id=fixture.id,
@@ -338,9 +386,12 @@ async def run_backtest(
                 market=mkt,
                 source_engine=engine,
                 derived_prob=b.derived_prob if b else None,
-                actual_odd=best_odd if best_odd > 1 else None,
+                # Record the settlement odd actually used for P&L (exec price when
+                # settle_at_exec) so summary ROI / avg_odds reflect real returns.
+                actual_odd=round(settle_odd, 3) if settle_odd > 1 else None,
                 edge=b.edge if b else None,
                 dual_confidence=final_confidence,
+                dual_agreement=ds.agreement,
                 bet_result=1 if won else 0,
                 profit_loss=round(profit, 2),
                 flat_stake=flat_stake,
@@ -368,6 +419,8 @@ def _summarise(results: list[BacktestResult]) -> dict:
             "total_stake": 0.0,
             "avg_odds": None,
             "by_market": [],
+            "by_confidence": [],
+            "by_agreement": [],
             "bankroll_curve": [],
         }
 
@@ -381,31 +434,44 @@ def _summarise(results: list[BacktestResult]) -> dict:
     odds_values = [r.actual_odd for r in results if r.actual_odd]
     avg_odds = (sum(odds_values) / len(odds_values)) if odds_values else None
 
-    by_market: dict[str, dict] = {}
-    for r in results:
-        m = r.market
-        if m not in by_market:
-            by_market[m] = {"total": 0, "wins": 0, "profit": 0.0, "odds": []}
-        by_market[m]["total"] += 1
-        by_market[m]["wins"] += r.bet_result or 0
-        by_market[m]["profit"] += r.profit_loss
-        if r.actual_odd:
-            by_market[m]["odds"].append(r.actual_odd)
+    def _bucket_stats(buckets: dict[str, dict], key_name: str) -> list[dict]:
+        stats = []
+        for k, d in sorted(buckets.items()):
+            t = d["total"]
+            w = d["wins"]
+            p = d["profit"]
+            s = t * BACKTEST_FLAT_STAKE
+            odds_list = d["odds"]
+            stats.append({
+                key_name: k, "total": t, "count": t, "wins": w, "losses": t - w,
+                "hit_rate": round(w / t * 100, 1) if t else 0.0,
+                "roi": round(p / s * 100, 1) if s else 0.0,
+                "profit": round(p, 2),
+                "avg_odds": round(sum(odds_list) / len(odds_list), 2) if odds_list else None,
+            })
+        return stats
 
-    market_stats = []
-    for m, d in sorted(by_market.items()):
-        t = d["total"]
-        w = d["wins"]
-        p = d["profit"]
-        s = t * BACKTEST_FLAT_STAKE
-        market_odds = d["odds"]
-        market_stats.append({
-            "market": m, "total": t, "count": t, "wins": w, "losses": t - w,
-            "hit_rate": round(w / t * 100, 1) if t else 0.0,
-            "roi": round(p / s * 100, 1) if s else 0.0,
-            "profit": round(p, 2),
-            "avg_odds": round(sum(market_odds) / len(market_odds), 2) if market_odds else None,
-        })
+    by_market: dict[str, dict] = {}
+    by_confidence: dict[str, dict] = {}
+    by_agreement: dict[str, dict] = {}
+
+    for r in results:
+        for bucket, key in [
+            (by_market, r.market),
+            (by_confidence, r.dual_confidence or "Unknown"),
+            (by_agreement, getattr(r, "dual_agreement", None) or "Unknown"),
+        ]:
+            if key not in bucket:
+                bucket[key] = {"total": 0, "wins": 0, "profit": 0.0, "odds": []}
+            bucket[key]["total"] += 1
+            bucket[key]["wins"] += r.bet_result or 0
+            bucket[key]["profit"] += r.profit_loss
+            if r.actual_odd:
+                bucket[key]["odds"].append(r.actual_odd)
+
+    market_stats = _bucket_stats(by_market, "market")
+    confidence_stats = _bucket_stats(by_confidence, "confidence")
+    agreement_stats = _bucket_stats(by_agreement, "agreement")
 
     # Bankroll curve (sorted by date)
     bankroll = 100.0
@@ -429,5 +495,7 @@ def _summarise(results: list[BacktestResult]) -> dict:
         "total_stake": round(total_stake, 2),
         "avg_odds": round(avg_odds, 2) if avg_odds is not None else None,
         "by_market": market_stats,
+        "by_confidence": confidence_stats,
+        "by_agreement": agreement_stats,
         "bankroll_curve": curve,
     }

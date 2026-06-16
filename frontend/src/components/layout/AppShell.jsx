@@ -23,12 +23,11 @@ function LiveClock() {
 }
 
 const PAGE_TITLES = {
-  signals:   'Value Signals',
+  signals:   'Signals',
   deepdive:  'Deep Dive',
   tracker:   'Bet Tracker',
   analytics: 'Analytics',
-  backtest:  'Backtest',
-  settings:  'Settings',
+  tools:     'Tools',
   admin:     'User Panel',
   account:   'My Account',
   pricing:   'Plans & Pricing',
@@ -76,7 +75,7 @@ export default function AppShell({ activePage, onNavigate, children }) {
 
         {/* Pillars — centred, desktop only */}
         <span className="hidden lg:flex flex-1 justify-center text-xs font-semibold text-[var(--accent)] tracking-widest uppercase select-none pointer-events-none">
-          Value Signals&nbsp;·&nbsp;Tracker&nbsp;·&nbsp;Analytics
+          Signals&nbsp;·&nbsp;Tracker&nbsp;·&nbsp;Analytics
         </span>
 
         {/* Live clock — right side */}

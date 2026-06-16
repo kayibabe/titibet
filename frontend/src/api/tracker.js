@@ -62,22 +62,6 @@ export async function computeCLV({ force = false } = {}) {
   return res.json()
 }
 
-export async function fetchAccumulators() {
-  const res = await apiFetch(`${BASE}/accumulators`)
-  if (!res.ok) throw new Error(`Accumulators fetch failed: ${res.status}`)
-  return res.json()
-}
-
-export async function createAccumulator(payload) {
-  const res = await apiFetch(`${BASE}/accumulators`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) throw new Error(`Create accumulator failed: ${res.status}`)
-  return res.json()
-}
-
 export async function fetchTrackerAnalytics() {
   const res = await apiFetch(`${BASE}/analytics`)
   if (!res.ok) throw new Error(`Tracker analytics failed: ${res.status}`)
@@ -90,74 +74,47 @@ export async function fetchRuns() {
   return res.json()
 }
 
-export async function generateAccumulators({ date, min_odds = 35, max_odds = 60, top_n = 3 } = {}) {
-  const res = await apiFetch(`${BASE}/accumulators/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ date, min_odds, max_odds, top_n }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => null)
-    const detail = err?.detail || err?.message
-    throw new Error(detail ? `${detail}` : `Generate accumulators failed: ${res.status}`)
-  }
-  return res.json()
-}
-
-export async function confirmAccumulator({ legs, stake, name, ranked_bucket_key, allow_over_100x = false }) {
-  const res = await apiFetch(`${BASE}/accumulators/confirm`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ legs, stake, name, ranked_bucket_key, allow_over_100x }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `Confirm accumulator failed: ${res.status}`)
-  }
-  return res.json()
-}
-
-export async function deleteAccumulator(id) {
-  const res = await apiFetch(`${BASE}/accumulators/${id}`, { method: 'DELETE' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `Delete failed: ${res.status}`)
-  }
-  return res.json()
-}
-
-export async function deduplicateAccumulators() {
-  const res = await apiFetch(`${BASE}/accumulators/deduplicate`, { method: 'POST' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `Deduplicate failed: ${res.status}`)
-  }
-  return res.json()   // { removed: number }
-}
-
-export async function fetchAccumulatorAnalytics() {
-  const res = await apiFetch(`${BASE}/analytics/accumulators`)
-  if (!res.ok) throw new Error(`Accumulator analytics failed: ${res.status}`)
-  return res.json()
-}
-
-export async function confirmRecommendedTicket(payload) {
-  const res = await apiFetch(`${BASE}/recommended-tickets/confirm`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || err.message || `Confirm recommended ticket failed: ${res.status}`)
-  }
-  return res.json()
-}
-
 export async function fetchModelInsights() {
   const res = await apiFetch(`${BASE}/analytics/model-insights`)
   if (!res.ok) throw new Error(`Model insights failed: ${res.status}`)
   return res.json()
+}
+
+/**
+ * Auto-track a signal as a system pick.  Called fire-and-forget from SignalsPage
+ * whenever today's signals are loaded.  source_rule_key='system_auto' lets the
+ * TrackerPage distinguish system picks from manual ones.
+ */
+export async function autoTrackSignal(signal, { bankroll = 1000 } = {}) {
+  const odds =
+    signal.bayesian?.best_odd ||
+    (signal.poisson?.prob > 0 ? parseFloat((1 / signal.poisson.prob).toFixed(2)) : null)
+  if (!odds || odds <= 1.01) return null   // nothing valid to track
+
+  const stakeAmt = signal.dual_recommended_stake_pct
+    ? Math.round(signal.dual_recommended_stake_pct * bankroll * 100) / 100
+    : Math.round(bankroll * 0.01 * 100) / 100   // 1% flat default
+
+  const q = signal.dual_quality_score
+  const grade = q == null ? null : q >= 0.08 ? 'A' : q >= 0.055 ? 'B' : q >= 0.035 ? 'C' : 'D'
+
+  return trackPick({
+    fixture_id:            signal.fixture_id,
+    bookmaker:             signal.bayesian?.bookmaker || 'Best Available',
+    event_date:            signal.event_date,
+    match_name:            `${signal.home_team} vs ${signal.away_team}`,
+    league:                signal.league,
+    market_type:           signal.market,
+    selection_name:        signal.market,
+    odds,
+    stake:                 stakeAmt,
+    recommended_stake_pct: signal.dual_recommended_stake_pct,
+    source_rule_key:       'system_auto',
+    source_rule_label:     'System Auto-Pick',
+    signal_grade:          grade,
+    dual_confidence:       signal.dual_confidence,
+    dual_agreement:        signal.dual_agreement,
+  })
 }
 
 /** Bulk-import historical bets from parsed CSV rows. */

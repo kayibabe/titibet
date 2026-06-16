@@ -1,10 +1,11 @@
-﻿"""
+"""
 config.py -- Unified configuration merging FootBet + TiTiBet settings.
 All thresholds are tunable here without touching business logic.
 """
 from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve the .env path relative to this file so the server can be launched from any
@@ -44,9 +45,21 @@ class Settings(BaseSettings):
     # 35% above reference price flags as outlier; tuned from sharp-book overround analysis
     bayesian_outlier_factor: float = 1.35
 
+    # ── Execution-price model (soft-book reality) ─────────────────────────────
+    # The price we display/score against (William Hill proxy, or the sharp book on
+    # fallback) is LONGER than what the user actually gets at betPawa / 888bets /
+    # Betway, whose overround runs 15–30%+. We haircut that proxy down to a
+    # realistic execution price before computing EV / Kelly / is_value, so the
+    # feed reflects bets that are profitable at the price the user can truly take.
+    #   - exec_odds_haircut: global fraction the real book is shorter than the proxy.
+    #   - min_exec_ev_pct:   minimum EV (%) at the EXEC price required to be "value".
+    # Set EXEC_ODDS_HAIRCUT=0 in .env to disable (restores pre-Fix-1 behaviour).
+    exec_odds_haircut: float = 0.08
+    min_exec_ev_pct: float = 0.0
+
     # Staking
     kelly_fraction: float = 0.25
-    max_kelly_pct: float = 0.05
+    max_kelly_pct: float = 0.02  # Framework cap: max 2% of bankroll per selection
     unit_pct: float = 0.01
     default_bankroll: float = 100.0
 
@@ -61,6 +74,20 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production-use-a-long-random-string"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7  # 7 days
+
+    @model_validator(mode="after")
+    def _require_strong_jwt_secret(self) -> "Settings":
+        insecure_defaults = {
+            "change-me-in-production-use-a-long-random-string",
+            "",
+        }
+        if self.jwt_secret in insecure_defaults:
+            raise ValueError(
+                "JWT_SECRET is not set or is the insecure default. "
+                "Set a strong random secret in backend/.env before starting the server. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
+        return self
 
     # Email (SMTP)
     smtp_host: str = "smtp.gmail.com"
@@ -79,7 +106,7 @@ class Settings(BaseSettings):
     telegram_general_chat_id: str = ""
     # TiTiBet Free     — 3 randomly selected picks
     telegram_free_chat_id: str = ""
-    # TiTiBet Pro      — High Conf ACCA, Goals ACCA, Safe Ticket, Best Singles
+    # TiTiBet Pro      — top-ranked signals
     telegram_pro_chat_id: str = ""
 
 
@@ -153,25 +180,6 @@ BTTS_MARKET_NAMES: frozenset = frozenset({
     "BTTS",
 })
 
-# ── Corner markets — API-Football naming variants ─────────────────────────────
-# Total match corners (Over/Under bets)
-CORNERS_TOTAL_MARKET_NAMES: frozenset = frozenset({
-    "Total Corners",
-    "Corners Over/Under",
-    "Corner Kicks",
-    "Total - Corners",
-    "Asian Corners",
-})
-
-# Per-team corner totals (Home/Away Over X corners)
-CORNERS_TEAM_MARKET_NAMES: frozenset = frozenset({
-    "Total Corners - Home Team",
-    "Total Corners - Away Team",
-    "Home Team Total Corners",
-    "Away Team Total Corners",
-    "Team Corners",
-})
-
 MATCH_WINNER_MARKET_NAMES: frozenset = frozenset({
     "Match Winner",
     "Match Winner (Regular Time)",
@@ -233,16 +241,11 @@ ALLOWED_SCORELINES: set = {
 
 MARKETS: dict = {
     # ── Full-game totals ─────────────────────────────────────────────────────
-    "Over 0.5":  lambda h, a: (h + a) >= 1,
     "Over 1.5":  lambda h, a: (h + a) >= 2,
     "Over 2.5":  lambda h, a: (h + a) >= 3,
-    "Over 3.5":  lambda h, a: (h + a) >= 4,
     "Under 1.5": lambda h, a: (h + a) <= 1,
     "Under 2.5": lambda h, a: (h + a) <= 2,
     "Under 3.5": lambda h, a: (h + a) <= 3,
-    # ── Both teams to score ──────────────────────────────────────────────────
-    "BTTS Yes":  lambda h, a: h >= 1 and a >= 1,
-    "BTTS No":   lambda h, a: h == 0 or a == 0,
     # ── Match result ─────────────────────────────────────────────────────────
     "Home Win":  lambda h, a: h > a,
     "Draw":      lambda h, a: h == a,
@@ -266,9 +269,6 @@ MARKETS: dict = {
     "Exactly 1 Goal":  lambda h, a: (h + a) == 1,
     "Exactly 2 Goals": lambda h, a: (h + a) == 2,
     "Exactly 3 Goals": lambda h, a: (h + a) == 3,
-    # ── Corner market (WTCPM) ─────────────────────────────────────────────────
-    # Corner outcomes are not tracked via goal scores — settled externally.
-    "Underdog Over 1.5 Corners": lambda h, a: True,
 }
 
 # Every key in MARKETS is evaluated by the Bayesian pipeline (same as the old
@@ -283,13 +283,35 @@ BAYESIAN_EXTRA_MARKETS: set = set()
 # Historical analytics/backtest data for these markets is preserved, but the
 # signal engine will not generate new picks for them.
 DISABLED_MARKETS: frozenset = frozenset({
+    # ── Previously retired markets ────────────────────────────────────────────
     "BTTS No",        # poor historical strike rate
-    "Home Under 1.5", # -45.2% ROI across backtest; home-team scoring ceiling is hard to model reliably
-    # "Under 3.5" re-enabled 2026-05-21: 67.5% natural hit rate across 1,045 fixtures;
-    # Tier 1 72.4%, Tier 2 71.1%. Min odds floor raised to 1.65 for positive EV.
-    # Corner market — enabled once corner odds ingestion is confirmed in production.
-    # Remove from this set after verifying CORNERS_TOTAL_MARKET_NAMES hit rate in live sync.
-    "Underdog Over 1.5 Corners",
+    "BTTS Yes",       # retired 2026-06-15: btts rule removed
+    "Away Over 1.5",  # retired 2026-06-02: 41.1% hit (-15.5% ROI) across 73 bets
+    "Away Over 0.5",  # retired 2026-06-15: away_o05 rule removed
+    "Home Over 1.5",  # retired 2026-06-15: home_o15 rule removed
+    "Under 3.5",      # retired 2026-06-15: under35 + u35_flip rules removed
+    "Home Under 1.5", # retired 2026-06-15: hu15_flip rule removed
+    "Away Under 1.5", # retired 2026-06-15: au15_flip rule removed
+    "Over 0.5",       # retired 2026-06-15: over05ft rule removed
+    "Over 3.5",       # retired 2026-06-15: over35ft rule removed
+    "Over 0.5 1H",    # retired 2026-06-15: over05fh rule removed
+    "Underdog Over 1.5 Corners",  # retired 2026-06-15: WTCPM engine removed
+    # ── Bayesian-only markets retired 2026-06-15 ─────────────────────────────
+    # No Poisson rule → dual-model agreement defaults to "Bayesian Only" with no
+    # independent mathematical confirmation. Removed to keep feed focused on the
+    # 4 dual-model markets + 2 flip signals where both engines agree.
+    "Home Win",
+    "Draw",
+    "Away Win",
+    "1X (Home or Draw)",
+    "X2 (Draw or Away)",
+    "12 (Home or Away)",
+    "Under 1.5",
+    "Home Under 0.5",
+    "Away Under 0.5",
+    "Exactly 1 Goal",
+    "Exactly 2 Goals",
+    "Exactly 3 Goals",
 })
 
 # Leagues permanently disabled from signal generation AND serving.
@@ -299,89 +321,87 @@ DISABLED_MARKETS: frozenset = frozenset({
 DISABLED_LEAGUES: frozenset = frozenset({
     "ekstraklasa",   # consistent negative ROI across tracked history
     "regionalliga",  # Austrian Regionalliga (Ost/West/Mitte) — 0% win rate across 16 bets, end-of-season Tier 3
+    "esiliiga",      # Estonian top/second flight — 0% WR on 3 bets (backtest 2026-06-16)
+    "ykkösliiga",    # Finnish Div 2 — 25% WR on 4 bets (backtest 2026-06-16)
+    "friendlies",    # International/pre-season friendlies — rotation-heavy, low signal quality
 })
 
 MARKET_PROB_BOUNDS: dict = {
-    # Match result (3-way) — now using Shin proportional no-vig (B-1)
-    # Bounds derived from long-run football base rates across top leagues.
-    # Home Win:  ~45% base rate · strong home sides reach ~65%
-    # Draw:      ~25% base rate · very rarely above 40% in a balanced match
-    # Away Win:  ~30% base rate · strong away teams reach ~55%
-    "Home Win":  (0.28, 0.70),
-    "Draw":      (0.14, 0.42),
-    "Away Win":  (0.18, 0.62),
     # Full-game totals
-    "Over 0.5":  (0.55, 0.99),
     "Over 1.5":  (0.45, 0.95),
     "Over 2.5":  (0.25, 0.75),
-    "Over 3.5":  (0.08, 0.55),
-    "Under 1.5": (0.05, 0.45),
     "Under 2.5": (0.25, 0.75),
-    "Under 3.5": (0.30, 0.90),
-    # BTTS
-    "BTTS Yes":  (0.20, 0.75),
-    # Double chance
-    "1X (Home or Draw)": (0.35, 0.92),
-    "X2 (Draw or Away)": (0.35, 0.92),
-    "12 (Home or Away)": (0.60, 0.95),
-    # Team totals — Home/Away Over 0.5 bounds updated from 94/49 settled bets (B-3 calibration)
+    # Team totals — calibrated from settled bets (B-3)
     "Home Over 0.5": (0.412, 0.662),  # empirical 5th-95th pct | hit=75.5% n=94
-    "Home Under 0.5": (0.05, 0.60),
-    "Home Over 1.5": (0.18, 0.82),
-    "Home Under 1.5": (0.18, 0.92),
-    "Away Over 0.5": (0.360, 0.750),  # empirical 5th-95th pct | hit=61.2% n=49
-    "Away Under 0.5": (0.08, 0.70),
-    "Away Over 1.5": (0.12, 0.75),
-    "Away Under 1.5": (0.20, 0.94),
     # Win to nil
     "Home Win to Nil": (0.03, 0.52),
     "Away Win to Nil": (0.02, 0.42),
-    # Exact goals
-    "Exactly 1 Goal":  (0.05, 0.35),
-    "Exactly 2 Goals": (0.14, 0.42),
-    "Exactly 3 Goals": (0.10, 0.38),
 }
 
 # Per-market minimum edge thresholds (overrides global min_value_edge = 5%).
 # High-probability / low-variance markets are profitable at lower edge floors;
 # high-variance markets (Away Win, exact goals) need a larger cushion to beat variance.
 MARKET_MIN_EDGE: dict[str, float] = {
-    # Full-game totals — high hit rates, low variance → lower floor
-    "Over 0.5":       0.02,
-    "Over 1.5":       0.03,
-    "Over 2.5":       0.04,
-    "Over 3.5":       0.05,
-    "Under 1.5":      0.05,
-    "Under 2.5":      0.05,
-    "Under 3.5":      0.04,
-    # BTTS
-    "BTTS Yes":       0.04,
-    "BTTS No":        0.06,
-    # Match result — high variance, 33 % base rate → tighter floor
-    "Home Win":       0.06,
-    "Draw":           0.08,
-    "Away Win":       0.07,
-    # Double chance — large base probability (~65–75 %) → lower floor
-    "1X (Home or Draw)": 0.03,
-    "X2 (Draw or Away)": 0.03,
-    "12 (Home or Away)": 0.03,
-    # Team totals
-    "Home Over 0.5":  0.03,
-    "Home Under 0.5": 0.05,
-    "Home Over 1.5":  0.05,
-    "Home Under 1.5": 0.04,
-    "Away Over 0.5":  0.03,
-    "Away Under 0.5": 0.05,
-    "Away Over 1.5":  0.06,
-    "Away Under 1.5": 0.04,
-    # Win to nil — very high variance
+    "Over 1.5":        0.03,
+    "Over 2.5":        0.04,
+    "Under 2.5":       0.05,
+    "Home Over 0.5":   0.03,
     "Home Win to Nil": 0.07,
     "Away Win to Nil": 0.08,
-    # Exact goals
-    "Exactly 1 Goal":  0.07,
-    "Exactly 2 Goals": 0.07,
-    "Exactly 3 Goals": 0.08,
 }
+
+# Per-market execution-odds haircut overrides (fraction the user's real book is
+# shorter than the displayed proxy price). Soft books shade favourites / overs
+# harder than longshots / unders, so the haircut is NOT uniform.
+# Calibrated values are loaded from exec_haircuts.json (produced by
+# tools/calibrate_haircut.py from real spot-check prices); anything not listed
+# falls back to the global Settings.exec_odds_haircut. Edit the JSON, not code.
+EXEC_HAIRCUT_BY_MARKET: dict[str, float] = {}
+
+
+def _load_exec_haircuts() -> None:
+    """Populate EXEC_HAIRCUT_BY_MARKET from exec_haircuts.json if present.
+    Looked up next to the backend root (parent of app/). Fail-silent: a missing
+    or malformed file simply leaves the global haircut in effect."""
+    import json
+    from pathlib import Path
+    candidates = [
+        Path(__file__).resolve().parents[2] / "exec_haircuts.json",  # backend/exec_haircuts.json
+        Path.cwd() / "exec_haircuts.json",
+    ]
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            cleaned = {
+                str(k): float(v)
+                for k, v in raw.items()
+                if isinstance(v, (int, float)) and 0.0 <= float(v) < 0.6
+            }
+            if cleaned:
+                EXEC_HAIRCUT_BY_MARKET.update(cleaned)
+            return
+        except Exception:
+            return
+
+
+_load_exec_haircuts()
+
+
+def exec_haircut_for(market: str) -> float:
+    """Fraction to shorten the displayed proxy odd by to estimate the price the
+    user actually gets at their book. Per-market override, else global default."""
+    return EXEC_HAIRCUT_BY_MARKET.get(market, get_settings().exec_odds_haircut)
+
+
+def exec_odd_from(display_odd: float, market: str) -> float:
+    """Convert a displayed proxy odd into a realistic execution odd.
+    Never returns < 1.01 so downstream Kelly/EV math stays well-defined."""
+    if not display_odd or display_odd <= 1.0:
+        return 0.0
+    return max(1.01, round(display_odd * (1.0 - exec_haircut_for(market)), 4))
+
 
 # Maximum signals to surface from any single Tier 3 league per day.
 # Prevents catastrophic cluster losses when one lower-tier league misbehaves
@@ -405,6 +425,19 @@ MARKET_MAX_ODDS: dict[str, float] = {
     "Away Over 1.5": 6.0,  # away team scores 2+ — similar realistic ceiling
 }
 
+# Maximum odds for Poisson-only signals (no Bayesian confirmation).
+# Above these odds the Poisson engine loses calibration on the market.
+# Backtest 2026-06-15: Home Over 0.5 ≥2.50 → 38.5% WR (+19.5% ROI);
+# <2.50 → 80.1% WR (+48.6% ROI). Hard cap at 2.49.
+POISSON_ONLY_MAX_ODDS: dict[str, float] = {
+    "Home Over 0.5": 2.49,
+}
+
+# Kelly fraction cap for Poisson-only signals.
+# Lower than Dual (max_kelly_pct = 2%) because Poisson-only has no Bayesian
+# confirmation — one engine rather than two. Quarter-Kelly applied, capped at 1.5%.
+POISSON_ONLY_KELLY_CAP: float = 0.015
+
 # Maximum fraction of bankroll that can be committed across all signals in a day.
 # Stakes are normalized to this cap after per-signal Kelly sizing, preserving
 # relative weights so the strongest picks still get the largest share.
@@ -416,30 +449,6 @@ MAX_DAILY_EXPOSURE: float = 0.15
 BOS_SI_THRESHOLD: float = 75.0   # SI ≥ 75 → fixture is stable
 BOS_O00_MAX: float = 7.0          # Hard reject if 0-0 CS odds > 7
 BOS_CMA_MAX: float = 4.0          # CMA ceiling for H-score normalisation
-
-# =============================================================================
-# BREA — BTTS Risk-Elimination Algorithm thresholds
-# =============================================================================
-BREA_RI1_MAX: float = 0.10   # Model 2a: max P(1:1) for BTTS+U2.5 NO
-BREA_RI2_MAX: float = 0.25   # Model 2b: max P(both score AND total ≥ 4)
-BREA_RI3_MAX: float = 0.15   # Model 2c: max P(both score AND total ≥ 5)
-
-# =============================================================================
-# WTCPM — Weak Team Corner Persistence Model thresholds
-# =============================================================================
-WTCPM_CCS_MIN: float = 65.0    # Minimum Corner Confidence Score
-WTCPM_DI_MIN: float = 5.0      # Minimum Dominance Index (u_odds / f_odds)
-WTCPM_STD_F_MAX: float = 1.40  # Standard qualifier: favourite odds ≤ 1.40
-WTCPM_STD_U_MIN: float = 7.00  # Standard qualifier: underdog odds ≥ 7.00
-WTCPM_STRONG_F_MAX: float = 1.30  # Strong qualifier: favourite ≤ 1.30
-WTCPM_STRONG_U_MIN: float = 10.00 # Strong qualifier: underdog ≥ 10.00
-
-# =============================================================================
-# FHGI — First-Half Goal Intensity thresholds
-# =============================================================================
-FHGI_O11_MIN: float = 2.0    # HT 1:1 odds window lower bound
-FHGI_O11_MAX: float = 6.0    # HT 1:1 odds window upper bound
-FHGI_FHGMI_MIN: float = 1.50 # FHGMI ≥ 1.5 required to proceed
 
 # =============================================================================
 # Bayesian Kelly staking — shrinkage parameters
@@ -457,34 +466,12 @@ EV_NOISE_MULTIPLIER: float = 0.5
 EV_DYNAMIC_WINDOW: int = 20
 
 MARKET_MIN_ODDS: dict = {
-    "Over 0.5":     1.02,
-    "Over 1.5":     1.30,
-    "Over 2.5":     1.55,
-    "Under 2.5":    2.10,   # floor: < 2.10 implies < 48% probability (no value at short Under 2.5)
-    "Over 3.5":     1.20,
-    "Under 3.5":    1.65,   # raised from 1.25 — 1.65 gives +11.4% EV at 67.5% hit rate
-    "BTTS Yes":     1.55,
-    "Over 0.5 1H":  1.10,
-    # Team totals — short-odds markets need a floor to avoid near-certain picks
-    "Home Over 0.5": 1.10,
-    "Home Under 0.5": 1.55,
-    "Home Over 1.5": 1.75,   # raised from 1.25 — 1.50-1.70 band had -20.8% ROI on 27 signals
-    "Home Under 1.5": 1.35,
-    "Away Over 0.5": 1.70,  # raised from 1.15 — 1.50-1.69 band hit only 53.8% (below breakeven at those odds)
-    "Away Under 0.5": 1.45,
-    "Away Over 1.5": 2.00,   # raised from 1.30 — 1.50-1.90 bands had -17.6% to -47.9% ROI on 31 signals
-    "Away Under 1.5": 1.30,
-    # Double chance
-    "1X (Home or Draw)": 1.15,
-    "X2 (Draw or Away)": 1.15,
-    "12 (Home or Away)": 1.20,
-    # Win to nil — only meaningful at decent odds
+    "Over 1.5":        1.30,
+    "Over 2.5":        1.55,
+    "Under 2.5":       2.10,  # < 2.10 implies < 48% probability — no value at short Under 2.5
+    "Home Over 0.5":   1.70,  # audit 2026-06-15: <1.70 band = -18.9% ROI on 275 bets
     "Home Win to Nil": 1.40,
     "Away Win to Nil": 1.40,
-    # Exact goals
-    "Exactly 1 Goal": 3.00,
-    "Exactly 2 Goals": 3.00,
-    "Exactly 3 Goals": 3.20,
 }
 
 
@@ -553,11 +540,24 @@ TIER_2_LEAGUES = {
 # signals dropped before writing to the DB, regardless of model output.
 UNDER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
     "mls",
+    "major league soccer",  # MLS stored as full name in DB; "mls" key misses it via word-boundary
     "a-league",
     "chinese super",
     "allsvenskan",
     "eliteserien",
     "iranian",        # Iranian PGPL -- very high-scoring, thin CS markets
+    "primera b",      # Chilean Segunda División — backtest: 20% hit rate on Home Under 1.5 (1/5)
+    "usl league one", # US lower division — high-scoring, volatile scoring patterns
+    "usl championship",
+})
+
+# Keywords that indicate youth / reserve fixtures.
+# These competitions have structurally unpredictable scoring — young teams
+# produce blowouts that defeat team-total under signals reliably.
+YOUTH_LEAGUE_KEYWORDS: frozenset = frozenset({
+    " u17", " u18", " u19", " u20", " u21", " u23",
+    "youth", "reserve", "b team", "ii ", " ii)", "under-19", "under-21",
+    "junioren", "juvenil", "sub-20", "sub-17", "sub-19",
 })
 
 # Leagues where over-goals signals (Over 0.5, Over 1.5, Over 2.5 etc.) are suppressed.
@@ -565,9 +565,12 @@ UNDER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
 # so even the lowest-bar Over picks land as losers at a high rate.
 # Matched by substring against lower(trim(league)), same pattern as UNDER_GOALS_SUPPRESSED_LEAGUES.
 OVER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
-    "ekstraklasa",      # 100% of recent games under 2.5 goals; Over 0.5/1.5 bets consistently lose
-    "usl championship", # 25% WR on 4 bets (-56% ROI); physical US league, low-scoring style
-    "usl league one",   # 33% WR on 3 bets (-40% ROI); mirrors USL Championship pattern
+    "ekstraklasa",          # 100% of recent games under 2.5 goals; Over 0.5/1.5 bets consistently lose
+    "usl championship",     # 25% WR on 4 bets (-56% ROI); physical US league, low-scoring style
+    "usl league one",       # 33% WR on 3 bets (-40% ROI); mirrors USL Championship pattern
+    "regionalliga - ost",   # 0% hit rate on 17 Over bets (Home + Away Over 0.5); defensive Austrian/German regional
+    "regionalliga - mitte", # 16.7% hit on 6 Away Over 0.5; same structural pattern as Ost
+    "regionalliga - west",  # 50% hit rate but borderline — preemptive suppression to avoid further losses
 })
 
 # Leagues where away-scoring signals (Away Over 0.5/1.5) are surgically suppressed.
@@ -585,8 +588,7 @@ AWAY_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
 # Each entry is a substring matched against lower(league_name). When a league
 # accumulates enough bets (min_bets_act) AND its ROI falls below suppress_roi_pct,
 # the watch guard writes a LearningProposal(change_type="league_suppression") to
-# the DB. The signal engine and accumulator generator pick this up on the next
-# cycle — no restart required.
+# the DB. The signal engine picks this up on the next cycle — no restart required.
 #
 # When ROI recovers above recover_roi_pct, the proposal is deactivated so the
 # league re-enters the signal pool.
@@ -649,24 +651,6 @@ def get_league_tier(league_name: str, country: str = "") -> int:
 # =============================================================================
 
 POISSON_RULES = {
-    # BTTS
-    "btts_max_22": 11.0,
-    "btts_min_10": 9.0,
-    "btts_min_01": 9.0,
-    "btts_min_00": 7.0,
-    "btts_strong_max_11": 8.5,
-    # Under 3.5 rule thresholds
-    # under35_low_max lowered 6.5->5.5: tighter scoreline evidence required.
-    # under35_required_count raised 3->4: need 4 of 6 scorelines to qualify.
-    "under35_low_max": 5.5,
-    "under35_required_count": 4,
-    "under35_min_22": 13.0,
-    "under35_strong_min_31": 15.0,
-    "under35_strong_min_13": 15.0,
-    # Over 0.5 FH
-    "over05fh_11_min": 2.2,
-    "over05fh_11_max": 5.5,
-    "over05fh_00_min": 3.5,
     # CS cascade
     "cs00_u25_min": 2.0,
     "cs00_u25_max": 7.49,
@@ -709,8 +693,6 @@ POISSON_RULES = {
     "form_max_lookback_days": 90,
     # Under 2.5 guard: odds > 2.20 imply < 45% prob of <=2 goals.
     "under25_max_odds": 2.20,
-    # Under 3.5 guard: odds > 1.85 imply < 54% prob of <=3 goals.
-    "under35_max_odds": 1.85,
     # Marginal Poisson (team overs / match overs): stricter edge floor (%).
     "team_over_min_edge_pct": 4.0,
     # Away side needs a higher edge cushion — away teams score less reliably,

@@ -2,23 +2,20 @@
 import {
   BarChart2,
   ListChecks,
-  Percent,
   TrendingUp,
-  Zap,
+  Wrench,
 } from 'lucide-react'
-import { useAccaDraft } from '../../store/useAccaDraft'
 import { fetchBets } from '../../api/tracker'
 
+// Mirrors the desktop Sidebar exactly — same destinations on both devices.
 const NAV_ITEMS = [
-  { id: 'signals',    label: 'Signals',  icon: TrendingUp },
-  { id: 'value-bets', label: 'Value',    icon: Zap        },
-  { id: 'arb',        label: 'Arb',      icon: Percent    },
-  { id: 'tracker',    label: 'Tracker',  icon: ListChecks },
-  { id: 'analytics',  label: 'Analytics',icon: BarChart2  },
+  { id: 'signals',   label: 'Signals',  icon: TrendingUp },
+  { id: 'tracker',   label: 'Tracker',  icon: ListChecks },
+  { id: 'analytics', label: 'Analytics',icon: BarChart2  },
+  { id: 'tools',     label: 'Tools',    icon: Wrench     },
 ]
 
 export default function BottomNav({ activePage, onNavigate }) {
-  const { legs } = useAccaDraft()
   const [pendingCount, setPendingCount] = useState(0)
 
   // Load pending bet count once on mount (best-effort, silent fail)
@@ -29,7 +26,7 @@ export default function BottomNav({ activePage, onNavigate }) {
   }, [])
 
   const badges = {
-    signals: legs.length > 0 ? legs.length : 0,
+    signals: 0,
     tracker: pendingCount,
   }
 

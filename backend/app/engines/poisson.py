@@ -252,226 +252,6 @@ def _grade(rule_pass: bool, rule_strong: bool, has_edge: bool) -> str:
     return "C"
 
 
-def evaluate_btts(odds: dict, signal_odds: dict, form_lambdas: Optional[dict] = None) -> PoissonResult:
-    """
-    BTTS signal: 2-2 ≤ 11, 1-0 ≥ 9, 0-1 ≥ 9, 0-0 ≥ 7. Strong if 1-1 ≤ 8.5.
-    Uses independent λH/λA from CS ratio — overround cancels.
-    """
-    s22 = odds.get("s22")
-    s10 = odds.get("s10")
-    s01 = odds.get("s01")
-    s00 = odds.get("s00")
-    s11 = odds.get("s11")
-
-    missing = []
-    if s22 is None: missing.append("2-2")
-    if s10 is None: missing.append("1-0")
-    if s01 is None: missing.append("0-1")
-    if s00 is None: missing.append("0-0")
-
-    pass_ = (not missing and
-             s22 <= R["btts_max_22"] and
-             s10 >= R["btts_min_10"] and
-             s01 >= R["btts_min_01"] and
-             s00 >= R["btts_min_00"])
-    strong = pass_ and s11 is not None and s11 <= R["btts_strong_max_11"]
-
-    cs_lam = lambda_from_cs00(s00, R["cs_overround_factor"])
-    cs_lambdas = derive_lambdas(s00, s10, s01)
-
-    # Blend CS-derived lambdas with rolling form lambdas when available.
-    fw = _form_lambda_weight()
-    if form_lambdas and cs_lambdas:
-        blended_lh = _blend_lam(cs_lambdas["lambda_h"], form_lambdas.get("lambda_h"), fw)
-        blended_la = _blend_lam(cs_lambdas["lambda_a"], form_lambdas.get("lambda_a"), fw)
-        lambdas = {"lambda_h": blended_lh, "lambda_a": blended_la, "lambda_total": blended_lh + blended_la}
-    else:
-        lambdas = cs_lambdas
-
-    if lambdas is None:
-        return PoissonResult(
-            rule_key="btts", market="BTTS Yes",
-            rule_pass=False, rule_strong=False,
-            poisson_prob=None, edge_pct=None, has_edge=False,
-            grade="N", lambda_h=None, lambda_a=None, lambda_total=None,
-            missing_markets=["CS 0-0 / 1-0 / 0-1"],
-            form_blended=bool(form_lambdas),
-        )
-    total_lam = lambdas["lambda_total"]
-    edge_result = compute_edge("btts_yes", total_lam, signal_odds.get("btts_yes"), lambdas, R["min_edge_pct"])
-    edge_pct = edge_result.get("edge_pct")
-    has_edge = edge_result.get("has_edge", False)
-
-    return PoissonResult(
-        rule_key="btts", market="BTTS Yes",
-        rule_pass=pass_, rule_strong=strong,
-        poisson_prob=edge_result.get("poisson_prob"),
-        edge_pct=edge_pct, has_edge=has_edge,
-        grade=_grade(pass_, strong, has_edge),
-        lambda_h=lambdas["lambda_h"] if lambdas else None,
-        lambda_a=lambdas["lambda_a"] if lambdas else None,
-        lambda_total=total_lam,
-        missing_markets=missing,
-        form_blended=bool(form_lambdas),
-    )
-
-
-def evaluate_under35(odds: dict, signal_odds: dict, form_lambdas: Optional[dict] = None) -> PoissonResult:
-    """
-    Under 3.5: at least 3 of {1-0,0-0,0-1,2-0,1-1,0-2} ≤ 6.5, and 2-2 ≥ 13.
-    Strong if also 3-1 ≥ 15 and 1-3 ≥ 15.
-    """
-    low_keys = ["s10", "s00", "s01", "s20", "s11", "s02"]
-    low_vals = {k: odds.get(k) for k in low_keys}
-    s22 = odds.get("s22")
-    s31 = odds.get("s31")
-    s13 = odds.get("s13")
-
-    qualifying = sum(1 for v in low_vals.values() if v is not None and v <= R["under35_low_max"])
-    req = int(R["under35_required_count"])
-
-    present_count = sum(1 for v in low_vals.values() if v is not None)
-    missing = []
-    if present_count < req:
-        missing.append(f"{req} of 1-0,0-0,0-1,2-0,1-1,0-2")
-    if s22 is None:
-        missing.append("2-2")
-
-    pass_ = (not missing and qualifying >= req and s22 is not None and s22 >= R["under35_min_22"])
-    strong = (pass_ and s31 is not None and s31 >= R["under35_strong_min_31"]
-              and s13 is not None and s13 >= R["under35_strong_min_13"])
-
-    s00 = odds.get("s00")
-    cs_lam = lambda_from_cs00(s00, R["cs_overround_factor"])
-    fw = _form_lambda_weight()
-    lam = _blend_lam(cs_lam, form_lambdas.get("lambda_total") if form_lambdas else None, fw)
-    edge_result = compute_edge("under3_5", lam, signal_odds.get("under3_5"), min_edge_pct=R["min_edge_pct"])
-    has_edge = edge_result.get("has_edge", False)
-
-    return PoissonResult(
-        rule_key="under35", market="Under 3.5",
-        rule_pass=pass_, rule_strong=strong,
-        poisson_prob=edge_result.get("poisson_prob"),
-        edge_pct=edge_result.get("edge_pct"), has_edge=has_edge,
-        grade=_grade(pass_, strong, has_edge),
-        lambda_h=None, lambda_a=None, lambda_total=lam,
-        missing_markets=missing,
-        form_blended=bool(form_lambdas),
-    )
-
-
-def evaluate_over05fh(odds: dict, signal_odds: dict) -> PoissonResult:
-    """Over 0.5 1H: FH 1-1 in [2.2, 5.5] and FH 0-0 ≥ 3.5."""
-    fh11 = odds.get("fh_s11")
-    fh00 = odds.get("fh_s00")
-
-    missing = []
-    if fh11 is None: missing.append("FH 1-1")
-    if fh00 is None: missing.append("FH 0-0")
-
-    pass_ = (not missing and
-             R["over05fh_11_min"] <= fh11 <= R["over05fh_11_max"] and
-             fh00 >= R["over05fh_00_min"])
-
-    fh_lam = lambda_from_cs00(fh00, R["cs_overround_factor"])
-    edge_result = compute_edge("over0_5_fh", fh_lam, signal_odds.get("over0_5_fh"), min_edge_pct=R["min_edge_pct"])
-    has_edge = edge_result.get("has_edge", False)
-
-    return PoissonResult(
-        rule_key="over05fh", market="Over 0.5 1H",
-        rule_pass=pass_, rule_strong=False,
-        poisson_prob=edge_result.get("poisson_prob"),
-        edge_pct=edge_result.get("edge_pct"), has_edge=has_edge,
-        grade=_grade(pass_, False, has_edge),
-        lambda_h=None, lambda_a=None, lambda_total=fh_lam,
-        missing_markets=missing,
-    )
-
-
-def evaluate_over05_match_total(
-    odds: dict, signal_odds: dict, form_lambdas: Optional[dict] = None,
-) -> PoissonResult:
-    """Full-time Over 0.5: marginal Poisson on blended λ_total vs best Over 0.5 price."""
-    s00 = odds.get("s00")
-    if s00 is None:
-        return PoissonResult(
-            rule_key="over05ft", market="Over 0.5",
-            rule_pass=False, rule_strong=False,
-            poisson_prob=None, edge_pct=None, has_edge=False,
-            grade="N", lambda_h=None, lambda_a=None, lambda_total=None,
-            missing_markets=["0-0 CS"],
-        )
-    cs_lam = lambda_from_cs00(s00, R["cs_overround_factor"])
-    fw = _form_lambda_weight()
-    lam = _blend_lam(cs_lam, form_lambdas.get("lambda_total") if form_lambdas else None, fw)
-    min_e = float(R.get("match_total_over_min_edge_pct", R["min_edge_pct"]))
-    mo = signal_odds.get("over0_5")
-    min_odd = MARKET_MIN_ODDS.get("Over 0.5")
-    if mo is not None and min_odd is not None and mo < min_odd:
-        return PoissonResult(
-            rule_key="over05ft", market="Over 0.5",
-            rule_pass=False, rule_strong=False,
-            poisson_prob=None, edge_pct=None, has_edge=False,
-            grade="N", lambda_h=None, lambda_a=None, lambda_total=lam,
-            form_blended=bool(form_lambdas),
-        )
-    er = compute_edge("over0_5", lam, mo, min_edge_pct=min_e)
-    has_edge = bool(er.get("has_edge"))
-    edge_pct_v = er.get("edge_pct")
-    strong = bool(has_edge and edge_pct_v is not None and edge_pct_v >= 2 * min_e)
-    return PoissonResult(
-        rule_key="over05ft", market="Over 0.5",
-        rule_pass=has_edge, rule_strong=strong,
-        poisson_prob=er.get("poisson_prob"),
-        edge_pct=edge_pct_v, has_edge=has_edge,
-        grade=_grade(has_edge, strong, has_edge),
-        lambda_h=None, lambda_a=None, lambda_total=lam,
-        form_blended=bool(form_lambdas),
-    )
-
-
-def evaluate_over35_match_total(
-    odds: dict, signal_odds: dict, form_lambdas: Optional[dict] = None,
-) -> PoissonResult:
-    """Full-time Over 3.5: P(S≥4) from blended λ_total vs best Over 3.5 price."""
-    s00 = odds.get("s00")
-    if s00 is None:
-        return PoissonResult(
-            rule_key="over35ft", market="Over 3.5",
-            rule_pass=False, rule_strong=False,
-            poisson_prob=None, edge_pct=None, has_edge=False,
-            grade="N", lambda_h=None, lambda_a=None, lambda_total=None,
-            missing_markets=["0-0 CS"],
-        )
-    cs_lam = lambda_from_cs00(s00, R["cs_overround_factor"])
-    fw = _form_lambda_weight()
-    lam = _blend_lam(cs_lam, form_lambdas.get("lambda_total") if form_lambdas else None, fw)
-    min_e = float(R.get("match_total_over_min_edge_pct", R["min_edge_pct"]))
-    mo = signal_odds.get("over3_5")
-    min_odd = MARKET_MIN_ODDS.get("Over 3.5")
-    if mo is not None and min_odd is not None and mo < min_odd:
-        return PoissonResult(
-            rule_key="over35ft", market="Over 3.5",
-            rule_pass=False, rule_strong=False,
-            poisson_prob=None, edge_pct=None, has_edge=False,
-            grade="N", lambda_h=None, lambda_a=None, lambda_total=lam,
-            form_blended=bool(form_lambdas),
-        )
-    er = compute_edge("over3_5", lam, mo, min_edge_pct=min_e)
-    has_edge = bool(er.get("has_edge"))
-    edge_pct_v = er.get("edge_pct")
-    strong = bool(has_edge and edge_pct_v is not None and edge_pct_v >= 2 * min_e)
-    return PoissonResult(
-        rule_key="over35ft", market="Over 3.5",
-        rule_pass=has_edge, rule_strong=strong,
-        poisson_prob=er.get("poisson_prob"),
-        edge_pct=edge_pct_v, has_edge=has_edge,
-        grade=_grade(has_edge, strong, has_edge),
-        lambda_h=None, lambda_a=None, lambda_total=lam,
-        form_blended=bool(form_lambdas),
-    )
-
-
 def _marginal_team_over_result(
     *,
     rule_key: str,
@@ -634,32 +414,13 @@ def _evaluate_over25_signal(odds: dict, signal_odds: dict) -> PoissonResult:
 def detect_contradictions(results: dict[str, PoissonResult]) -> list[str]:
     mixed = []
     over25 = results.get("over25")
-    over15 = results.get("over15")
-    under35 = results.get("under35")
     cs00u25 = results.get("cs00u25")
     cs00mid = results.get("cs00mid")
-    cs00o15 = results.get("cs00o15")
-    cs00extreme = results.get("cs00extreme")
-    btts = results.get("btts")
-    over35ft = results.get("over35ft")
 
-    if over35ft and over35ft.rule_pass and under35 and under35.rule_pass:
-        mixed.append("O3.5 marginal λ + U3.5")
-
-    if over25 and over25.rule_pass and under35 and under35.rule_pass:
-        mixed.append("O2.5 signal + U3.5")
     if over25 and over25.rule_pass and cs00u25 and cs00u25.rule_pass:
         mixed.append("O2.5 signal + U2.5 CS")
     if over25 and over25.rule_pass and cs00mid and cs00mid.rule_pass:
         mixed.append("O2.5 signal + U3.5 Mid")
-    if over15 and over15.rule_pass and under35 and under35.rule_pass:
-        mixed.append("O1.5 signal + U3.5")
-    if cs00o15 and cs00o15.rule_pass and under35 and under35.rule_pass:
-        mixed.append("O1.5 CS + U3.5")
-    if cs00extreme and cs00extreme.rule_pass and under35 and under35.rule_pass:
-        mixed.append("O1.5 Extreme + U3.5")
-    if btts and btts.rule_strong and under35 and under35.rule_strong:
-        mixed.append("Strong BTTS + strong U3.5")
     return mixed
 
 
@@ -667,29 +428,16 @@ def detect_contradictions(results: dict[str, PoissonResult]) -> list[str]:
 
 def analyse_fixture(
     fixture_id: int,
-    odds: dict,                          # CS odds: s00, s10, s01, s11, s20, s02, s21, s12, s22, s31, s13, fh_s00, fh_s11
-    signal_odds: dict,                   # market odds: btts_yes, under3_5, over1_5, over2_5, under2_5, over0_5_fh
+    odds: dict,                          # CS odds: s00, s10, s01, s11, s20, s02, s21, s12, s22, s31, s13
+    signal_odds: dict,                   # market odds: over1_5, over2_5, under2_5
     form_lambdas: Optional[dict] = None, # rolling form: {lambda_h, lambda_a, lambda_total}; None = CS-only
 ) -> PoissonFixtureResult:
-    btts_r = evaluate_btts(odds, signal_odds, form_lambdas)
-    under35_r = evaluate_under35(odds, signal_odds, form_lambdas)
-    over05fh_r = evaluate_over05fh(odds, signal_odds)  # FH lambda uses FH CS odds only — form not applicable
-    over05_ft_r = evaluate_over05_match_total(odds, signal_odds, form_lambdas)
-    over35_ft_r = evaluate_over35_match_total(odds, signal_odds, form_lambdas)
     home_o05_r = _marginal_team_over_result(
         rule_key="home_o05", market="Home Over 0.5", side="h", line=0.5, odds_key="home_o05",
         odds=odds, signal_odds=signal_odds, form_lambdas=form_lambdas,
     )
-    home_o15_r = _marginal_team_over_result(
-        rule_key="home_o15", market="Home Over 1.5", side="h", line=1.5, odds_key="home_o15",
-        odds=odds, signal_odds=signal_odds, form_lambdas=form_lambdas,
-    )
     away_o05_r = _marginal_team_over_result(
         rule_key="away_o05", market="Away Over 0.5", side="a", line=0.5, odds_key="away_o05",
-        odds=odds, signal_odds=signal_odds, form_lambdas=form_lambdas,
-    )
-    away_o15_r = _marginal_team_over_result(
-        rule_key="away_o15", market="Away Over 1.5", side="a", line=1.5, odds_key="away_o15",
         odds=odds, signal_odds=signal_odds, form_lambdas=form_lambdas,
     )
     cascade = _evaluate_cs_cascade(odds, signal_odds, form_lambdas)
@@ -698,15 +446,13 @@ def analyse_fixture(
 
     cascade_map = {r.rule_key: r for r in cascade}
     all_results = {
-        "btts": btts_r, "under35": under35_r, "over05fh": over05fh_r,
-        "over05ft": over05_ft_r, "over35ft": over35_ft_r,
-        "home_o05": home_o05_r, "home_o15": home_o15_r, "away_o05": away_o05_r, "away_o15": away_o15_r,
+        "home_o05": home_o05_r, "away_o05": away_o05_r,
         "over15": over15_r, "over25": over25_r,
         **cascade_map,
     }
 
     mixed = detect_contradictions(all_results)
-    primary_keys = ["under35", "btts", "over05fh", "cs00u25", "cs00u35", "cs00o15", "cs00mid", "cs00extreme"]
+    primary_keys = ["cs00u25", "cs00u35", "cs00o15", "cs00mid", "cs00extreme"]
     passed = [k for k in primary_keys if all_results.get(k) and all_results[k].rule_pass]
     strong = [k for k in primary_keys if all_results.get(k) and all_results[k].rule_strong]
 

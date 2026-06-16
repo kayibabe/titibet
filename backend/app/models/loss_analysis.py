@@ -4,7 +4,7 @@ loss_analysis.py — DB model for AI-generated loss analysis records.
 Each settled "Lost" tracked_bet gets one LossAnalysis row per run of the
 loss_analysis_agent. The agent tags the failure with structured categories and
 a natural-language narrative, which the system aggregates into threshold
-recommendations fed back into performance_intelligence and the accumulator.
+recommendations fed back into performance_intelligence.
 """
 from __future__ import annotations
 

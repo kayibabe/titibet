@@ -5,7 +5,7 @@ Pushes signal digests to three named channels after every sync:
 
   TiTiBet General  — all signal matches for the day
   TiTiBet Free     — 3 deterministic daily picks
-  TiTiBet Pro      — High Conf ACCA, Goals ACCA, Safe Ticket, Best Singles
+  TiTiBet Pro      — top-ranked signals (same digest as General)
 
 Setup
 -----
@@ -440,148 +440,6 @@ def build_general_message(signals: list[tuple], run_date: date) -> str:
     return "\n".join(parts)
 
 
-def build_free_message(free_ticket: dict, run_date: date) -> str:
-    """Top 3 EV-ranked picks for the TiTiBet Free channel."""
-    date_label = run_date.strftime("%a %d %b %Y")
-    selected = free_ticket.get("selected_legs", [])
-    combined = free_ticket.get("combined_odds")
-    win_prob = free_ticket.get("win_probability_estimate")
-    kelly    = free_ticket.get("kelly_stake_pct")
-
-    # Build stats line: combined odds · win prob · Kelly stake
-    stats_parts = []
-    if combined:
-        stats_parts.append(f"Combined {combined:.2f}x")
-    if win_prob is not None:
-        stats_parts.append(f"Win {_pct(win_prob)}")
-    if kelly and kelly > 0:
-        stats_parts.append(f"Kelly {kelly * 100:.1f}%")
-    stats_line = f"<i>{' · '.join(stats_parts)}</i>" if stats_parts else ""
-
-    parts = [
-        f"🎯 <b>TiTiBet Free — {date_label}</b>",
-        f"<i>Today's top 3 value picks</i>",
-    ]
-    if stats_line:
-        parts.append(stats_line)
-
-    for i, leg in enumerate(selected, 1):
-        ko_str = _ko_from_iso(leg.get("kickoff_at"))
-        parts.append(
-            f"\n<b>{i}. {_esc(leg.get('match_name', ''))}</b>\n"
-            f"   🏆 {_esc(leg.get('league', ''))}{ko_str}\n"
-            f"   📌 {_esc(_verbose_market(leg.get('market', '')))} · {_pct(leg.get('probability'))}"
-        )
-
-    other = free_ticket.get("other_legs", [])
-    if other:
-        names = " · ".join(
-            f"{_esc(l.get('home_team',''))} vs {_esc(l.get('away_team',''))}"
-            for l in other[:8]
-        )
-        parts.append(f"\n<i>Also today: {names}</i>")
-    parts.append(f"\n🔒 Full details: <a href=\"{settings.app_url}\">{settings.app_url}</a>")
-    return "\n".join(parts)
-
-
-def build_pro_message(pro_ticket: dict, run_date: date) -> str:
-    """5 Pro sub-tickets for the TiTiBet Pro channel, formatted like the Free ticket."""
-    date_label = run_date.strftime("%a %d %b %Y")
-    parts = [
-        f"💎 <b>TiTiBet Pro — {date_label}</b>",
-        f"<i>High Conf ACCA · Goals ACCA · Safe Ticket · Best Singles · Sharp Moves</i>",
-    ]
-    sub_emojis = {
-        "high_conf_acca": "🔥",
-        "goals_acca":     "⚽",
-        "safe_ticket":    "🛡",
-        "best_singles":   "⭐",
-        "sharp_moves":    "📈",
-    }
-    for sub in pro_ticket.get("sub_tickets", []):
-        legs = sub.get("legs", [])
-        if not legs:
-            continue
-
-        emoji      = sub_emojis.get(sub["key"], "•")
-        is_singles = sub.get("is_singles", False)
-
-        # Sub-ticket stats: combined odds + Kelly (accas only)
-        stats_parts = []
-        combined = sub.get("combined_odds")
-        kelly    = sub.get("kelly_stake_pct")
-        if combined and not is_singles:
-            stats_parts.append(f"{combined:.2f}x")
-        if kelly and kelly > 0 and not is_singles:
-            stats_parts.append(f"Kelly {kelly * 100:.1f}%")
-        stats_suffix = f"  <i>· {' · '.join(stats_parts)}</i>" if stats_parts else ""
-
-        parts.append(f"\n{emoji} <b>{sub['label']}</b>{stats_suffix}")
-
-        for i, leg in enumerate(legs, 1):
-            ko_str   = _ko_from_iso(leg.get("kickoff_at"))
-            league   = _esc(leg.get("league") or "")
-            prob     = leg.get("probability")
-            prob_str = f" · {_pct(prob)}" if prob is not None else ""
-            parts.append(
-                f"\n<b>{i}. {_esc(leg.get('match_name', ''))}</b>\n"
-                f"   🏆 {league}{ko_str}\n"
-                f"   📌 {_esc(_verbose_market(leg.get('market', '')))}{prob_str}"
-            )
-
-    parts.append(f"\n<a href=\"{settings.app_url}\">{settings.app_url}</a>")
-    return "\n".join(parts)
-
-
-async def push_titibet_tickets(db: AsyncSession, run_date: date) -> bool:
-    """
-    Send the three TiTiBet named tickets to their respective Telegram channels.
-    Called after every sync + compute cycle (same trigger as push_titibet_tickets).
-    Safe to call when Telegram is not configured — returns False silently.
-    """
-    if not settings.telegram_bot_token:
-        return False
-    channels = _configured_titibet_channels()
-    if not channels:
-        return False
-
-    from app.services.recommended_tickets import load_titibet_tickets
-    tickets = await load_titibet_tickets(db, run_date)
-    free_ticket = tickets.get("free", {})
-    pro_ticket  = tickets.get("pro", {})
-
-    # Build the general signal list (same query as existing push_titibet_tickets)
-    all_rows = await _query_all_rows(db, run_date)
-    general_rows = _best_per_fixture(all_rows)
-    general_rows.sort(key=lambda r: _system_rank(r[0], r[1]), reverse=True)
-
-    any_sent = False
-    for chat_id, channel_type in channels:
-        if channel_type == "general":
-            msg = build_general_message(general_rows, run_date)
-        elif channel_type == "free":
-            msg = build_free_message(free_ticket, run_date)
-        elif channel_type == "pro":
-            msg = build_pro_message(pro_ticket, run_date)
-        else:
-            continue
-
-        chunks = _split_message(msg)
-        ok = False
-        for chunk in chunks:
-            try:
-                ok = await _send_to(chat_id, chunk)
-            except Exception as _exc:
-                logger.warning('TiTiBet Telegram [%s] send failed: %s', channel_type, _exc)
-                ok = False
-        if ok:
-            logger.info("TiTiBet Telegram [%s → %s]: sent %d chunk(s) for %s",
-                        channel_type, chat_id, len(chunks), run_date)
-            any_sent = True
-        else:
-            logger.warning('TiTiBet Telegram [%s → %s]: send failed for %s', channel_type, chat_id, run_date)
-
-    return any_sent
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -756,134 +614,6 @@ def build_general_results_message(
     return "\n".join(parts)
 
 
-def build_free_results_message(
-    free_ticket: dict,
-    fix_map: dict[int, "Fixture"],
-    run_date: date,
-) -> str:
-    """Results for the Free channel — 3 picks with individual outcomes and an overall verdict."""
-    date_label = run_date.strftime("%a %d %b %Y")
-    legs = free_ticket.get("selected_legs", [])
-
-    parts = [
-        f"🎯 <b>TiTiBet Free — Results</b>",
-        f"<i>{date_label} · {len(legs)} picks</i>",
-    ]
-
-    won_count = lost_count = void_count = 0
-    for i, leg in enumerate(legs, 1):
-        fix_id = leg.get("fixture_id")
-        fix    = fix_map.get(fix_id) if fix_id else None
-        if fix:
-            result = _compute_result_from_market(leg.get("market", ""), fix)
-            score  = _score_str(fix)
-        else:
-            result = "unknown"
-            score  = "?"
-
-        r_emoji = _result_emoji(result)
-        if result == "won":    won_count  += 1
-        elif result == "lost": lost_count += 1
-        elif result == "void": void_count += 1
-
-        ko_str   = _ko_from_iso(leg.get("kickoff_at"))
-        prob     = leg.get("probability")
-        prob_str = f" · {_pct(prob)}" if prob is not None else ""
-
-        parts.append(
-            f"\n{r_emoji} <b>{i}. {_esc(leg.get('match_name', ''))}</b> ({score}){ko_str}\n"
-            f"   🏆 {_esc(leg.get('league', ''))}\n"
-            f"   📌 {_esc(_verbose_market(leg.get('market', '')))}{prob_str}"
-        )
-
-    total      = won_count + lost_count
-    all_void   = (void_count == len(legs)) and len(legs) > 0
-    ticket_won = (lost_count == 0) and (won_count > 0)
-    verdict    = "⚪ Void" if all_void else ("✅ Won" if ticket_won else "❌ Lost")
-    hit_rate   = round(won_count / total * 100) if total > 0 else 0
-
-    parts.append(f"\n📈 {won_count}/{len(legs)} Won · Ticket: {verdict}")
-    if total > 0:
-        parts.append(f"<i>Hit rate: {hit_rate}%</i>")
-    parts.append(f"\n<a href=\"{settings.app_url}\">{settings.app_url}</a>")
-    return "\n".join(parts)
-
-
-def build_pro_results_message(
-    pro_ticket: dict,
-    fix_map: dict[int, "Fixture"],
-    run_date: date,
-) -> str:
-    """Results for the Pro channel — each sub-ticket with leg outcomes in General format."""
-    date_label = run_date.strftime("%a %d %b %Y")
-    parts = [
-        f"💎 <b>TiTiBet Pro — Results</b>",
-        f"<i>{date_label}</i>",
-    ]
-
-    sub_emojis = {
-        "high_conf_acca": "🔥",
-        "goals_acca":     "⚽",
-        "safe_ticket":    "🛡",
-        "best_singles":   "⭐",
-        "sharp_moves":    "📈",
-    }
-
-    for sub in pro_ticket.get("sub_tickets", []):
-        legs = sub.get("legs", [])
-        if not legs:
-            continue
-
-        emoji      = sub_emojis.get(sub.get("key", ""), "•")
-        is_singles = sub.get("is_singles", False)
-        won_legs = lost_legs = void_legs = 0
-
-        # Collect rendered leg lines first so we can compute the verdict for the header
-        leg_parts: list[str] = []
-        for i, leg in enumerate(legs, 1):
-            fix_id = leg.get("fixture_id")
-            fix    = fix_map.get(fix_id) if fix_id else None
-            if fix:
-                result = _compute_result_from_market(leg.get("market", ""), fix)
-                score  = _score_str(fix)
-            else:
-                result = "unknown"
-                score  = "?"
-
-            r_emoji = _result_emoji(result)
-            if result == "won":    won_legs  += 1
-            elif result == "lost": lost_legs += 1
-            elif result == "void": void_legs += 1
-
-            ko_str   = _ko_from_iso(leg.get("kickoff_at"))
-            prob     = leg.get("probability")
-            prob_str = f" · {_pct(prob)}" if prob is not None else ""
-
-            leg_parts.append(
-                f"\n{r_emoji} <b>{i}. {_esc(leg.get('match_name', ''))}</b> ({score}){ko_str}\n"
-                f"   🏆 {_esc(leg.get('league', ''))}\n"
-                f"   📌 {_esc(_verbose_market(leg.get('market', '')))}{prob_str}"
-            )
-
-        all_void   = (void_legs == len(legs)) and len(legs) > 0
-        ticket_won = (lost_legs == 0) and (won_legs > 0)
-        verdict    = "⚪ Void" if all_void else ("✅ Won" if ticket_won else "❌ Lost")
-
-        # Sub-ticket header with verdict
-        parts.append("")
-        if is_singles:
-            parts.append(f"{emoji} <b>{_esc(sub.get('label', ''))}</b>")
-        else:
-            parts.append(f"{emoji} <b>{_esc(sub.get('label', ''))}</b> · {verdict}")
-
-        parts.extend(leg_parts)
-
-        if not is_singles:
-            parts.append(f"<i>({won_legs}/{len(legs)} legs won)</i>")
-
-    parts.append(f"\n<a href=\"{settings.app_url}\">{settings.app_url}</a>")
-    return "\n".join(parts)
-
 
 # ── Main results push entry point ─────────────────────────────────────────────
 
@@ -933,25 +663,7 @@ async def push_results_report(
         )
         return False
 
-    # ── 3. Load ticket data (for Free + Pro) ─────────────────────────────────
-    # include_finished=True bypasses the "no finished fixtures" filter in
-    # _load_candidates so the same picks that were originally sent are
-    # recovered after games end.
-    from app.services.recommended_tickets import load_titibet_tickets
-    tickets = await load_titibet_tickets(db, run_date, include_finished=True)
-
-    # Build fix_map from ALL fixtures for the date — not just the subset that
-    # passes _query_all_rows suppression filters.  Pro/Free legs may belong to
-    # leagues/markets that were suppressed after the original push; querying
-    # fixtures directly ensures those legs can still be resolved to a score.
-    all_fixtures_result = await db.execute(
-        select(Fixture).where(Fixture.event_date == run_date)
-    )
-    fix_map: dict[int, Fixture] = {
-        f.id: f for f in all_fixtures_result.scalars().all()
-    }
-
-    # ── 4. Send to each channel ───────────────────────────────────────────────
+    # ── 3. Send to each channel ───────────────────────────────────────────────
     any_sent = False
     for chat_id, channel_type in channels:
         if not force:
@@ -963,14 +675,7 @@ async def push_results_report(
                 )
                 continue
 
-        if channel_type == "general":
-            msg = build_general_results_message(signal_rows, run_date)
-        elif channel_type == "free":
-            msg = build_free_results_message(tickets.get("free", {}), fix_map, run_date)
-        elif channel_type == "pro":
-            msg = build_pro_results_message(tickets.get("pro", {}), fix_map, run_date)
-        else:
-            continue
+        msg = build_general_results_message(signal_rows, run_date)
 
         chunks = _split_message(msg)
         ok = False

@@ -2,22 +2,21 @@
   BarChart2,
   ListChecks,
   LogOut,
-  Percent,
-  Settings,
   ShieldCheck,
   TrendingUp,
   User,
+  Wrench,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 
-// Daily-use tool pages only — Account and Plans are accessible from the footer.
-// Value Bets and Backtest live as tabs inside Signals and Analytics respectively.
+// Primary nav — daily-driver pages only, identical on desktop and mobile.
+// Account and Plans live in the footer. Value Bets and AI Advisory are tabs
+// inside Signals; Arbitrage, Backtest and Settings live inside Tools.
 const NAV_ITEMS = [
   { id: 'signals',   label: 'Signals',   icon: TrendingUp },
-  { id: 'arb',       label: 'Arbitrage', icon: Percent    },
   { id: 'tracker',   label: 'Tracker',   icon: ListChecks },
   { id: 'analytics', label: 'Analytics', icon: BarChart2  },
-  { id: 'settings',  label: 'Settings',  icon: Settings   },
+  { id: 'tools',     label: 'Tools',     icon: Wrench     },
 ]
 
 const TIER_BADGE = {

@@ -1,0 +1,40 @@
+market,proxy_odd,my_book_odd,note
+# HOW TO USE — calibrate on LIVE/UPCOMING fixtures (past prices are unrecoverable).
+# For each row: find an upcoming fixture whose TiTiBet signal is in that market at
+# roughly the target odd in the note. Record TWO numbers for the SAME selection:
+#   proxy_odd   = the odd TiTiBet shows for it (its William Hill / sharp line)
+#   my_book_odd = the odd betPawa / 888bets / Betway shows for the same selection NOW
+# Then run:  python tools/calibrate_haircut.py tools/haircut_spotcheck.csv
+# Rows are weighted to your real bet mix from the 100-bet replay: Away/Home Over 0.5
+# are ~91% of what the system fires, so they get the most rows. Spread the checks
+# across the low/mid/high bands — soft books shade short prices (favourites/overs)
+# harder than long ones, and the per-market haircut is the average across bands.
+#
+# ---- Away Over 0.5  (175 signals; proxy range 1.33-3.80, median 2.26) ----
+Away Over 0.5,,,target proxy ~2.03 (low band)
+Away Over 0.5,,,target proxy ~2.03 (low band)
+Away Over 0.5,,,target proxy ~2.26 (mid band)
+Away Over 0.5,,,target proxy ~2.26 (mid band)
+Away Over 0.5,,,target proxy ~2.50 (high band)
+Away Over 0.5,,,target proxy ~2.50 (high band)
+# ---- Home Over 0.5  (94 signals; proxy range 1.37-3.73, median 2.24) ----
+Home Over 0.5,,,target proxy ~1.76 (low band)
+Home Over 0.5,,,target proxy ~1.76 (low band)
+Home Over 0.5,,,target proxy ~2.24 (mid band)
+Home Over 0.5,,,target proxy ~2.24 (mid band)
+Home Over 0.5,,,target proxy ~2.56 (high band)
+Home Over 0.5,,,target proxy ~2.56 (high band)
+# ---- Under 3.5  (33 signals; tight proxy range 1.65-1.85) ----
+Under 3.5,,,target proxy ~1.70
+Under 3.5,,,target proxy ~1.78
+Under 3.5,,,target proxy ~1.83
+# ---- Home Over 1.5  (14 signals; proxy range 2.10-3.50) ----
+Home Over 1.5,,,target proxy ~2.49 (low band)
+Home Over 1.5,,,target proxy ~2.67 (mid band)
+Home Over 1.5,,,target proxy ~2.98 (high band)
+# ---- Away Under 1.5  (15 signals; proxy range 1.40-2.20) ----
+Away Under 1.5,,,target proxy ~1.50
+Away Under 1.5,,,target proxy ~1.79
+# ---- Home Under 1.5  (10 signals; proxy range 1.42-2.00) ----
+Home Under 1.5,,,target proxy ~1.54
+Home Under 1.5,,,target proxy ~1.78

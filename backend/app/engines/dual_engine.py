@@ -1,11 +1,11 @@
 """
-dual_engine.py — Fuses Bayesian and Poisson engine outputs into DualSignal.
+dual_engine.py -- Fuses Bayesian and Poisson engine outputs into DualSignal.
 
 Fusion rules:
-- Both agree, no contradiction → High/Medium/Low based on combined confidence
-- Contradiction detected → Low confidence, zero stake
-- Bayesian only → downgrade confidence by one tier
-- Poisson only → downgrade confidence by one tier
+- Both agree, no contradiction -> High/Medium/Low based on combined confidence
+- Contradiction detected -> Low confidence, zero stake
+- Bayesian only -> downgrade confidence by one tier
+- Poisson only -> downgrade confidence by one tier
 
 Quality score weights Bayesian more heavily (60%) when both agree, since it uses
 a broader bookmaker consensus vs the Poisson model which has fewer CS data points.
@@ -48,10 +48,10 @@ def _recommended_stake(kelly_pct: float, confidence: str, agreement: str) -> flo
     if agreement == "Contradiction" or confidence in ("None", "Low"):
         return 0.0
     unit = _unit_stake(confidence)
-    # Apply fractional Kelly — scale down raw Kelly by the configured fraction (default 0.25)
-    # so we bet a conservative quarter of what full Kelly would suggest.
-    fractional_kelly = kelly_pct * settings.kelly_fraction
-    base = min(fractional_kelly, unit)
+    # kelly_pct is already the fractional Kelly (fraction applied in bayesian._kelly).
+    # Do NOT multiply by settings.kelly_fraction again -- that would apply the
+    # fraction twice (e.g. 0.25 x 0.25 = 6.25% instead of the intended 25%).
+    base = min(kelly_pct, unit)
     if agreement == "Both" and confidence == "High":
         base = min(base * 1.5, settings.max_kelly_pct)
     return round(base, 4)
@@ -69,14 +69,14 @@ def fuse(
 
     contradiction = bool(mixed_signals)
 
-    # Normalise Poisson edge_pct (percentage → fraction) so quality scores stay in [0, 1].
+    # Normalise Poisson edge_pct (percentage -> fraction) so quality scores stay in [0, 1].
     # bayesian.quality_score is already in [0, 1] after the Bayesian engine fix.
     p_edge = ((poisson.edge_pct or 0) / 100.0) if poisson else 0.0
 
     if b_ok and p_ok:
         if contradiction:
-            # Both engines fired but in opposing directions — no actionable signal.
-            # Zero the quality score so the signal never reaches accumulator candidacy.
+            # Both engines fired but in opposing directions -- no actionable signal.
+            # Zero the quality score so contradictory signals rank last.
             agreement = "Contradiction"
             confidence = "Low"
             qs = 0.0
@@ -111,7 +111,7 @@ def fuse(
 
     # Demote confidence one tier when Bayesian edge falls below the minimum threshold.
     # Prevents high-agreement-but-low-edge signals from receiving full staking.
-    # Guard: only demote High or Medium — a signal already at Low should NOT be pushed
+    # Guard: only demote High or Medium -- a signal already at Low should NOT be pushed
     # to None here, because the Bayesian engine already assigned Low precisely because
     # the edge was thin.  Double-demoting it silently drops valid Both/Low agreements.
     if bayesian is not None and (bayesian.edge or 0.0) < settings.min_value_edge and confidence in ("High", "Medium"):
@@ -120,13 +120,31 @@ def fuse(
 
     # Hard block: when Bayesian edge is genuinely negative (bookmaker's implied
     # probability exceeds our model's probability), Poisson-only signals have no
-    # business in the feed — we're firing on pattern alone against the market.
+    # business in the feed -- we're firing on pattern alone against the market.
     # Audit evidence: 24 Home Over 1.5 + 18 Away Over 1.5 negative-edge signals
     # showed -12% ROI at ~50% hit rate; the market was right, our model was wrong.
     if (bayesian is not None
             and (bayesian.edge or 0.0) < 0.0
             and agreement == "Poisson Only"):
         confidence = "None"
+
+    # Market+agreement suppression -- audit-validated (2026-06-03, n=924 settled).
+    # Home Over 1.5 Poisson Only: Low+Poisson=-35.7% ROI (n=30), Medium+Poisson=-10.5% (n=41).
+    # Only Both+High has genuine edge in this market (+61.7% ROI, n=14).
+    # Poisson fires because lambda looks high; Bayesian disagrees because the bookmaker
+    # has already priced the move and the implied edge is zero.
+    if market == "Home Over 1.5" and agreement == "Poisson Only":
+        confidence = "None"
+
+    # Away Over 0.5 in the 80-90% probability band: audit 2026-06-03 showed -20pp
+    # calibration error (17 bets, 64.7% actual hit vs ~85% model probability).
+    # The bookmaker has priced these as near-certainties; our model independently
+    # agrees but is overconfident -- the market is right more often than we are.
+    # Block signals where bayesian derived_prob falls in [0.80, 0.90).
+    if market == "Away Over 0.5" and bayesian is not None:
+        _ao05_prob = bayesian.derived_prob or 0.0
+        if 0.80 <= _ao05_prob < 0.90:
+            confidence = "None"
 
     kelly_pct = (bayesian.kelly_pct if bayesian else 0.0) or 0.0
     stake = _recommended_stake(kelly_pct, confidence, agreement)

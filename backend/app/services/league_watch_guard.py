@@ -4,8 +4,8 @@ league_watch_guard.py — Automated league performance monitoring.
 Checks leagues in LEAGUE_WATCHLIST against BacktestResult and TrackedBet history.
 When a league's ROI drops below its configured threshold (with enough sample size),
 writes a LearningProposal(change_type="league_suppression") to the DB. The signal
-engine and accumulator generator both read active league_suppression proposals, so
-the suppression takes effect on the next signal generation cycle without a restart.
+engine reads active league_suppression proposals, so the suppression takes effect
+on the next signal generation cycle without a restart.
 
 When a league's performance recovers above the recovery threshold, the proposal is
 deactivated automatically so the league re-enters the signal pool.

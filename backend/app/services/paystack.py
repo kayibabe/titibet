@@ -40,7 +40,6 @@ PLANS: list[dict] = [
         "price_mwk": 20000,
         "features": [
             "All value signals (19 markets)",
-            "Accumulator builder — Safe & Value tiers",
             "Bet tracker with CLV tracking",
             "Analytics & backtest",
         ],
@@ -64,7 +63,6 @@ PLANS: list[dict] = [
         "price_mwk": 30000,
         "features": [
             "Everything in Pro",
-            "Bold accumulator tier (60–100× odds)",
             "AI betting advisor (Groq-powered)",
             "Admin user panel",
             "Priority signal alerts",

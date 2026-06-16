@@ -1,9 +1,8 @@
 import { useState, useCallback } from 'react'
-import { fetchBets, fetchAccumulators } from '../api/tracker'
+import { fetchBets } from '../api/tracker'
 
 export function useTracker() {
   const [bets, setBets] = useState([])
-  const [accumulators, setAccumulators] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -20,14 +19,5 @@ export function useTracker() {
     }
   }, [])
 
-  const loadAccumulators = useCallback(async () => {
-    try {
-      const data = await fetchAccumulators()
-      setAccumulators(data)
-    } catch (e) {
-      setError(e.message)
-    }
-  }, [])
-
-  return { bets, accumulators, loading, error, loadBets, loadAccumulators }
+  return { bets, loading, error, loadBets }
 }

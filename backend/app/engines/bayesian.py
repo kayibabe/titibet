@@ -24,6 +24,7 @@ from app.core.config import (
     MARKET_PROB_BOUNDS,
     MARKETS,
     POISSON_RULES,
+    exec_odd_from,
     get_league_tier,
     get_settings,
 )
@@ -64,6 +65,14 @@ class BayesianResult:
     # stale soft-book outliers; is_outlier_odds = True when triggered.
     consensus_odd: float = 0.0
     is_outlier_odds: bool = False
+    # ── Execution-price fields (Fix 1) ─────────────────────────────────────────
+    # exec_odd: the realistic price the user gets at their book (betPawa / 888bets
+    #   / Betway), derived by haircutting the displayed proxy (best_actual_odd).
+    #   EV / Kelly / is_value are decided on THIS, not the longer proxy price.
+    # ev_pct_ref: the old proxy-price EV, retained for diagnostics so the gap
+    #   between "looks good on the screen price" and "is good at my book" is visible.
+    exec_odd: float = 0.0
+    ev_pct_ref: float = 0.0
 
 
 @dataclass
@@ -515,10 +524,10 @@ def analyse_fixture(
         if min_market_odd is not None and best_odd < min_market_odd:
             continue
 
-        # When a sharp book (Pinnacle/Bet365) is available, best_odd IS the sharp
-        # price and is_outlier_odds is False — effective_odd == best_odd.
-        # Fallback path (no sharp book): effective_odd uses the outlier-filtered
-        # second-best to guard against stale soft-book lines.
+        # ── Reference (proxy) price ───────────────────────────────────────────
+        # effective_odd is the price we can OBSERVE: the displayed proxy
+        # (William Hill / sharp), outlier-guarded on the no-sharp-book fallback.
+        # It anchors the no-vig fair probability and the model-vs-market edge.
         effective_odd = consensus_odd if (is_outlier_odds and consensus_odd > 1.0) else best_odd
 
         no_vig = _no_vig_prob(
@@ -529,16 +538,35 @@ def analyse_fixture(
         edge = derived_prob - no_vig
         implied_prob = no_vig   # vig-free reference probability
         market_edge_floor = MARKET_MIN_EDGE.get(market_name, settings.min_value_edge)
-        is_value = edge >= market_edge_floor and derived_prob >= settings.min_derived_prob
-        ks = _kelly(derived_prob, effective_odd, settings.kelly_fraction, settings.max_kelly_pct) if edge > 0 else 0.0
+
+        # ── Execution price (Fix 1) ───────────────────────────────────────────
+        # The user does NOT bet at effective_odd; they bet at a shorter soft-book
+        # price. Haircut the proxy down to a realistic exec price and DECIDE on it.
+        exec_odd = exec_odd_from(effective_odd, market_name)
+        # Proxy-price EV kept only for diagnostics (the "looks good on screen" number).
+        ev_pct_ref = round((derived_prob * effective_odd - 1.0) * 100, 2)
+        # Decision EV — computed at the price the user can actually take.
+        ev_pct = round((derived_prob * exec_odd - 1.0) * 100, 2) if exec_odd > 1.0 else -100.0
+
+        # Value now requires BOTH: the model beats the no-vig market (edge gate)
+        # AND the bet is profitable at the real execution price (exec-EV gate).
+        # A signal that is +edge vs the sharp line but -EV at betPawa now fails.
+        is_value = (
+            edge >= market_edge_floor
+            and derived_prob >= settings.min_derived_prob
+            and ev_pct >= settings.min_exec_ev_pct
+        )
+        # Stake on the exec price. _kelly self-zeroes when the exec-price edge is
+        # non-positive, so a too-short book correctly yields zero stake.
+        ks = _kelly(derived_prob, exec_odd, settings.kelly_fraction, settings.max_kelly_pct) if exec_odd > 1.0 else 0.0
         conf = _confidence(edge, derived_prob) if is_value else "Low"
-        ev_pct = round((derived_prob * effective_odd - 1.0) * 100, 2)
         # Continuous quality: sub-threshold signals get a proportional fraction (max 0.5×)
-        # so borderline picks can still surface as accumulator candidates at reduced weight.
+        # so borderline picks still appear in ranked results at reduced weight.
         # is_value still gates staking and confidence — this only affects quality_score.
+        # ev_pct here is the exec-price EV, so quality already reflects real edge.
         if is_value:
             edge_scale = 1.0
-        elif edge > 0:
+        elif edge > 0 and ev_pct > 0:
             edge_scale = min(0.5, edge / market_edge_floor * 0.5)
         else:
             edge_scale = 0.0
@@ -551,6 +579,7 @@ def analyse_fixture(
             is_value=is_value, confidence=conf, quality_score=qs,
             overround=overround, coverage=coverage, bookmaker_count=n_bookies, ev_pct=ev_pct,
             consensus_odd=consensus_odd, is_outlier_odds=is_outlier_odds,
+            exec_odd=exec_odd, ev_pct_ref=ev_pct_ref,
         ))
 
     results.sort(key=lambda m: (-int(m.is_value), -m.edge))

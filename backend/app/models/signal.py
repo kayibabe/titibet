@@ -85,32 +85,6 @@ class Signal(Base):
     # Positive = home team is rated higher. Magnitude reflects strength gap.
     glicko_r_diff: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    # ── BREA — BTTS Risk-Elimination Analysis ───────────────────────────────
-    # Only populated for BTTS Yes signals.
-    # brea_ri1: P(1:1 scoreline) — only losing case for BTTS+U2.5 NO.
-    #           Lower is safer. Threshold < 10%.
-    # brea_fss: BREA Final Selection Score [0-1]. Higher = cleaner BTTS signal.
-    brea_ri1: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    brea_fss: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-
-    # ── FHGI — First-Half Goal Intensity (enhanced Over 0.5 1H) ────────────
-    # Only populated for "Over 0.5 1H" signals where all 4 HT CS odds exist.
-    # fhgi_gpi:   Goal Probability Index = devigged P(HT 1:1)
-    # fhgi_fhgmi: FHGMI ratio = (P_10+P_01+2P_11)/P_00
-    # fhgi_p_model: Logistic model probability for FH Over 0.5
-    fhgi_gpi: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    fhgi_fhgmi: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    fhgi_p_model: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-
-    # ── WTCPM — Weak Team Corner Persistence Model ───────────────────────────
-    # Only populated for "Underdog Over 1.5 Corners" signals.
-    # wtcpm_di:        Dominance Index = u_odds / f_odds (higher = stronger favourite)
-    # wtcpm_ccs:       Corner Confidence Score 0–100
-    # wtcpm_p_corners: P(underdog corners ≥ 2) under Poisson model
-    wtcpm_di: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    wtcpm_ccs: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    wtcpm_p_corners: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-
     computed_at: Mapped[datetime] = mapped_column(DateTime, index=True, server_default=func.now())
 
     fixture: Mapped["Fixture"] = relationship("Fixture", back_populates="signals")  # noqa: F821

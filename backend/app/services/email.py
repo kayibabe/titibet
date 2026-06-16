@@ -94,7 +94,7 @@ async def send_welcome(to: str, name: str) -> None:
         explore value signals, track bets, and run backtests.
       </p>
       <p style="color:#94a3b8;line-height:1.6;margin-top:12px">
-        When you're ready for accumulators and AI analysis, upgrade to Pro or Elite from the
+        When you're ready for full analytics and AI analysis, upgrade to Pro or Elite from the
         <strong style="color:#e2e8f0">Plans</strong> page inside the app.
       </p>
       <a href="{s.app_url}" style="display:inline-block;margin-top:24px;padding:12px 28px;
@@ -138,8 +138,8 @@ async def send_payment_confirmation(to: str, name: str, tier: str, expires_at: s
         subscription is now active until <strong style="color:#e2e8f0">{expires_at}</strong>.
       </p>
       <p style="color:#94a3b8;line-height:1.6;margin-top:12px">
-        {"Accumulators (Safe &amp; Value tiers), CLV tracking, and full analytics are unlocked." if tier == "pro"
-          else "All Pro features plus Bold accumulators, AI Advisory Council, and Admin panel are unlocked."}
+        {"CLV tracking and full analytics are unlocked." if tier == "pro"
+          else "All Pro features plus AI Advisory Council and Admin panel are unlocked."}
       </p>
       <a href="{s.app_url}" style="display:inline-block;margin-top:24px;padding:12px 28px;
          background:#4f46e5;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">

@@ -104,6 +104,17 @@ async def verify_payment(
 
     plan = get_plan_by_id(plan_id)
     if plan:
+        # Verify the amount paid matches what we expect for this plan.
+        # Prevents a tampered reference from upgrading a user who paid less.
+        expected_amount = plan["price_mwk"] * 100  # smallest currency unit
+        paid_amount = tx.get("amount", 0)
+        if paid_amount < expected_amount:
+            log.warning(
+                "Payment amount mismatch for user %s: paid %s, expected %s (plan %s)",
+                current_user.id, paid_amount, expected_amount, plan_id,
+            )
+            raise HTTPException(402, "Payment amount does not match the selected plan")
+
         interval = plan.get("interval", "monthly")
         days = 365 if interval == "yearly" else 31
         current_user.tier = tier
@@ -176,6 +187,17 @@ async def _handle_charge_success(event: dict, db: AsyncSession) -> None:
         return
 
     plan = get_plan_by_id(plan_id)
+    if plan:
+        # Verify paid amount matches plan price.
+        expected_amount = plan["price_mwk"] * 100
+        paid_amount = data.get("amount", 0)
+        if paid_amount < expected_amount:
+            log.warning(
+                "Webhook amount mismatch for user %s: paid %s, expected %s (plan %s)",
+                user_id, paid_amount, expected_amount, plan_id,
+            )
+            return  # reject silently — Paystack retries on non-2xx would loop
+
     interval = plan.get("interval", "monthly") if plan else "monthly"
     days = 365 if interval == "yearly" else 31
 

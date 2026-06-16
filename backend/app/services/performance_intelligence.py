@@ -3,11 +3,11 @@ performance_intelligence.py — Self-learning performance weights from historica
 
 Analyzes settled tracked_bets to compute win-rate and ROI per (confidence, market) slice,
 per source_rule_key, and per (market, league_tier). These weights feed back into the
-accumulator generator and signal engine so game selection improves over time.
+signal engine so game selection improves over time.
 
 Learning loop:
-  Bet tracked → Settled (Won/Lost) → Weights recomputed → Signals/Accas scored adjusted
-  → Better leg selection → Higher hit rates → Better weights → ...
+  Bet tracked → Settled (Won/Lost) → Weights recomputed → Signal scores adjusted
+  → Better pick selection → Higher hit rates → Better weights → ...
 
 Three-layer weight hierarchy:
   Layer 1: (dual_confidence, market)  — primary; captures tier × market interaction
@@ -17,7 +17,7 @@ Three-layer weight hierarchy:
 Auto-suppression:
   When a (market, league_tier) slice has factor < AUTO_SUPPRESS_THRESHOLD for
   AUTO_SUPPRESS_MIN_SAMPLES+ settled bets, it is added to auto_suppress_market_tiers.
-  Similarly for rules. Suppressed slices are excluded from accumulator candidates.
+  Similarly for rules. Suppressed slices receive a near-zero quality score.
 
 Calibration monitoring:
   Tracks expected vs actual win rate per confidence tier. If High-confidence signals
@@ -121,7 +121,7 @@ class PerformanceWeights:
     New in v2:
       by_market_tier  — (market, league_tier) performance, catches league-specific failures.
       calibration     — per-confidence expected vs actual win rate.
-      auto_suppress_rules / auto_suppress_market_tiers — slices to skip in accumulator.
+      auto_suppress_rules / auto_suppress_market_tiers — underperforming slices to suppress.
     """
     # (dual_confidence, market_type) → slice
     by_confidence_market: dict[tuple[str, str], PerformanceSlice] = field(default_factory=dict)
@@ -221,8 +221,8 @@ class PerformanceWeights:
         rule_key: str = "",
     ) -> bool:
         """
-        Returns True if this market/tier/rule combination should be excluded from
-        accumulator candidates based on historical under-performance.
+        Returns True if this market/tier/rule combination should be suppressed
+        based on historical under-performance.
         Suppression requires AUTO_SUPPRESS_MIN_SAMPLES settled bets.
         """
         if rule_key and rule_key in self.auto_suppress_rules:

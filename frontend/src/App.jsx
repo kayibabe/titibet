@@ -4,10 +4,7 @@ import SignalsPage from './pages/SignalsPage'
 import DeepDivePage from './pages/DeepDivePage'
 import TrackerPage from './pages/TrackerPage'
 import AnalyticsPage from './pages/AnalyticsPage'
-import BacktestPage from './pages/BacktestPage'
-import ValueBetsPage from './pages/ValueBetsPage'
-import ArbPage from './pages/ArbPage'
-import SettingsPage from './pages/SettingsPage'
+import ToolsPage from './pages/ToolsPage'
 import PricingPage from './pages/PricingPage'
 import AdminPage from './pages/AdminPage'
 import AccountPage from './pages/AccountPage'
@@ -102,14 +99,8 @@ export default function App() {
         return <TrackerPage user={user} settings={settings} onUpgrade={goToPricing} />
       case 'analytics':
         return <AnalyticsPage onUpgrade={goToPricing} onApplySignalFilter={handleApplySignalFilter} onNavigate={setActivePage} settings={settings} />
-      case 'value-bets':
-        return <ValueBetsPage onUpgrade={goToPricing} />
-      case 'arb':
-        return <ArbPage />
-      case 'backtest':
-        return <BacktestPage settings={settings} onUpgrade={goToPricing} />
-      case 'settings':
-        return <SettingsPage settings={settings} onUpdate={update} />
+      case 'tools':
+        return <ToolsPage settings={settings} onUpgrade={goToPricing} onUpdate={update} />
       case 'account':
         return <AccountPage />
       case 'pricing':

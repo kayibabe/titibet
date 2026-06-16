@@ -106,11 +106,9 @@ get("/api/analytics/model-intelligence",                      "GET /api/analytic
 # ── Tracker ────────────────────────────────────────────────────────────────────
 get("/api/tracker/bets",                                      "GET /api/tracker/bets (anon->[])")
 # Auth-gated: expect 401
-get("/api/tracker/accumulators",                              "GET /api/tracker/accumulators (expect 401)", expect_status=401)
 get("/api/tracker/runs",                                      "GET /api/tracker/runs (expect 401)", expect_status=401)
 # Optional auth: returns anon scope (empty) — 200 is correct
 get("/api/tracker/analytics",                                 "GET /api/tracker/analytics (anon->0)")
-get("/api/tracker/analytics/accumulators",                    "GET /api/tracker/analytics/accumulators (anon->0)")
 get("/api/tracker/analytics/model-insights",                  "GET /api/tracker/analytics/model-insights (anon)")
 
 # ── Advisor ────────────────────────────────────────────────────────────────────

@@ -9,8 +9,8 @@ Pipeline A (loss_analysis_agent) handles:
   market_odds_ceiling, min_probability — fine-grained threshold tuning from losses only.
 
 Pipeline B (this file) handles:
-  market_suppression   — suppress a consistently-losing market in the accumulator
-  league_suppression   — suppress a consistently-losing league in the accumulator
+  market_suppression   — flag a consistently-losing market for suppression
+  league_suppression   — flag a consistently-losing league for suppression
   kelly_fraction_adj   — reduce Kelly stake multiplier for a confidence level
   min_prob_by_agreement — raise min probability required for a low-hit agreement type
 
@@ -50,7 +50,7 @@ BACKTEST_WINDOW_DAYS = 60       # Risk Agent backtest window
 MIN_BETS_FOR_PROPOSAL    = 10   # soft adjustments (kelly_fraction_adj, min_prob_by_agreement)
 MIN_BETS_FOR_SUPPRESSION = 30   # hard blocks (market_suppression, league_suppression)
 
-# Explicit whitelist of change_types that the accumulator_generator actually consumes.
+# Explicit whitelist of change_types that downstream signal scoring actually consumes.
 # The LLM (llama-3.1-8b-instant) sometimes hallucinates plausible-sounding types like
 # "quality_threshold", "tier_suppression", "rule_disable" etc. that no downstream code
 # reads. Whitelisting here means the Risk Agent fast-rejects them before any DB write.
@@ -395,8 +395,7 @@ async def run_risk_agent(
         proposed_value = proposal.get("proposed_value")
 
         # Fast-reject LLM-hallucinated change_types before any evaluation.
-        # Only types that accumulator_generator._load_candidates() actually reads
-        # are meaningful; everything else is dead weight in the DB.
+        # Only whitelisted types are meaningful; everything else is dead weight in the DB.
         if change_type not in VALID_CHANGE_TYPES:
             proposal["backtest_note"] = (
                 f"Rejected: '{change_type}' is not a recognised change_type. "

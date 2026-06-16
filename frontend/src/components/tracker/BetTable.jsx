@@ -1,5 +1,5 @@
 ﻿import { useState } from 'react'
-import { Download, Lock, ChevronDown, ChevronRight, Layers, Ticket, StickyNote } from 'lucide-react'
+import { Download, Lock, ChevronDown, ChevronRight, Ticket, StickyNote, Bot } from 'lucide-react'
 import { fmtK, fmtPL, fmtPLCompact } from '../../utils/format'
 
 function escapeCsv(val) {
@@ -89,7 +89,7 @@ function groupByDate(bets) {
   return Object.entries(map).sort(([a], [b]) => {
     if (a === 'unknown') return 1
     if (b === 'unknown') return -1
-    return b.localeCompare(a)
+    return b > a ? 1 : b < a ? -1 : 0
   })
 }
 
@@ -179,6 +179,12 @@ function BetRow({ bet }) {
           <span className="text-sm font-bold text-[var(--accent)]">({bet.odds?.toFixed(2)})</span>
         </div>
         <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--text)] opacity-80 flex-wrap">
+          {bet.source_rule_key === 'system_auto' && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-violet-500/15 text-violet-400 border border-violet-500/25 text-[10px] font-semibold">
+              <Bot size={9} />
+              System
+            </span>
+          )}
           <span>{bet.market_type}</span>
           <span>·</span>
           <span>{bet.league}</span>
@@ -252,22 +258,15 @@ function DateGroupedBets({ bets }) {
 
 // ── Collapsible source section ────────────────────────────────────────────────
 const SOURCE_META = {
-  goals_acca: {
-    label: 'Goals ACCA Legs',
-    icon: Layers,
+  ho05_singles: {
+    label: 'Home Over 0.5',
+    icon: Ticket,
     headerCls: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400',
     dotCls:    'bg-emerald-400',
     countCls:  'text-emerald-300',
   },
-  ai_ticket: {
-    label: 'AI Ticket Legs',
-    icon: Ticket,
-    headerCls: 'bg-violet-500/10 border-violet-500/25 text-violet-400',
-    dotCls:    'bg-violet-400',
-    countCls:  'text-violet-300',
-  },
   individual: {
-    label: 'Individual Picks',
+    label: 'Other Markets',
     icon: StickyNote,
     headerCls: 'bg-slate-500/10 border-slate-500/20 text-slate-300',
     dotCls:    'bg-slate-400',
@@ -309,7 +308,7 @@ function SourceSection({ sourceKey, bets }) {
   )
 }
 
-export default function BetTable({ bets, betSourceMap = {}, isPro = true, onUpgrade }) {
+export default function BetTable({ bets, isPro = true, onUpgrade }) {
   if (!bets.length) {
     return (
       <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-2 text-center">
@@ -340,23 +339,9 @@ export default function BetTable({ bets, betSourceMap = {}, isPro = true, onUpgr
   const plColor = netPL > 0 ? 'text-green-500' : netPL < 0 ? 'text-red-500' : 'text-[var(--text-h)]'
   const clvColor = avgCLV == null ? 'text-[var(--text-h)]' : avgCLV >= 0 ? 'text-green-400' : 'text-red-400'
 
-  // ── Segregate bets by source ───────────────────────────────────────────────
-  const goalsAccaBets = []
-  const aiTicketBets  = []
-  const individualBets = []
-  for (const bet of bets) {
-    const info = betSourceMap[bet.id]
-    if (!info) {
-      individualBets.push(bet)
-    } else if (info.source === 'goals_acca') {
-      goalsAccaBets.push(bet)
-    } else if (info.source === 'ai_ticket') {
-      aiTicketBets.push(bet)
-    } else {
-      // "manual" accumulator legs — treat as individual picks
-      individualBets.push(bet)
-    }
-  }
+  // ── Segregate bets into 2 sections ───────────────────────────────────────
+  const ho05Singles = bets.filter(b => b.market_type === 'Home Over 0.5')
+  const otherBets   = bets.filter(b => b.market_type !== 'Home Over 0.5')
 
   return (
     <div className="space-y-6">
@@ -437,16 +422,12 @@ export default function BetTable({ bets, betSourceMap = {}, isPro = true, onUpgr
         )}
       </div>
 
-      {/* ── Source-segregated bet lists ─────────────────────────────────────── */}
       <div className="space-y-6">
-        {goalsAccaBets.length > 0 && (
-          <SourceSection sourceKey="goals_acca" bets={goalsAccaBets} />
+        {ho05Singles.length > 0 && (
+          <SourceSection key="ho05_singles" sourceKey="ho05_singles" bets={ho05Singles} />
         )}
-        {aiTicketBets.length > 0 && (
-          <SourceSection sourceKey="ai_ticket" bets={aiTicketBets} />
-        )}
-        {individualBets.length > 0 && (
-          <SourceSection sourceKey="individual" bets={individualBets} />
+        {otherBets.length > 0 && (
+          <SourceSection key="individual" sourceKey="individual" bets={otherBets} />
         )}
       </div>
     </div>

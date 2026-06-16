@@ -1,10 +1,10 @@
 ﻿import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { RefreshCw, Download, Calendar, Sparkles, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, Layers, ChevronDown, HelpCircle } from 'lucide-react'
+import { RefreshCw, Download, Calendar, Sparkles, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle } from 'lucide-react'
 import { useSignals } from '../store/useSignals'
 import { computeSignals, fetchSignals } from '../api/signals'
-import { syncData, fetchBets } from '../api/tracker'
-import { useAccaDraft } from '../store/useAccaDraft'
+import { syncData, fetchBets, autoTrackSignal } from '../api/tracker'
 import SignalCard from '../components/signals/SignalCard'
+import ValueBetCard, { adjustOdd, ODDS_TIERS } from '../components/signals/ValueBetCard'
 import TrackModal from '../components/tracker/TrackModal'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import AIAdvisorPanel from '../components/signals/AIAdvisorPanel'
@@ -136,81 +136,7 @@ const TABS = [
   { id: 'advisor',   label: 'AI Advisory', icon: Sparkles   },
 ]
 
-// ── Value Bets helpers (inlined from ValueBetsPage) ───────────────────────────
-function adjustOdd(raw, pct) {
-  if (raw == null || !pct) return raw
-  return Math.max(1.01, raw * (1 - Math.abs(pct) / 100))
-}
 const VB_FREE_LIMIT = 5
-const ODDS_TIERS = [
-  { min: 1.5,  label: '1.5+', desc: 'Conservative' },
-  { min: 2.0,  label: '2.0+', desc: 'Moderate'     },
-  { min: 2.5,  label: '2.5+', desc: 'Standard'     },
-  { min: 3.0,  label: '3.0+', desc: 'Value'        },
-  { min: 3.5,  label: '3.5+', desc: 'Aggressive'   },
-  { min: 4.0,  label: '4.0+', desc: 'Long shot'    },
-]
-function fmtKickoff(iso) {
-  if (!iso) return null
-  const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z')
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-}
-function ValueBetCard({ signal, rank, oddsAdjPct = 0 }) {
-  const b = signal.bayesian || {}
-  const adjOdd      = adjustOdd(b.best_odd, oddsAdjPct)
-  const impliedProb = adjOdd ? Math.round((1 / adjOdd) * 100) : null
-  const modelProb   = b.prob ? Math.round(b.prob * 100) : null
-  const edge        = modelProb && impliedProb ? modelProb - impliedProb : null
-  const evPct = oddsAdjPct && b.prob != null && adjOdd != null
-    ? (b.prob * adjOdd - 1) * 100 : b.ev_pct ?? null
-  const FINAL = new Set(['FT', 'AET', 'PEN'])
-  const isFinal = FINAL.has(signal.status)
-  return (
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] overflow-hidden hover:border-[var(--accent)]/40 transition-colors">
-      <div className={`h-1 w-full ${evPct >= 50 ? 'bg-emerald-500' : evPct >= 20 ? 'bg-amber-400' : 'bg-blue-400'}`} />
-      <div className="p-4 space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5 mb-0.5">
-              <span className="text-[10px] text-[var(--text)] opacity-70">{signal.country} · {signal.league}</span>
-              {isFinal && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-400 font-medium">FT</span>}
-            </div>
-            <p className="text-sm font-semibold text-[var(--text-h)] leading-tight">{signal.home_team} vs {signal.away_team}</p>
-            <p className="text-xs text-[var(--text)] opacity-70 mt-0.5">{signal.market}</p>
-          </div>
-          <div className="shrink-0 text-center">
-            <div className="rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/25 px-3 py-1.5">
-              <p className="text-lg font-black text-[var(--accent)] tabular-nums leading-none">{adjOdd?.toFixed(2) ?? '—'}</p>
-              <p className="text-[9px] text-[var(--text)] opacity-70 mt-0.5">{oddsAdjPct ? `adj. −${oddsAdjPct}%` : (b.bookmaker || 'Pinnacle')}</p>
-            </div>
-          </div>
-        </div>
-        <div className="grid grid-cols-3 gap-2">
-          <div className="rounded-lg bg-[var(--code-bg)] p-2 text-center">
-            <p className={`text-sm font-bold tabular-nums ${evPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{evPct != null ? `+${evPct.toFixed(1)}%` : '—'}</p>
-            <p className="text-[9px] text-[var(--text)] opacity-70 mt-0.5">EV</p>
-          </div>
-          <div className="rounded-lg bg-[var(--code-bg)] p-2 text-center">
-            <p className="text-sm font-bold tabular-nums text-[var(--text-h)]">{modelProb != null ? `${modelProb}%` : '—'}</p>
-            <p className="text-[9px] text-[var(--text)] opacity-70 mt-0.5">Model Prob</p>
-          </div>
-          <div className="rounded-lg bg-[var(--code-bg)] p-2 text-center">
-            <p className={`text-sm font-bold tabular-nums ${edge >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{edge != null ? `+${edge}pp` : '—'}</p>
-            <p className="text-[9px] text-[var(--text)] opacity-70 mt-0.5">vs Implied</p>
-          </div>
-        </div>
-        <div className="flex items-center justify-between text-[10px] text-[var(--text)] opacity-80">
-          <div className="flex items-center gap-2">
-            <span className={`px-1.5 py-0.5 rounded font-semibold ${signal.dual_confidence === 'High' ? 'bg-emerald-500/15 text-emerald-400' : signal.dual_confidence === 'Medium' ? 'bg-amber-500/15 text-amber-400' : 'bg-slate-500/15 text-slate-400'}`}>{signal.dual_confidence}</span>
-            <span className="px-1.5 py-0.5 rounded bg-[var(--code-bg)]">{signal.dual_agreement}</span>
-          </div>
-          {signal.kickoff_at && !isFinal && <span>{fmtKickoff(signal.kickoff_at)}</span>}
-          {isFinal && signal.home_score != null && <span className="font-semibold">{signal.home_score}–{signal.away_score}</span>}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function ValueBetsTab({ date, isPro, onUpgrade, oddsAdjPct = 0 }) {
   const [minOdds, setMinOdds] = useState(1.5)
@@ -347,7 +273,7 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
   const [minProb, setMinProb]       = useState('')
   const [leagueSearch, setLeagueSearch] = useState('')
   const [showSavedOnly, setShowSavedOnly] = useState(false)
-  const [filtersOpen, setFiltersOpen]   = useState(true)
+  const [filtersOpen, setFiltersOpen]   = useState(false)
 
   const getSavedIds = () => { try { return JSON.parse(localStorage.getItem('titibet_saved_signals_v1') || '[]') } catch { return [] } }
   const [syncing, setSyncing]       = useState(false)
@@ -359,14 +285,41 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
   // Set of "fixture_id:market" keys for picks already in the tracker
   const [trackedKeys, setTrackedKeys] = useState(new Set())
 
-  // Load today's pending bets once so we can badge already-tracked signals
+  // Load today's bets once so we can badge already-tracked signals and show system stats
+  const [systemStats, setSystemStats] = useState(null) // { total, won, lost, pending }
   useEffect(() => {
     fetchBets({ date_from: today, date_to: today })
       .then(bets => {
         setTrackedKeys(new Set(bets.map(b => `${b.fixture_id}:${b.market_type}`)))
+        const sys = bets.filter(b => b.source_rule_key === 'system_auto')
+        if (sys.length > 0) {
+          const won     = sys.filter(b => b.result_status === 'Won').length
+          const lost    = sys.filter(b => b.result_status === 'Lost').length
+          const pending = sys.filter(b => b.result_status === 'Pending').length
+          setSystemStats({ total: sys.length, won, lost, pending })
+        }
       })
       .catch(() => {})
   }, []) // eslint-disable-line
+
+  // Auto-track ref: prevents re-issuing calls for the same signal in one session
+  const autoTrackedRef = useRef(new Set())
+  const [autoTrackedKeys, setAutoTrackedKeys] = useState(new Set())
+
+  // When today's signals load, auto-track each one as a system pick (fire-and-forget)
+  useEffect(() => {
+    if (!isToday || loading || error || !signals.length) return
+    const bankroll = settings?.bankroll || 1000
+    const newKeys = []
+    signals.forEach(signal => {
+      const key = `${signal.fixture_id}:${signal.market}`
+      if (autoTrackedRef.current.has(key)) return
+      autoTrackedRef.current.add(key)
+      newKeys.push(key)
+      autoTrackSignal(signal, { bankroll }).catch(() => {})
+    })
+    if (newKeys.length) setAutoTrackedKeys(prev => new Set([...prev, ...newKeys]))
+  }, [signals, isToday, loading, error]) // eslint-disable-line
 
   // Consume initialFilter from Analytics page — apply it once, then clear
   useEffect(() => {
@@ -625,6 +578,50 @@ const reload = () => load(params)
       {/* ── SIGNALS TAB ───────────────────────────────────────────────────── */}
       <div className={activeTab === 'signals' ? 'space-y-4' : 'hidden'}>
 
+        {/* ── System performance bar ────────────────────────────────────── */}
+        {isToday && (systemStats || autoTrackedKeys.size > 0) && (() => {
+          const tracked = systemStats?.total ?? autoTrackedKeys.size
+          const won     = systemStats?.won ?? 0
+          const lost    = systemStats?.lost ?? 0
+          const settled = won + lost
+          const hitRate = settled > 0 ? Math.round(won / settled * 100) : null
+          return (
+            <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-[var(--accent)]/20 bg-[var(--accent)]/6 text-xs flex-wrap">
+              <span className="flex items-center gap-1.5 text-[var(--accent)] font-semibold shrink-0">
+                <Zap size={11} />
+                System Auto-Tracking
+              </span>
+              <span className="text-[var(--text)] opacity-80">
+                <span className="font-semibold text-[var(--text-h)]">{tracked}</span> pick{tracked !== 1 ? 's' : ''} tracked today
+              </span>
+              {settled > 0 && (
+                <>
+                  <span className="text-[var(--text)] opacity-40">·</span>
+                  <span className="text-[var(--text)] opacity-80">
+                    <span className="font-semibold text-green-400">{won}W</span>{' / '}
+                    <span className="font-semibold text-red-400">{lost}L</span>
+                    {hitRate !== null && (
+                      <span className="ml-1 font-semibold text-[var(--text-h)]">({hitRate}%)</span>
+                    )}
+                  </span>
+                </>
+              )}
+              {systemStats?.pending > 0 && (
+                <>
+                  <span className="text-[var(--text)] opacity-40">·</span>
+                  <span className="text-[var(--text)] opacity-60">{systemStats.pending} pending</span>
+                </>
+              )}
+              <button
+                onClick={onNavigateToTracker}
+                className="ml-auto text-[var(--accent)] font-semibold hover:underline shrink-0"
+              >
+                View in Tracker →
+              </button>
+            </div>
+          )
+        })()}
+
         {/* ── Analytics filter banner ───────────────────────────────────── */}
         {analyticsFilter && (
           <div className="flex items-center gap-3 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/8 px-4 py-2.5 text-sm">
@@ -771,6 +768,14 @@ const reload = () => load(params)
                   />
                 ))}
               </div>
+
+              {/* Card-border legend — reference material, kept out of the board */}
+              <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--text)] opacity-75 pt-1 border-t border-[var(--border)]">
+                <span className="font-medium">Card borders:</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-500/60 border border-emerald-400"></span> High probability (70%+)</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-amber-500/60 border border-amber-400"></span> Medium confidence</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-500/60 border border-red-400"></span> Contradiction</span>
+              </div>
             </div>
           )}
         </div>
@@ -795,28 +800,6 @@ const reload = () => load(params)
             </button>
           </div>
         )}
-
-        {/* ── Mobile sort pills — hidden on desktop ─────────────────────── */}
-        <div className="flex md:hidden gap-2 overflow-x-auto pb-1 scrollbar-none">
-          {[
-            { value: 'system',      label: '⭐ Best' },
-            { value: 'probability', label: '📊 Probability' },
-            { value: 'ev',          label: '💰 Value' },
-            { value: 'kickoff',     label: '🕐 Kickoff' },
-          ].map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => setSortBy(opt.value)}
-              className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                sortBy === opt.value
-                  ? 'bg-indigo-600 border-indigo-500 text-white'
-                  : 'bg-white/4 border-white/10 text-slate-400 hover:text-white'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
 
         {/* ── Result summary bar ────────────────────────────────────────── */}
         <div className="flex items-center gap-4 px-1 text-xs text-[var(--text)]">
@@ -916,14 +899,6 @@ const reload = () => load(params)
 
         {!loading && displayedSignals.length > 0 && (
           <div className="space-y-3">
-            {/* Color legend */}
-            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 mb-3">
-              <span className="font-medium text-slate-300">Signal borders:</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-500/60 border border-emerald-400"></span> High probability (70%+)</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-amber-500/60 border border-amber-400"></span> Medium confidence</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-500/60 border border-red-400"></span> Contradiction</span>
-            </div>
-
             {/* Visible signals — always shown (all for Pro, first FREE_SIGNAL_LIMIT for free) */}
             {displayedSignals.slice(0, isPro ? undefined : FREE_SIGNAL_LIMIT).map((signal, idx) => (
               <SignalCard
@@ -931,7 +906,8 @@ const reload = () => load(params)
                 signal={signal}
                 rank={idx + 1}
                 isPro={isPro}
-                isTracked={trackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
+                isTracked={trackedKeys.has(`${signal.fixture_id}:${signal.market}`) || autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
+                isAutoTracked={autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
                 onTrackPick={sig => setTrackingSignal({ ...sig, tracking_source_family: trackingSourceFamily() })}
                 onDeepDive={onDeepDive}
                 oddsAdjPct={settings?.oddsAdjustmentPct ?? 0}
@@ -1034,129 +1010,6 @@ const reload = () => load(params)
         />
       )}
 
-      {/* ── Accumulator draft panel ────────────────────────────────────────── */}
-      <AccaDraftPanel onNavigateToTracker={onNavigateToTracker} />
     </div>
-  )
-}
-
-// ── Floating accumulator draft panel ─────────────────────────────────────────
-function AccaDraftPanel({ onNavigateToTracker }) {
-  const { legs, removeLeg, clearDraft } = useAccaDraft()
-  const [collapsed, setCollapsed] = useState(false)
-  const [toast, setToast] = useState(null)
-  const prevLenRef = useRef(legs.length)
-
-  // Fire a toast whenever a new leg is added
-  useEffect(() => {
-    const prev = prevLenRef.current
-    const curr = legs.length
-    if (curr > prev) {
-      setToast({ id: Date.now(), count: curr })
-      const t = setTimeout(() => setToast(null), 2500)
-      prevLenRef.current = curr
-      return () => clearTimeout(t)
-    }
-    prevLenRef.current = curr
-  }, [legs.length])
-
-  const combinedOdds = legs.reduce((acc, l) => acc * (l.odds ?? 1), 1)
-
-  return (
-    <>
-      {/* ── Leg-add toast ──────────────────────────────────────────────── */}
-      {toast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 rounded-lg border border-white/10 bg-slate-800 shadow-xl px-4 py-2.5 text-sm text-white font-medium animate-fade-in whitespace-nowrap">
-          ✓ Added to draft ({toast.count} leg{toast.count !== 1 ? 's' : ''})
-        </div>
-      )}
-
-      {/* ── Sticky summary bar — visible when panel is collapsed and has legs ── */}
-      {legs.length > 0 && collapsed && (
-        <div className="fixed bottom-16 left-0 right-0 z-40 px-4 pb-2 md:left-auto md:right-6 md:max-w-xs">
-          <div className="rounded-xl border border-indigo-500/40 bg-[var(--bg)] shadow-2xl px-4 py-3 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs text-slate-400">Accumulator draft</p>
-              <p className="text-sm font-semibold text-white">
-                {legs.length} leg{legs.length !== 1 ? 's' : ''} · {combinedOdds.toFixed(2)}x
-              </p>
-            </div>
-            <button
-              onClick={() => setCollapsed(false)}
-              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-lg transition-colors"
-            >
-              View Draft
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Full floating panel — hidden when collapsed ─────────────────── */}
-      {legs.length > 0 && !collapsed && (
-        <div className="fixed bottom-20 right-4 z-40 w-72 rounded-xl border border-[var(--accent)]/40 bg-[var(--bg)] shadow-2xl overflow-hidden">
-          {/* Header */}
-          <div
-            className="flex items-center justify-between px-3 py-2 bg-[var(--accent)]/10 border-b border-[var(--border)] cursor-pointer"
-            onClick={() => setCollapsed(v => !v)}
-          >
-            <div className="flex items-center gap-2">
-              <Layers size={13} className="text-[var(--accent)]" />
-              <span className="text-xs font-bold text-[var(--accent)]">Acca Draft</span>
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[var(--accent)] text-white">
-                {legs.length}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              {combinedOdds > 1 && (
-                <span className="text-xs font-mono font-bold text-[var(--text-h)]">
-                  {combinedOdds.toFixed(2)}×
-                </span>
-              )}
-              <ChevronDown size={13} className="text-[var(--text)] opacity-60" />
-            </div>
-          </div>
-
-          {/* Legs */}
-          <div className="max-h-48 overflow-y-auto divide-y divide-[var(--border)]">
-            {legs.map(leg => (
-              <div key={leg.fixture_id} className="flex items-center gap-2 px-3 py-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-[var(--text-h)] truncate">
-                    {leg.home_team} vs {leg.away_team}
-                  </p>
-                  <p className="text-[10px] text-[var(--text)] opacity-70 truncate">
-                    {leg.market}
-                    {leg.odds && <span className="ml-1 font-mono text-[var(--accent)]">@ {leg.odds.toFixed(2)}</span>}
-                  </p>
-                </div>
-                <button
-                  onClick={() => removeLeg(leg.fixture_id)}
-                  className="shrink-0 text-[var(--text)] opacity-40 hover:opacity-100 hover:text-red-400 transition-colors"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          {/* Actions */}
-          <div className="flex items-center gap-2 px-3 py-2 border-t border-[var(--border)]">
-            <button
-              onClick={clearDraft}
-              className="text-[10px] text-[var(--text)] opacity-50 hover:opacity-100 transition-opacity"
-            >
-              Clear
-            </button>
-            <div className="flex-1" />
-            <button
-              onClick={() => { onNavigateToTracker?.(); clearDraft() }}
-              className="text-xs px-3 py-1.5 rounded-lg font-semibold bg-[var(--accent)] text-white hover:opacity-90 transition-opacity"
-            >
-              Build in Tracker →
-            </button>
-          </div>
-        </div>
-      )}
-    </>
   )
 }

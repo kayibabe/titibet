@@ -37,7 +37,6 @@ from app.services.strategy_pipeline import run_strategy_pipeline, check_suppress
 from app.services.league_watch_guard import run_league_watch_guard
 from app.services.telegram import (
     push_kickoff_alerts,
-    push_titibet_tickets,
     check_and_push_pending_results,
 )
 
@@ -180,11 +179,6 @@ async def sync_and_compute(run_date: date | None = None) -> None:
                     "Scheduler: %s done — %d fixtures, %d signals, %d bets settled",
                     run_date, run.fixtures_pulled, count, n_settled,
                 )
-                # Push named TiTiBet tickets to the three dedicated channels.
-                try:
-                    await push_titibet_tickets(db, run_date)
-                except Exception:
-                    logger.exception("Telegram TiTiBet tickets push failed — continuing normally")
                 # Push results for any fully-settled date (today + last 2 days).
                 try:
                     n_results = await check_and_push_pending_results(db)
@@ -296,6 +290,35 @@ async def _nightly_results_job() -> None:
             logger.exception("Nightly results job failed — continuing normally")
 
 
+async def _weekly_calibration_job() -> None:
+    """
+    Weekly calibration audit -- runs every Monday 07:00 UTC.
+    Computes Brier skill score, ECE, and per-market calibration gaps over the
+    last 90 days of settled bets.  Saves a snapshot for trend tracking and logs
+    a WARNING for every market that fails the health threshold (skill < +0.05).
+    """
+    from app.services.calibration import compute_calibration_metrics, save_snapshot
+    async with AsyncSessionLocal() as db:
+        try:
+            report = await compute_calibration_metrics(db, days=90)
+            if report.signal_join_bets < 30:
+                logger.info(
+                    "Weekly calibration: too few settled bets (%d) — skipping snapshot",
+                    report.signal_join_bets,
+                )
+                return
+            await save_snapshot(db, report)
+            for line in report.summary_lines():
+                logger.info(line)
+            for mkt in report.flagged_markets:
+                logger.warning(
+                    "Calibration FLAGGED: %s -- review and consider suppression or threshold change",
+                    mkt,
+                )
+        except Exception:
+            logger.exception("Weekly calibration job failed")
+
+
 def get_scheduler() -> AsyncIOScheduler:
     global _scheduler
     if _scheduler is None:
@@ -319,13 +342,24 @@ def get_scheduler() -> AsyncIOScheduler:
             replace_existing=True,
             misfire_grace_time=120,
         )
-        # Nightly results sweep — 02:00 UTC, catches late finishers from prior day.
+        # Nightly results sweep -- 02:00 UTC, catches late finishers from prior day.
         _scheduler.add_job(
             _nightly_results_job,
             CronTrigger(hour=2, minute=0),
             id="nightly-results",
             replace_existing=True,
             misfire_grace_time=600,
+        )
+        # Weekly calibration audit -- every Monday 07:00 UTC.
+        # Computes Brier skill, ECE, per-market calibration gaps and flags any
+        # market where skill < +0.05 or calibration gap > 7pp.
+        # Saves a snapshot row for trend tracking; logs a summary with flagged markets.
+        _scheduler.add_job(
+            _weekly_calibration_job,
+            CronTrigger(day_of_week="mon", hour=7, minute=0),
+            id="weekly-calibration",
+            replace_existing=True,
+            misfire_grace_time=3600,
         )
         logger.info(
             "Scheduler configured for %d sync times + kickoff alerts every 30 min + nightly results at 02:00 UTC",

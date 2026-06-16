@@ -16,7 +16,7 @@ from jose import JWTError, jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import get_settings
-from app.core.database import init_db, engine
+from app.core.database import init_db, engine, AsyncSessionLocal
 from app.core.migrations import run_migrations
 from app.routers import signals, tracker, analytics, backtest, advisor, arb as arb_router
 from app.routers import loss_analysis as loss_analysis_router

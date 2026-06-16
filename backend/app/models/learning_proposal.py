@@ -1,19 +1,12 @@
 """
 learning_proposal.py — Persisted output of the Threshold Tuner + Backtester pipeline.
 
-Each row represents a concrete, backtester-validated threshold change that the
-accumulator generator should apply on its next run.  Only `market_odds_ceiling`
-proposals are consumed today; the schema leaves room for other change_types
-without requiring a migration.
-
-Lifecycle
----------
-  1. loss_analysis_agent.run_loss_analysis_pipeline writes accepted proposals here
+Each row represents a concrete, backtester-validated threshold change.
+Lifecycle:
+  1. loss_analysis_agent / strategy_pipeline write accepted proposals here
      (deactivating any prior active row for the same target first).
-  2. accumulator_generator._load_candidates reads active rows at startup and
-     overrides the static MARKET_MAX_ODDS dict before filtering candidates.
+  2. Signal scoring reads active proposals to apply threshold overrides.
   3. Rows are never hard-deleted — set is_active = False to retire them.
-     This preserves a full audit trail of what the system learned over time.
 """
 from __future__ import annotations
 

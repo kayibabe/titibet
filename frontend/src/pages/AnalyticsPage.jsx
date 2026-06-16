@@ -1,6 +1,5 @@
 ﻿import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Brain, Activity, BarChart2, Layers, TrendingUp, Zap, TrendingDown, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, Target, GridIcon, Gauge, Coins, Crosshair, FlaskConical } from 'lucide-react'
-import BacktestPage from './BacktestPage'
+import { Brain, Activity, BarChart2, Layers, TrendingUp, Zap, TrendingDown, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, Target, Coins, Crosshair } from 'lucide-react'
 import { fetchAnalytics, fetchAnalyticsIntelligence, fetchStakingSimulation, fetchProbabilityCalibration } from '../api/analytics'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Cell } from 'recharts'
 import LossAnalysisDashboard from '../components/analytics/LossAnalysisDashboard'
@@ -581,7 +580,6 @@ const ANALYTICS_TABS = [
   { id: 'overview',  label: 'Overview',  desc: 'P&L and performance summary' },
   { id: 'markets',   label: 'Markets',   desc: 'Market, league and signal breakdown' },
   { id: 'strategy',  label: 'Strategy',  desc: 'Staking, calibration and self-learning' },
-  { id: 'backtest',  label: 'Backtest',  desc: 'Replay signals over historical data', icon: FlaskConical },
 ]
 
 export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNavigate, settings }) {
@@ -757,53 +755,8 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
                 </div>
               </Section>
 
-              {/* ── Signal Calibration chart ── */}
-              {(() => {
-                const byConf = data.byConfidence ?? []
-                const getRate = (tier) => {
-                  const row = byConf.find(r => r.confidence === tier)
-                  return row ? (row.win_rate ?? 0) / 100 : 0
-                }
-                const calibrationData = [
-                  { tier: 'High',   winRate: getRate('High'),   fill: '#10b981' },
-                  { tier: 'Medium', winRate: getRate('Medium'), fill: '#f59e0b' },
-                  { tier: 'Low',    winRate: getRate('Low'),    fill: '#64748b' },
-                ]
-                const hasAny = byConf.length > 0
-                return (
-                  <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4">
-                    <h3 className="text-sm font-semibold text-[var(--text-h)] mb-3">Signal Calibration — Win Rate by Confidence</h3>
-                    <ResponsiveContainer width="100%" height={140}>
-                      <BarChart data={calibrationData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
-                        <XAxis dataKey="tier" tick={{ fontSize: 12, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                        <YAxis tickFormatter={v => `${(v*100).toFixed(0)}%`} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} domain={[0, 1]} />
-                        <Tooltip
-                          formatter={(v) => [`${(v * 100).toFixed(1)}%`, 'Win Rate']}
-                          labelFormatter={(label) => `${label} Confidence`}
-                          contentStyle={{
-                            background: '#0f172a',
-                            border: '1px solid rgba(255,255,255,0.15)',
-                            borderRadius: '8px',
-                            fontSize: '12px',
-                            color: '#f1f5f9',
-                          }}
-                          labelStyle={{ color: '#94a3b8', fontWeight: 600, marginBottom: '2px' }}
-                          itemStyle={{ color: '#f1f5f9' }}
-                          cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                        />
-                        <Bar dataKey="winRate" radius={[4,4,0,0]}>
-                          {calibrationData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                    <p className="text-xs text-[var(--text)] opacity-50 mt-2">
-                      {hasAny
-                        ? 'Based on your settled bets. Updates as you track more picks.'
-                        : 'Track more bets to see calibration data.'}
-                    </p>
-                  </div>
-                )
-              })()}
+              {/* Calibration lives canonically in Strategy → Model Calibration,
+                  so it is not duplicated here on Overview. */}
 
               {isPro ? (
                 <Section icon={BarChart2} title="P&L Trend" subtitle="cumulative profit over time" pro>
@@ -862,6 +815,7 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
                   <ByMarketTable rows={data.byRule} title="" keyField="rule_key" />
                 </Section>
               )}
+
             </div>
           )}
 
@@ -880,20 +834,15 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
                 <CalibrationChart dateFrom={dateFrom} dateTo={dateTo} />
               </Section>
 
+              {/* Engine Health — one home for everything the self-learning loop
+                  produces. Sub-tabs replace the former Self-Learning Engine,
+                  Model Intelligence and Parameter Hub sections, which overlapped. */}
               {isPro ? (
-                <Section icon={Brain} title="Self-Learning Engine" subtitle="model weights and auto-adjustments" pro>
-                  <ModelInsightsContent insights={insights} />
+                <Section icon={Brain} title="Engine Health" subtitle="weights, threshold changes and active parameters" pro>
+                  <EngineHealth insights={insights} onApplySignalFilter={onApplySignalFilter} />
                 </Section>
               ) : (
-                <Section icon={Brain} title="Self-Learning Engine" pro locked onUpgrade={onUpgrade}>{null}</Section>
-              )}
-
-              {isPro ? (
-                <Section icon={Brain} title="Model Intelligence" subtitle="active learning decisions and threshold changes" pro>
-                  <ModelIntelligenceDashboard />
-                </Section>
-              ) : (
-                <Section icon={Brain} title="Model Intelligence" pro locked onUpgrade={onUpgrade}>{null}</Section>
+                <Section icon={Brain} title="Engine Health" pro locked onUpgrade={onUpgrade}>{null}</Section>
               )}
 
               {isPro ? (
@@ -903,22 +852,45 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
               ) : (
                 <Section icon={TrendingDown} title="AI Loss Analysis" pro locked onUpgrade={onUpgrade}>{null}</Section>
               )}
-
-              <Section icon={Gauge} title="Parameter Hub" subtitle="active signal weights, suppressed markets and leagues">
-                <ParameterHub onApplySignalFilter={onApplySignalFilter} />
-              </Section>
             </div>
           )}
 
-          {/* ══════════════════════════════════════════════════════════════════
-              TAB 4 — BACKTEST
-              Replay signals over historical data. Pro-only.
-          ══════════════════════════════════════════════════════════════════ */}
-          {analyticsTab === 'backtest' && (
-            <BacktestPage settings={settings} onUpgrade={onUpgrade} />
-          )}
         </>
       )}
+    </div>
+  )
+}
+
+// ── Engine Health — unified self-learning view ───────────────────────────────
+// Replaces the former Self-Learning Engine, Model Intelligence and Parameter Hub
+// sections, which surfaced overlapping slices of the same self-learning output.
+function EngineHealth({ insights, onApplySignalFilter }) {
+  const [tab, setTab] = useState('weights')
+  const TABS = [
+    { id: 'weights',    label: 'Weights & Calibration' },
+    { id: 'thresholds', label: 'Threshold Changes' },
+    { id: 'parameters', label: 'Active Parameters' },
+  ]
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-1 border-b border-[var(--border)]">
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={'px-3 py-1.5 text-xs font-medium rounded-t-md border-b-2 transition-colors ' + (
+              tab === t.id
+                ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-bg,rgba(99,102,241,0.08))]'
+                : 'border-transparent text-[var(--text)] opacity-70 hover:opacity-100 hover:text-[var(--text-h)]'
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'weights'    && <ModelInsightsContent insights={insights} />}
+      {tab === 'thresholds' && <ModelIntelligenceDashboard />}
+      {tab === 'parameters' && <ParameterHub onApplySignalFilter={onApplySignalFilter} />}
     </div>
   )
 }

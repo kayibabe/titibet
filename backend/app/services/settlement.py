@@ -11,7 +11,7 @@ from typing import Callable
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Fixture, TrackedBet, AccumulatorTicket, AccumulatorLeg
+from app.models import Fixture, TrackedBet
 
 logger = logging.getLogger("titibet.settlement")
 
@@ -154,7 +154,6 @@ async def settle_bets_for_date(
 
     await db.commit()
 
-    await refresh_accumulator_tickets(db, user_id=user_id)
     return {
         "settled":          settled,
         "skip_no_fixture":  skip_no_fixture,
@@ -162,81 +161,6 @@ async def settle_bets_for_date(
         "skip_no_score":    skip_no_score,
         "skip_no_market":   skip_no_market,
     }
-
-
-async def refresh_accumulator_tickets(db: AsyncSession, user_id: int | None = None) -> None:
-    """
-    Recompute result_status + profit_loss for every *pending* accumulator ticket
-    from its legs' TrackedBet rows.
-
-    Safe to call on read paths (e.g. listing tickets) so ticket headers stay in
-    sync after leg bets settle, even if a prior refresh was skipped.
-    """
-    if user_id is not None:
-        result = await db.execute(
-            select(AccumulatorTicket)
-            .where(
-                AccumulatorTicket.result_status == "Pending",
-                AccumulatorTicket.user_id == user_id,
-            )
-        )
-    else:
-        result = await db.execute(
-            select(AccumulatorTicket).where(AccumulatorTicket.result_status == "Pending")
-        )
-    tickets: list[AccumulatorTicket] = list(result.scalars().all())
-
-    for ticket in tickets:
-        legs_result = await db.execute(
-            select(AccumulatorLeg).where(AccumulatorLeg.ticket_id == ticket.id)
-        )
-        legs: list[AccumulatorLeg] = list(legs_result.scalars().all())
-
-        if not legs:
-            continue
-
-        bet_ids = [leg.tracked_bet_id for leg in legs]
-        bets_result = await db.execute(
-            select(TrackedBet).where(TrackedBet.id.in_(bet_ids))
-        )
-        bets: list[TrackedBet] = list(bets_result.scalars().all())
-        bets_by_id = {b.id: b for b in bets}
-
-        statuses: list[str] = []
-        for leg in legs:
-            b = bets_by_id.get(leg.tracked_bet_id)
-            if b is None:
-                statuses = []
-                break
-            statuses.append(b.result_status)
-
-        if len(statuses) != len(legs):
-            continue
-
-        if any(s == "Lost" for s in statuses):
-            ticket.result_status = "Lost"
-            ticket.profit_loss = round(-ticket.stake, 2)
-        elif any(s == "Pending" for s in statuses):
-            continue
-        elif all(s in ("Won", "Void") for s in statuses):
-            active_bets = [
-                bets_by_id[leg.tracked_bet_id]
-                for leg in legs
-                if bets_by_id.get(leg.tracked_bet_id)
-                and bets_by_id[leg.tracked_bet_id].result_status == "Won"
-            ]
-            if active_bets:
-                combined_odds = 1.0
-                for b in active_bets:
-                    combined_odds *= b.odds
-                ticket.combined_odds = round(combined_odds, 4)
-                ticket.result_status = "Won"
-                ticket.profit_loss = round(ticket.stake * (combined_odds - 1.0), 2)
-            else:
-                ticket.result_status = "Void"
-                ticket.profit_loss = 0.0
-
-    await db.commit()
 
 
 async def refresh_stale_fixtures_and_settle(db: AsyncSession) -> dict:

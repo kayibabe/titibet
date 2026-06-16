@@ -160,3 +160,53 @@ async def _fetch_team_goals(
             goals.append(float(fx.away_score))  # type: ignore[arg-type]
 
     return goals  # already ordered most-recent first by the query
+
+
+async def get_team_over25_history(
+    db: AsyncSession,
+    team: str,
+    before_date: date,
+    n: Optional[int] = None,
+) -> list[int]:
+    """
+    Return the total goals (home + away) for each of the team's last n
+    completed matches before before_date, ordered most-recent first.
+
+    Used by BREA composite_fss() to compute the exponential-decay GM term:
+      S_i = Σ(w_t · I(goals_t > 2.5)) / Σ(w_t)
+
+    Returns an empty list when fewer than form_min_games matches are found.
+    """
+    n = n or int(R["rolling_form_games"])
+    min_games = int(R["form_min_games"])
+    max_days = int(R.get("form_max_lookback_days", 90))
+    cutoff_date = before_date - timedelta(days=max_days)
+
+    stmt = (
+        select(Fixture)
+        .where(
+            and_(
+                Fixture.event_date < before_date,
+                Fixture.event_date >= cutoff_date,
+                Fixture.home_score.is_not(None),
+                Fixture.away_score.is_not(None),
+                or_(
+                    Fixture.home_team == team,
+                    Fixture.away_team == team,
+                ),
+            )
+        )
+        .order_by(Fixture.event_date.desc())
+        .limit(n)
+    )
+
+    result = await db.execute(stmt)
+    fixtures: list[Fixture] = list(result.scalars().all())
+
+    if len(fixtures) < min_games:
+        return []
+
+    return [
+        int(fx.home_score) + int(fx.away_score)  # type: ignore[operator]
+        for fx in fixtures
+    ]

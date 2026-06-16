@@ -44,4 +44,3 @@ class TrackedBet(Base):
     settled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     fixture: Mapped[Optional["Fixture"]] = relationship("Fixture", back_populates="tracked_bets")  # noqa: F821
-    accumulator_legs: Mapped[list["AccumulatorLeg"]] = relationship("AccumulatorLeg", back_populates="tracked_bet")  # noqa: F821

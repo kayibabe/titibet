@@ -392,24 +392,28 @@ async def fetch_fixture_by_id(ext_id: int, *, force: bool = False) -> dict[str, 
 
 def _parse_fixture_row(item: dict[str, Any]) -> dict[str, Any]:
     """Normalise one /fixtures response entry into a flat dict."""
-    fixture = item.get("fixture", {})
-    goals   = item.get("goals", {})
-    teams   = item.get("teams", {})
-    league  = item.get("league", {})
+    fixture  = item.get("fixture", {})
+    goals    = item.get("goals", {})
+    teams    = item.get("teams", {})
+    league   = item.get("league", {})
+    score    = item.get("score", {})
+    halftime = score.get("halftime", {})
     try:
         dt = datetime.fromisoformat(fixture["date"].replace("Z", "+00:00"))
     except Exception:
         dt = None
     return {
         "external_fixture_id": fixture.get("id"),
-        "status":      fixture.get("status", {}).get("short"),
-        "home_score":  goals.get("home"),
-        "away_score":  goals.get("away"),
-        "home_team":   teams.get("home", {}).get("name"),
-        "away_team":   teams.get("away", {}).get("name"),
-        "country":     league.get("country"),
-        "league":      league.get("name"),
-        "kickoff_at":  dt,
+        "status":        fixture.get("status", {}).get("short"),
+        "home_score":    goals.get("home"),
+        "away_score":    goals.get("away"),
+        "home_score_ht": halftime.get("home"),   # None until half-time
+        "away_score_ht": halftime.get("away"),
+        "home_team":     teams.get("home", {}).get("name"),
+        "away_team":     teams.get("away", {}).get("name"),
+        "country":       league.get("country"),
+        "league":        league.get("name"),
+        "kickoff_at":    dt,
     }
 
 
@@ -427,3 +431,36 @@ async def fetch_fixture_odds(fixture_id: int) -> list[dict[str, Any]]:
     for entry in payload.get("response", []):
         rows.extend(_parse_bookmakers(entry, now))
     return rows
+
+
+async def fetch_fixture_statistics_corners(ext_fixture_id: int) -> dict | None:
+    """
+    Fetch corner kick counts for a completed fixture from /fixtures/statistics.
+    Returns {"home_corners": N, "away_corners": M} or None if unavailable.
+    Responses are file-cached (same mechanism as other endpoints) so re-fetching
+    a settled fixture costs zero API calls after the first successful pull.
+    """
+    try:
+        payload = await _get(f"/fixtures/statistics?fixture={ext_fixture_id}")
+    except Exception:
+        return None
+
+    teams_data = payload.get("response", [])
+    if len(teams_data) < 2:
+        return None
+
+    def _extract_corners(team_entry: dict) -> int | None:
+        for stat in team_entry.get("statistics", []):
+            if str(stat.get("type", "")).lower() in ("corner kicks", "corners"):
+                val = stat.get("value")
+                try:
+                    return int(val) if val is not None else None
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    home_c = _extract_corners(teams_data[0])
+    away_c = _extract_corners(teams_data[1])
+    if home_c is None or away_c is None:
+        return None
+    return {"home_corners": home_c, "away_corners": away_c}

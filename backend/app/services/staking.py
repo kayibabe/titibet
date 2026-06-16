@@ -1,13 +1,13 @@
-﻿"""
-staking.py — Kelly + unit-based staking recommendations.
+"""
+staking.py -- Kelly + unit-based staking recommendations.
 Ported from FootBet odds_engine.py (Kelly) + TiTiBet tracker (unit staking).
 
 Extended with:
-  - full_kelly()          — raw (unscaled) Kelly fraction
-  - bayesian_kelly()      — shrinkage-adjusted Kelly (qsbip)
-  - devig()               — multiplicative overround removal
-  - expected_value()      — explicit EV = p * odds - 1
-  - dynamic_ev_threshold() — noise-adaptive EV gate
+  - full_kelly()          -- raw (unscaled) Kelly fraction
+  - bayesian_kelly()      -- shrinkage-adjusted Kelly (qsbip)
+  - devig()               -- multiplicative overround removal
+  - expected_value()      -- explicit EV = p * odds - 1
+  - dynamic_ev_threshold() -- noise-adaptive EV gate
 """
 from __future__ import annotations
 import math
@@ -38,7 +38,7 @@ def unit_stake_pct(confidence: str, unit_pct: float | None = None) -> float:
     return u * multipliers.get(confidence, 0)
 
 
-# ── New utilities ─────────────────────────────────────────────────────────────
+# -- New utilities -------------------------------------------------------------
 
 def full_kelly(prob: float, odds: float) -> float:
     """Raw (unscaled) Kelly fraction. Returns 0 when edge is negative."""
@@ -61,7 +61,7 @@ def bayesian_kelly(
 ) -> float:
     """
     Bayesian Kelly with shrinkage for estimation uncertainty (from qsbip).
-    f* = standard_kelly × (var_model / (var_model + var_prior)) × fraction
+    f* = standard_kelly x (var_model / (var_model + var_prior)) x fraction
 
     Shrinkage dampens over-confident stakes when the model probability is
     estimated with high uncertainty. Defaults come from config.
@@ -81,7 +81,7 @@ def bayesian_kelly(
 
 def devig(odds_list: list[float]) -> list[float]:
     """
-    Multiplicative devigging — returns true probabilities summing to 1.0.
+    Multiplicative devigging -- returns true probabilities summing to 1.0.
     Removes the bookmaker's overround from a complete market.
     """
     if not odds_list:
@@ -92,7 +92,7 @@ def devig(odds_list: list[float]) -> list[float]:
 
 
 def expected_value(prob: float, decimal_odds: float) -> float:
-    """EV = prob × decimal_odds − 1. Positive = expected profit per unit staked."""
+    """EV = prob x decimal_odds - 1. Positive = expected profit per unit staked."""
     return prob * decimal_odds - 1.0
 
 
@@ -102,7 +102,7 @@ def dynamic_ev_threshold(
     noise_multiplier: float | None = None,
 ) -> float:
     """
-    θ = base_threshold + noise_multiplier × std(recent EVs).
+    theta = base_threshold + noise_multiplier x std(recent EVs).
     Automatically raises the bar when the model's EV outputs are noisy.
     Falls back to base_threshold when insufficient history.
     """
@@ -120,21 +120,6 @@ def dynamic_ev_threshold(
     return base_val + multiplier * noise
 
 
-def recommended_stake_pct(
-    kelly_pct: float,
-    confidence: str,
-    agreement: str,
-    unit_pct: float | None = None,
-) -> float:
-    """
-    Recommended stake = min(kelly, unit_stake), adjusted by dual confidence.
-    Zeroed out for contradictions and 'None' confidence.
-    Boosted ×1.5 (capped at 5%) for dual High signals.
-    """
-    if agreement == "Contradiction" or confidence == "None":
-        return 0.0
-    unit = unit_stake_pct(confidence, unit_pct)
-    base = min(kelly_pct, unit) if unit > 0 else kelly_pct
-    if agreement == "Both" and confidence == "High":
-        base = min(base * 1.5, settings.max_kelly_pct)
-    return round(base, 4)
+# NOTE: recommended_stake_pct was removed -- it duplicated dual_engine._recommended_stake
+# and was never called by any engine or router (confirmed: no imports in the codebase).
+# The authoritative staking logic lives in app/engines/dual_engine.py::_recommended_stake.

@@ -45,7 +45,6 @@ titibet/
 │   │   │   ├── signal.py        # Signal (per-fixture per-market row, bayesian_*, poisson_*, dual_*)
 │   │   │   ├── odds.py          # MarketSnapshot (raw bookmaker odds snapshot)
 │   │   │   ├── bet.py           # TrackedBet (manual bet tracker)
-│   │   │   ├── accumulator.py   # AccumulatorTicket + AccumulatorLeg
 │   │   │   ├── backtest.py      # BacktestResult
 │   │   │   ├── ingestion.py     # IngestionRun (audit log per sync)
 │   │   │   ├── loss_analysis.py # LossAnalysis (settled loss analysis records)
@@ -66,8 +65,6 @@ titibet/
 │   │       ├── settlement.py            # settle_bets_for_date — resolves pending bets
 │   │       ├── analytics.py             # ROI, CLV, streak, market breakdown stats
 │   │       ├── clv.py                   # Closing Line Value helpers (_BET_TO_SELECTION, _MARKET_TYPE_SCOPE)
-│   │       ├── accumulator_generator.py # Builds recommended accumulator tickets from signals
-│   │       ├── recommended_tickets.py   # load_titibet_tickets — General, Free, Pro named tickets
 │   │       ├── loss_analysis_agent.py   # 4-agent AI pipeline (Loss Analyst → Pattern Detector → Threshold Tuner → Backtester)
 │   │       ├── performance_intelligence.py # Soft-overlay constants for signal scoring
 │   │       ├── backtester.py            # Historical signal backtest runner
@@ -82,17 +79,17 @@ titibet/
     └── src/
         ├── pages/
         │   ├── SignalsPage      # Discovery only: Signals | Value Bets | AI Advisory
-        │   └── TrackerPage      # Tracking only:  Recommended Tickets | Bets | Accumulators
+        │   └── TrackerPage      # Bet tracking: filter bar + BetTable
         ├── components/
-        │   ├── signals/         # SignalCard, RecommendedTicketCard (GeneralTicketCard, FreeTicketCard, ProTicketCard)
+        │   ├── signals/         # SignalCard, ValueBetCard
         │   ├── analytics/       # KPIRow, TrendChart, ByMarketTable, LossAnalysisDashboard
-        │   ├── tracker/         # BetTable, AccumulatorBuilder
+        │   ├── tracker/         # BetTable, PLChart, BetStatsBar
         │   ├── backtest/        # BacktestControls, BankrollChart
         │   └── layout/          # AppShell, NavBar, Sidebar, BottomNav
         ├── api/                 # Thin fetch wrappers (signals.js, tracker.js, analytics.js, …)
         ├── store/               # Zustand stores (useSignals, useTracker, useSettings)
         ├── context/             # AuthContext (JWT decode + tier)
-        └── hooks/               # useTier, useRecommendedTickets
+        └── hooks/               # useTier
 ```
 
 ---
@@ -113,7 +110,6 @@ TrackedBet row
 TrackedBet.result_status = Won/Lost
     ↓  run_loss_analysis_pipeline()
 LossAnalysis rows  →  LearningProposal rows (if accepted)
-    ↓  accumulator_generator reads LearningProposal for effective_ceilings
 Self-learning loop closed
 ```
 
@@ -163,18 +159,12 @@ Analyses ALL settled bets (wins + losses). Broader strategic rule changes.
 7. **Risk Agent** — pure-Python backtester: validates each proposal, accepts or rejects
 
 **Pipeline B proposal types:**
-- `market_suppression` — suppress a consistently-losing market in the accumulator
-- `league_suppression` — suppress a consistently-losing league in the accumulator
+- `market_suppression` — flag a consistently-losing market
+- `league_suppression` — flag a consistently-losing league
 - `kelly_fraction_adj` — reduce quality weight for an underperforming confidence level
 - `min_prob_by_agreement` — raise minimum probability for a low-hit agreement type
 
 **Persistence:** Accepted proposals → `LearningProposal` table (one active row per change_type+target slot). Old rows set `is_active=False`.
-
-**Consumption:** `accumulator_generator._load_candidates()` reads ALL active proposals:
-- `market_odds_ceiling` → `effective_ceilings` dict (Pipeline A)
-- `market_suppression` → `suppressed_markets` set (Pipeline B)
-- `league_suppression` → `suppressed_league_keywords` set (Pipeline B)
-- `kelly_fraction_adj` → `kelly_adj` dict, applied as quality score multiplier (Pipeline B)
 
 **Trigger:** After every `settle_bets_for_date()` call that settles ≥ 1 bet (scheduler + startup catch-up).
 

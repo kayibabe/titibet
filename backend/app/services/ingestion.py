@@ -195,6 +195,13 @@ async def sync_date(
                     update_vals["home_score"] = new_home
                 if new_away is not None:
                     update_vals["away_score"] = new_away
+                # HT scores — same null-guard: only write when the API provides them.
+                new_home_ht = row.get("home_score_ht")
+                new_away_ht = row.get("away_score_ht")
+                if new_home_ht is not None:
+                    update_vals["home_score_ht"] = new_home_ht
+                if new_away_ht is not None:
+                    update_vals["away_score_ht"] = new_away_ht
                 await db.execute(
                     update(Fixture)
                     .where(Fixture.external_fixture_id == ext_id)
@@ -215,6 +222,8 @@ async def sync_date(
                     status=row.get("status"),
                     home_score=row.get("home_score"),
                     away_score=row.get("away_score"),
+                    home_score_ht=row.get("home_score_ht"),
+                    away_score_ht=row.get("away_score_ht"),
                 ))
                 fixtures_upserted += 1
 

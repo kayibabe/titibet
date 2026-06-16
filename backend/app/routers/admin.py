@@ -20,7 +20,6 @@ from app.services.strategy_pipeline import run_strategy_pipeline
 from app.services.league_watch_guard import get_watchlist_status, run_league_watch_guard
 from app.services.telegram import (
     _send_to as telegram_send_to,
-    push_titibet_tickets as telegram_push_titibet,
     push_results_report as telegram_push_results,
 )
 
@@ -28,8 +27,8 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 def _require_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.tier != "elite":
-        raise HTTPException(status_code=403, detail="Admin access requires Elite tier")
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
 
@@ -41,6 +40,7 @@ class UserAdminOut(BaseModel):
     subscription_status: str
     subscription_expires_at: Optional[datetime]
     is_active: bool
+    is_admin: bool = False
     created_at: datetime
     model_config = {"from_attributes": True}
 
@@ -49,6 +49,7 @@ class UserAdminUpdate(BaseModel):
     tier: Optional[str] = None
     subscription_status: Optional[str] = None
     is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
     name: Optional[str] = None
 
 
@@ -134,6 +135,8 @@ async def update_user(
         user.subscription_status = body.subscription_status
     if body.is_active is not None:
         user.is_active = body.is_active
+    if body.is_admin is not None:
+        user.is_admin = body.is_admin
     if body.name is not None:
         user.name = body.name
 
@@ -243,7 +246,6 @@ async def telegram_preview(
     """
     from datetime import date as _date
     from app.services.telegram import _query_all_rows, _best_per_fixture, _system_rank
-    from app.services.recommended_tickets import load_titibet_tickets
 
     today = _date.today()
     cfg = get_settings()
@@ -259,88 +261,38 @@ async def telegram_preview(
     if not channels_config:
         return {"date": today.isoformat(), "channels": []}
 
-    tickets = await load_titibet_tickets(db, today)
     all_rows = await _query_all_rows(db, today)
     general_rows = _best_per_fixture(all_rows)
     general_rows.sort(key=lambda r: _system_rank(r[0], r[1]), reverse=True)
 
-    CHANNEL_META = {
-        "general": {"label": "TiTiBet General", "emoji": "📋", "profile": "balanced",
-                    "subtitle": "All signal matches · ranked by model confidence"},
-        "free":    {"label": "TiTiBet Free",    "emoji": "🎯", "profile": "conservative",
-                    "subtitle": "3 deterministic daily free picks"},
-        "pro":     {"label": "TiTiBet Pro",     "emoji": "💎", "profile": "aggressive",
-                    "subtitle": "Premium bundle · High Conf ACCA · Goals ACCA · Safe Ticket · Best Singles"},
-    }
+    all_picks: list[dict] = []
+    for sig, fix in general_rows:
+        primary = max(
+            (v for v in [sig.bayesian_prob, sig.poisson_prob] if v is not None),
+            default=None,
+        )
+        all_picks.append({
+            "fixture":     f"{fix.home_team} vs {fix.away_team}",
+            "country":     fix.country,
+            "league":      fix.league,
+            "market":      sig.market,
+            "probability": primary,
+            "confidence":  sig.dual_confidence,
+        })
 
     result = []
     for channel_type, chat_id in channels_config:
-        meta = CHANNEL_META.get(channel_type, {})
-        all_picks: list[dict] = []
-
-        if channel_type == "general":
-            for sig, fix in general_rows:
-                primary = max(
-                    (v for v in [sig.bayesian_prob, sig.poisson_prob] if v is not None),
-                    default=None,
-                )
-                all_picks.append({
-                    "fixture":     f"{fix.home_team} vs {fix.away_team}",
-                    "country":     fix.country,
-                    "league":      fix.league,
-                    "market":      sig.market,
-                    "probability": primary,
-                    "confidence":  sig.dual_confidence,
-                })
-
-        elif channel_type == "free":
-            free_ticket = tickets.get("free") or {}
-            for leg in (free_ticket.get("selected_legs") or []):
-                all_picks.append({
-                    "fixture":     leg.get("match_name", ""),
-                    "country":     None,
-                    "league":      leg.get("league", ""),
-                    "market":      leg.get("market", ""),
-                    "probability": leg.get("probability"),
-                    "confidence":  leg.get("confidence"),
-                })
-
-        elif channel_type == "pro":
-            pro_ticket = tickets.get("pro") or {}
-            for sub in (pro_ticket.get("sub_tickets") or []):
-                for leg in (sub.get("legs") or []):
-                    all_picks.append({
-                        "fixture":     leg.get("match_name", ""),
-                        "country":     None,
-                        "league":      leg.get("league", ""),
-                        "market":      f"[{sub.get('label', sub.get('key', ''))}] {leg.get('market', '')}",
-                        "probability": leg.get("probability"),
-                        "confidence":  leg.get("confidence"),
-                    })
-
         result.append({
-            "label":      meta.get("label", channel_type),
-            "emoji":      meta.get("emoji", "📢"),
-            "profile":    meta.get("profile", "balanced"),
+            "label":      f"TiTiBet {channel_type.title()}",
+            "emoji":      "📋",
+            "profile":    "balanced",
             "chat_id":    chat_id,
-            "subtitle":   meta.get("subtitle", ""),
+            "subtitle":   "All signal matches · ranked by model confidence",
             "pick_count": len(all_picks),
             "picks":      all_picks[:10],
         })
 
     return {"date": today.isoformat(), "channels": result}
-
-
-@router.post("/telegram/push")
-async def telegram_push(
-    db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(_require_admin),
-):
-    """Manually push today's TiTiBet tickets to all three Telegram channels."""
-    from datetime import date as _date
-    today = _date.today()
-    sent  = await telegram_push_titibet(db, today)
-    return {"sent": sent, "date": today.isoformat()}
 
 
 @router.post("/telegram/push-results")
@@ -438,6 +390,67 @@ async def deactivate_learning_proposal(
     proposal.is_active = False
     await db.commit()
     return {"deactivated": True, "id": proposal_id}
+
+
+# ── Calibration ──────────────────────────────────────────────────────────────
+
+@router.get("/calibration")
+async def get_calibration(
+    days: int = 90,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Run the weekly calibration audit on demand.
+    Returns Brier skill, ECE, reliability diagram, per-market breakdown,
+    and a list of markets currently failing the health threshold.
+    """
+    from app.services.calibration import compute_calibration_metrics
+    report = await compute_calibration_metrics(db, days=days)
+    return {
+        "generated_at":     report.generated_at.isoformat(),
+        "window_days":      report.window_days,
+        "date_range":       {"min": report.date_min, "max": report.date_max},
+        "total_bets":       report.total_bets,
+        "signal_join_bets": report.signal_join_bets,
+        "overall_win_rate": report.overall_win_rate,
+        "brier_score":      report.brier_score,
+        "brier_naive":      report.brier_naive,
+        "brier_skill":      report.brier_skill,
+        "ece":              report.ece,
+        "flagged_markets":  report.flagged_markets,
+        "reliability": [
+            {"bucket": f"[{b.lo:.1f}-{b.hi:.1f})", "n": b.n,
+             "mean_model_p": b.mean_model_p, "actual_hit_rate": b.actual_hit_rate,
+             "gap": b.gap}
+            for b in report.reliability
+        ],
+        "by_market": [
+            {"market": m.market, "n": m.n, "win_rate": m.win_rate,
+             "mean_model_p": m.mean_model_p, "calibration_gap": m.calibration_gap,
+             "brier_skill": m.brier_skill, "flat_roi_pct": m.flat_roi_pct,
+             "flagged": m.flagged}
+            for m in report.by_market
+        ],
+        "by_confidence": [
+            {"tier": c.tier, "n": c.n, "win_rate": c.win_rate,
+             "mean_model_p": c.mean_model_p, "flat_roi_pct": c.flat_roi_pct}
+            for c in report.by_confidence
+        ],
+    }
+
+
+@router.get("/calibration/history")
+async def get_calibration_history(
+    n: int = 12,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Return the last n weekly calibration snapshots for trend tracking.
+    """
+    from app.services.calibration import load_recent_snapshots
+    return {"snapshots": await load_recent_snapshots(db, n=n)}
 
 
 # ── Pipeline triggers ─────────────────────────────────────────────────────────

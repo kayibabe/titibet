@@ -22,9 +22,15 @@ class Fixture(Base):
     status: Mapped[Optional[str]] = mapped_column(String(60), index=True, nullable=True)
     home_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     away_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Halftime scores
+    home_score_ht: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    away_score_ht: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Actual corner counts — populated post-match from /fixtures/statistics.
+    home_corners: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    away_corners: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, onupdate=func.now(), nullable=True)
 
-    market_snapshots: Mapped[list["MarketSnapshot"]] = relationship("MarketSnapshot", back_populates="fixture", lazy="selectin")  # noqa: F821
+    market_snapshots: Mapped[list["MarketSnapshot"]] = relationship("MarketSnapshot", back_populates="fixture", lazy="selectin")  # noqa
     signals: Mapped[list["Signal"]] = relationship("Signal", back_populates="fixture", lazy="selectin")  # noqa: F821
-    tracked_bets: Mapped[list["TrackedBet"]] = relationship("TrackedBet", back_populates="fixture", lazy="selectin")  # noqa: F821
+    tracked_bets: Mapped[list["TrackedBet"]] = relationship("TrackedBet", back_populates="fixture")  # noqa: F821
