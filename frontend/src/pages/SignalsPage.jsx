@@ -302,25 +302,6 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
       .catch(() => {})
   }, []) // eslint-disable-line
 
-  // Auto-track ref: prevents re-issuing calls for the same signal in one session
-  const autoTrackedRef = useRef(new Set())
-  const [autoTrackedKeys, setAutoTrackedKeys] = useState(new Set())
-
-  // When today's signals load, auto-track each one as a system pick (fire-and-forget)
-  useEffect(() => {
-    if (!isToday || loading || error || !signals.length) return
-    const bankroll = settings?.bankroll || 1000
-    const newKeys = []
-    signals.forEach(signal => {
-      const key = `${signal.fixture_id}:${signal.market}`
-      if (autoTrackedRef.current.has(key)) return
-      autoTrackedRef.current.add(key)
-      newKeys.push(key)
-      autoTrackSignal(signal, { bankroll }).catch(() => {})
-    })
-    if (newKeys.length) setAutoTrackedKeys(prev => new Set([...prev, ...newKeys]))
-  }, [signals, isToday, loading, error]) // eslint-disable-line
-
   // Consume initialFilter from Analytics page — apply it once, then clear
   useEffect(() => {
     if (!initialFilter) return
@@ -375,6 +356,25 @@ const reload = () => load(params)
 
   const isToday = date === today
   const isBusy  = syncing || computing
+
+  // Auto-track ref: prevents re-issuing calls for the same signal in one session
+  const autoTrackedRef = useRef(new Set())
+  const [autoTrackedKeys, setAutoTrackedKeys] = useState(new Set())
+
+  // When today's signals load, auto-track each one as a system pick (fire-and-forget)
+  useEffect(() => {
+    if (!isToday || loading || error || !signals.length) return
+    const bankroll = settings?.bankroll || 1000
+    const newKeys = []
+    signals.forEach(signal => {
+      const key = `${signal.fixture_id}:${signal.market}`
+      if (autoTrackedRef.current.has(key)) return
+      autoTrackedRef.current.add(key)
+      newKeys.push(key)
+      autoTrackSignal(signal, { bankroll }).catch(() => {})
+    })
+    if (newKeys.length) setAutoTrackedKeys(prev => new Set([...prev, ...newKeys]))
+  }, [signals, isToday, loading, error]) // eslint-disable-line
 
   // ── Client-side sort + EV filter ────────────────────────────────────────
   const displayedSignals = useMemo(() => {
