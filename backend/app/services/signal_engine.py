@@ -10,6 +10,8 @@ For each fixture on a date:
 """
 from __future__ import annotations
 
+import asyncio
+import math
 import re
 from datetime import date, datetime
 from typing import Optional
@@ -29,30 +31,23 @@ from app.core.config import (
     DISABLED_MARKETS,
     DISABLED_LEAGUES,
     OVER_GOALS_SUPPRESSED_LEAGUES,
-    AWAY_GOALS_SUPPRESSED_LEAGUES,
     MARKET_MAX_ODDS,
+    MARKET_MIN_ODDS,
+    POISSON_ONLY_MAX_ODDS,
+    POISSON_ONLY_KELLY_CAP,
     MAX_DAILY_EXPOSURE,
-    WOMEN_LEAGUE_KEYWORDS,
+    YOUTH_LEAGUE_KEYWORDS,
 )
 from app.engines import bayesian as bay_engine
-from app.services.form_service import get_team_form_lambdas
+from app.services.form_service import get_team_form_lambdas, get_team_over25_history
 from app.engines import poisson as poi_engine
 from app.engines import dual_engine
 from app.engines import bos as bos_engine
-from app.engines import brea as brea_engine
-from app.engines import fhgi as fhgi_engine
-from app.engines import wtcpm as wtcpm_engine
 from app.models import Fixture, MarketSnapshot, Signal
 from app.services.performance_intelligence import compute_performance_weights, PerformanceWeights
-from app.services.staking import expected_value as _ev
+from app.services.staking import expected_value as _ev, kelly_stake_pct
 from app.core.config import (
     BOS_SI_THRESHOLD, BOS_O00_MAX, BOS_CMA_MAX,
-    BREA_RI1_MAX, BREA_RI2_MAX, BREA_RI3_MAX,
-    FHGI_O11_MIN, FHGI_O11_MAX, FHGI_FHGMI_MIN,
-    WTCPM_CCS_MIN, WTCPM_DI_MIN,
-    WTCPM_STD_F_MAX, WTCPM_STD_U_MIN,
-    WTCPM_STRONG_F_MAX, WTCPM_STRONG_U_MIN,
-    CORNERS_TOTAL_MARKET_NAMES, CORNERS_TEAM_MARKET_NAMES,
 )
 
 settings = get_settings()
@@ -60,32 +55,18 @@ settings = get_settings()
 # Map market name -> Poisson rule key (used in dual fusion).
 # Keys must match Signal.market values exactly (what the DB stores).
 MARKET_TO_POISSON_KEY: dict[str, str] = {
-    "BTTS Yes":     "btts",
-    "Under 3.5":    "under35",
     "Under 2.5":    "cs00u25",   # CS cascade rule — enables dual-model agreement for Under 2.5
-    "Over 0.5":     "over05ft",
     "Over 1.5":     "cs00o15",   # primary Poisson signal for Over 1.5
     "Over 2.5":     "over25",
-    "Over 3.5":     "over35ft",
-    "Over 0.5 1H":  "over05fh",  # first-half signal - Poisson only (no Bayesian equivalent)
     "Home Over 0.5":  "home_o05",
-    "Home Over 1.5":  "home_o15",
-    "Away Over 0.5":  "away_o05",
-    "Away Over 1.5":  "away_o15",
 }
 
 # Maps each mixed-signal description to the specific markets it implicates.
 # Used to scope contradiction flags per-market rather than fixture-wide,
 # so a clean BTTS signal is not contaminated by an Over/Under conflict on the same fixture.
 _MIXED_SIGNAL_MARKETS: dict[str, set[str]] = {
-    "O2.5 signal + U3.5":        {"Over 2.5", "Under 3.5"},
-    "O3.5 marginal λ + U3.5":   {"Over 3.5", "Under 3.5"},
     "O2.5 signal + U2.5 CS":     {"Over 2.5", "Under 2.5"},
     "O2.5 signal + U3.5 Mid":    {"Over 2.5", "Under 3.5"},
-    "O1.5 signal + U3.5":        {"Over 1.5", "Under 3.5"},
-    "O1.5 CS + U3.5":            {"Over 1.5", "Under 3.5"},
-    "O1.5 Extreme + U3.5":       {"Over 1.5", "Under 3.5"},
-    "Strong BTTS + strong U3.5": {"BTTS Yes", "Under 3.5"},
 }
 
 
@@ -167,14 +148,6 @@ def _build_goals_ou(snapshots: list[MarketSnapshot]) -> dict[str, dict[str, floa
     return result
 
 
-def _build_btts(snapshots: list[MarketSnapshot]) -> dict[str, dict[str, float]]:
-    result: dict[str, dict[str, float]] = {}
-    for s in snapshots:
-        if s.market_type in BTTS_MARKET_NAMES:
-            result.setdefault(s.bookmaker, {})[s.selection_name] = s.odds
-    return result
-
-
 def _build_match_winner(snapshots: list[MarketSnapshot]) -> dict[str, dict[str, float]]:
     result: dict[str, dict[str, float]] = {}
     for s in snapshots:
@@ -223,41 +196,6 @@ def _build_win_to_nil_away(snapshots: list[MarketSnapshot]) -> dict[str, dict[st
     return result
 
 
-def _build_corner_odds(snapshots: list[MarketSnapshot]) -> dict[str, float]:
-    """
-    Extract corner betting odds from market snapshots.
-
-    Returns a flat dict:
-        "total_over_X.5"  : best Over X.5 total-corners odds
-        "away_over_X.5"   : best Away Team Over X.5 corners odds
-        "home_over_X.5"   : best Home Team Over X.5 corners odds
-
-    Used by WTCPM to find "underdog Over 1.5 corners" odds — the model
-    resolves which side is the underdog based on match winner odds.
-    """
-    result: dict[str, float] = {}
-    for s in snapshots:
-        if s.market_type in CORNERS_TOTAL_MARKET_NAMES:
-            sel = s.selection_name.strip()
-            if sel.startswith("Over ") or sel.startswith("Under "):
-                key = f"total_{sel.lower().replace(' ', '_')}"
-                if key not in result or s.odds > result[key]:
-                    result[key] = s.odds
-        elif s.market_type in CORNERS_TEAM_MARKET_NAMES:
-            sel = s.selection_name.strip()
-            mt_lower = s.market_type.lower()
-            if "home" in mt_lower:
-                prefix = "home"
-            elif "away" in mt_lower:
-                prefix = "away"
-            else:
-                continue
-            if sel.startswith("Over ") or sel.startswith("Under "):
-                key = f"{prefix}_{sel.lower().replace(' ', '_')}"
-                if key not in result or s.odds > result[key]:
-                    result[key] = s.odds
-    return result
-
 
 def _build_exact_goals(snapshots: list[MarketSnapshot]) -> dict[str, dict[str, float]]:
     result: dict[str, dict[str, float]] = {}
@@ -269,21 +207,16 @@ def _build_exact_goals(snapshots: list[MarketSnapshot]) -> dict[str, dict[str, f
 
 def _build_poisson_odds(snapshots: list[MarketSnapshot]) -> tuple[dict, dict]:
     """
-    Build CS odds dict {s00, s10, s01, ...} and signal_odds {btts_yes, under3_5, ...}
+    Build CS odds dict {s00, s10, s01, ...} and signal_odds {over1_5, over2_5, under2_5, home_o05, away_o05}
     for the Poisson engine.
     """
     cs_map: dict[str, float] = {}
-    fh_cs_map: dict[str, float] = {}
 
     for s in snapshots:
         if s.market_type in CORRECT_SCORE_MARKET_NAMES:
             key = s.selection_name
             if key not in cs_map or s.odds > cs_map[key]:
                 cs_map[key] = s.odds
-        elif s.market_type in FIRST_HALF_CS_MARKET_NAMES:
-            key = s.selection_name
-            if key not in fh_cs_map or s.odds > fh_cs_map[key]:
-                fh_cs_map[key] = s.odds
 
     def _cs(home: int, away: int) -> Optional[float]:
         for k in [f"{home}:{away}", f"{home}-{away}", f"{home} - {away}"]:
@@ -291,20 +224,11 @@ def _build_poisson_odds(snapshots: list[MarketSnapshot]) -> tuple[dict, dict]:
                 return cs_map[k]
         return None
 
-    def _fh(h: int, a: int) -> Optional[float]:
-        for k in [f"{h}:{a}", f"{h}-{a}"]:
-            if k in fh_cs_map:
-                return fh_cs_map[k]
-        return None
-
     odds = {
         "s00": _cs(0, 0), "s10": _cs(1, 0), "s01": _cs(0, 1),
         "s11": _cs(1, 1), "s20": _cs(2, 0), "s02": _cs(0, 2),
         "s21": _cs(2, 1), "s12": _cs(1, 2), "s22": _cs(2, 2),
         "s31": _cs(3, 1), "s13": _cs(1, 3),
-        # Full 4-way HT exact-score set — fh_s10/fh_s01 added for FHGI model
-        "fh_s00": _fh(0, 0), "fh_s11": _fh(1, 1),
-        "fh_s10": _fh(1, 0), "fh_s01": _fh(0, 1),
     }
 
     signal_odds: dict[str, float] = {}
@@ -313,29 +237,20 @@ def _build_poisson_odds(snapshots: list[MarketSnapshot]) -> tuple[dict, dict]:
         mt = s.market_type
         if mt in GOALS_MARKET_NAMES:
             key_map = {
-                "Over 0.5": "over0_5",
                 "Over 1.5": "over1_5", "Over 2.5": "over2_5",
-                "Over 3.5": "over3_5",
-                "Under 2.5": "under2_5", "Under 3.5": "under3_5",
+                "Under 2.5": "under2_5",
             }
             k = key_map.get(sel)
             if k and (k not in signal_odds or s.odds > signal_odds[k]):
                 signal_odds[k] = s.odds
         elif mt in HOME_GOALS_MARKET_NAMES:
-            hk = {"Over 0.5": "home_o05", "Over 1.5": "home_o15"}.get(sel)
-            if hk and (hk not in signal_odds or s.odds > signal_odds[hk]):
-                signal_odds[hk] = s.odds
-        elif mt in AWAY_GOALS_MARKET_NAMES:
-            ak = {"Over 0.5": "away_o05", "Over 1.5": "away_o15"}.get(sel)
-            if ak and (ak not in signal_odds or s.odds > signal_odds[ak]):
-                signal_odds[ak] = s.odds
-        elif mt in BTTS_MARKET_NAMES:
-            if sel in ("Yes", "GG") and ("btts_yes" not in signal_odds or s.odds > signal_odds["btts_yes"]):
-                signal_odds["btts_yes"] = s.odds
-        if "first half" in mt.lower() or "halftime" in mt.lower():
             if sel == "Over 0.5":
-                if "over0_5_fh" not in signal_odds or s.odds > signal_odds["over0_5_fh"]:
-                    signal_odds["over0_5_fh"] = s.odds
+                if "home_o05" not in signal_odds or s.odds > signal_odds["home_o05"]:
+                    signal_odds["home_o05"] = s.odds
+        elif mt in AWAY_GOALS_MARKET_NAMES:
+            if sel == "Over 0.5":
+                if "away_o05" not in signal_odds or s.odds > signal_odds["away_o05"]:
+                    signal_odds["away_o05"] = s.odds
 
     return odds, signal_odds
 
@@ -420,9 +335,8 @@ def _is_end_of_northern_season(d: date) -> bool:
 
 
 _OVER_GOALS_MARKETS: frozenset = frozenset({
-    "Over 0.5", "Over 1.5", "Over 2.5", "Over 3.5",
-    "Home Over 0.5", "Home Over 1.5",
-    "Away Over 0.5", "Away Over 1.5",
+    "Over 1.5", "Over 2.5",
+    "Home Over 0.5",
 })
 
 
@@ -487,8 +401,8 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
 
     Adaptive confidence: if historical data shows a (market, league_tier) combination
     has a performance_factor below 0.72 for 25+ settled bets, confidence is downgraded
-    by one tier (High→Medium, Medium→Low). This prevents the accumulator from treating
-    consistently-poor market+league combinations as high-confidence picks.
+    by one tier (High→Medium, Medium→Low). This prevents consistently-poor
+    market+league combinations from ranking as high-confidence picks.
     """
     fixture_result = await db.execute(
         select(Fixture).where(Fixture.event_date == run_date)
@@ -535,6 +449,11 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         if all_suppressed_leagues and (fixture.league or "").lower().strip() in all_suppressed_leagues:
             continue
 
+        # Skip youth / reserve fixtures — structurally unpredictable scoring.
+        _league_lower = (fixture.league or "").lower()
+        if any(kw in _league_lower for kw in YOUTH_LEAGUE_KEYWORDS):
+            continue
+
         snap_result = await db.execute(
             select(MarketSnapshot).where(MarketSnapshot.fixture_id == fixture.id)
         )
@@ -545,7 +464,6 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
 
         cs_by_bookie = _build_cs_by_bookie(snapshots)
         goals_ou = _build_goals_ou(snapshots)
-        btts_dict = _build_btts(snapshots)
         match_winner = _build_match_winner(snapshots)
         double_chance = _build_double_chance(snapshots)
         home_totals = _build_home_totals(snapshots)
@@ -553,7 +471,6 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         wtn_home = _build_win_to_nil_home(snapshots)
         wtn_away = _build_win_to_nil_away(snapshots)
         exact_goals = _build_exact_goals(snapshots)
-        corner_odds = _build_corner_odds(snapshots)
         poi_odds, poi_signal_odds = _build_poisson_odds(snapshots)
         opening_odds_map = _compute_opening_odds_scoped(snapshots_raw)
 
@@ -565,7 +482,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             country=fixture.country or "",
             cs_by_bookie=cs_by_bookie,
             goals_ou=goals_ou,
-            btts=btts_dict,
+            btts={},
             match_winner=match_winner,
             double_chance=double_chance,
             home_totals=home_totals,
@@ -641,70 +558,6 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         # Glicko-2: rating differential for quality scoring.
         _glicko_rdiff = adv.glicko_r_diff(fixture.home_team, fixture.away_team)
 
-        # BREA: BTTS risk index — computed once per fixture using ZINB/Poisson λ.
-        _brea_ri1: float | None = None
-        _brea_fss: float | None = None
-        try:
-            _brea_2a = brea_engine.model_2a(
-                lambda_h=_zinb_lh, lambda_a=_zinb_la,
-                ri1_max=BREA_RI1_MAX,
-            )
-            _brea_ri1 = _brea_2a.ri
-            _brea_fss = brea_engine.composite_fss(
-                xg_h=_zinb_lh, xg_a=_zinb_la, ri1=_brea_2a.ri
-            )
-        except Exception:
-            pass
-
-        # FHGI: enhanced Over 0.5 1H model — only fires when all 4 HT CS odds exist.
-        _fhgi_result = None
-        try:
-            _fhgi_o11 = poi_odds.get("fh_s11")
-            _fhgi_o10 = poi_odds.get("fh_s10")
-            _fhgi_o01 = poi_odds.get("fh_s01")
-            _fhgi_o00 = poi_odds.get("fh_s00")
-            _fhgi_over05 = poi_signal_odds.get("over0_5_fh")
-            if all(v is not None and v > 1.0 for v in
-                   [_fhgi_o11, _fhgi_o10, _fhgi_o01, _fhgi_o00, _fhgi_over05]):
-                _fhgi_result = fhgi_engine.run(
-                    o_11=_fhgi_o11, o_10=_fhgi_o10,
-                    o_01=_fhgi_o01, o_00=_fhgi_o00,
-                    o_fh_over05=_fhgi_over05,
-                    o11_min=FHGI_O11_MIN, o11_max=FHGI_O11_MAX,
-                    fhgmi_min=FHGI_FHGMI_MIN,
-                )
-        except Exception:
-            pass
-
-        # WTCPM: Underdog Over 1.5 Corners.
-        # Requires match winner odds (to identify favourite/underdog) and corner
-        # betting odds. Falls back to league-average corner defaults when H2H data
-        # is unavailable.
-        _wtcpm_result = None
-        try:
-            _mw_flat = [v for bm in match_winner.values() for v in bm.values()]
-            _mw_sorted = sorted(set(_mw_flat)) if _mw_flat else []
-            if len(_mw_sorted) >= 2:
-                _wtcpm_f_odds = _mw_sorted[0]    # favourite (lowest odds)
-                _wtcpm_u_odds = _mw_sorted[-1]   # underdog (highest odds)
-                # Find underdog team corner odds: try team-specific first, then total
-                _wtcpm_corner_odds = (
-                    corner_odds.get("away_over_1.5")
-                    or corner_odds.get("home_over_1.5")
-                    or 0.0
-                )
-                if _wtcpm_corner_odds > 1.0:
-                    _wtcpm_result = wtcpm_engine.run(
-                        f_odds=_wtcpm_f_odds,
-                        u_odds=_wtcpm_u_odds,
-                        odds_ud_over15_corners=_wtcpm_corner_odds,
-                        ccs_min=WTCPM_CCS_MIN, di_min=WTCPM_DI_MIN,
-                        std_f_max=WTCPM_STD_F_MAX, std_u_min=WTCPM_STD_U_MIN,
-                        strong_f_max=WTCPM_STRONG_F_MAX, strong_u_min=WTCPM_STRONG_U_MIN,
-                    )
-        except Exception:
-            pass
-
         # Index by rule_key (includes non-passing rules — needed for keyed lookup)
         poi_by_key: dict[str, poi_engine.PoissonResult] = {
             r.rule_key: r for r in poi_result.results
@@ -721,11 +574,6 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
 
         all_markets = set(bay_by_market.keys()) | set(poi_by_market.keys())
 
-        # Inject corner market when WTCPM passes — it has no Bayesian/Poisson
-        # counterpart so it won't appear in either engine's results naturally.
-        if _wtcpm_result is not None and _wtcpm_result.passed:
-            all_markets.add("Underdog Over 1.5 Corners")
-
         await db.execute(delete(Signal).where(Signal.fixture_id == fixture.id))
 
         fixture_league = (fixture.league or "").strip()
@@ -734,52 +582,6 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             # Skip markets that have been permanently disabled (e.g. BTTS No, Under 3.5).
             if market in DISABLED_MARKETS:
                 continue
-
-            # ── Improvement: Tier restriction for Over 1.5 markets ────────────
-            # Home/Away Over 1.5 requires a team to score 2+ goals — unreliable
-            # in Tier 3 leagues (weaker attack, more defensive play, end-of-season).
-            if market in {"Home Over 1.5", "Away Over 1.5"} and (fixture.league_tier or 3) >= 3:
-                continue
-
-
-            # ── Improvement: Women's league over-goals odds ceiling ───────────
-            # Women's football averages fewer goals than men's. The Poisson model
-            # (calibrated on mixed data) over-estimates scoring rates. Cap both
-            # away and home over-goals at tighter odds in women's competitions.
-            if market in {"Away Over 0.5", "Away Over 1.5", "Home Over 0.5", "Home Over 1.5"}:
-                league_lower = (fixture.league or "").lower()
-                if any(kw in league_lower for kw in WOMEN_LEAGUE_KEYWORDS):
-                    _women_best_odd = None
-                    _b_candidate = bay_by_market.get(market)
-                    if _b_candidate:
-                        _women_best_odd = _b_candidate.best_actual_odd
-                    # Away ceiling: 2.30; Home ceiling: 2.50 (home teams more predictable)
-                    _women_ceil = 2.30 if market.startswith("Away") else 2.50
-                    if _women_best_odd is not None and _women_best_odd > _women_ceil:
-                        continue
-
-            # ── Improvement: Tier 3 away-over high-odds ceiling ──────────────
-            # Away teams in lower-tier leagues are particularly unpredictable at
-            # long odds. Cap Away Over 0.5 at 2.50 for Tier 3 leagues to avoid
-            # backing low-probability away scorers in volatile markets.
-            if market == "Away Over 0.5" and (fixture.league_tier or 3) >= 3:
-                _t3_best_odd = None
-                _b_candidate = bay_by_market.get(market)
-                if _b_candidate:
-                    _t3_best_odd = _b_candidate.best_actual_odd
-                if _t3_best_odd is not None and _t3_best_odd > 2.50:
-                    continue
-
-            # ── Targeted away-goals suppression ──────────────────────────────
-            # Leagues in AWAY_GOALS_SUPPRESSED_LEAGUES have structurally poor
-            # away-scoring reliability regardless of odds. Skip Away Over signals
-            # entirely to avoid losses driven by home-field dominance or
-            # defensive-style play that models cannot capture.
-            if market in {"Away Over 0.5", "Away Over 1.5"}:
-                if AWAY_GOALS_SUPPRESSED_LEAGUES and _league_matches_suppression(
-                    (fixture.league or "").lower(), AWAY_GOALS_SUPPRESSED_LEAGUES
-                ):
-                    continue
 
             # ── Market maximum odds cap ───────────────────────────────────────
             # Some bookmakers (especially Asian) price team-total markets with
@@ -792,56 +594,23 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 if _best is not None and _best > _max_odd:
                     continue
 
+            # ── Market minimum odds floor (Bayesian-level enforcement) ────────
+            # MARKET_MIN_ODDS is already applied inside the Poisson evaluators,
+            # but Bayesian-only signals bypass that path. Enforce the floor here
+            # so near-certainty picks at terrible EV never reach the feed.
+            _min_odd = MARKET_MIN_ODDS.get(market)
+            if _min_odd:
+                _b_cand_min = bay_by_market.get(market)
+                _best_min = _b_cand_min.best_actual_odd if _b_cand_min else None
+                if _best_min is not None and _best_min < _min_odd:
+                    continue
+
             # League × market granular suppression: skip this specific combination
             # if historical performance shows it consistently loses money (ROI < 0,
             # 5+ settled bets). More surgical than whole-league suppression — e.g.
             # "Away Over 0.5 in Ekstraklasa" can be suppressed while other markets
             # in that league remain active.
             if perf_weights is not None and perf_weights.should_suppress_league_market(fixture_league, market):
-                continue
-
-            # Corner signals are WTCPM-only — skip Bayesian/Poisson fusion entirely.
-            # Build a synthetic dual result from WTCPM output so the rest of the
-            # pipeline (quality gate, stake sizing, etc.) works unchanged.
-            if market == "Underdog Over 1.5 Corners":
-                if _wtcpm_result is None or not _wtcpm_result.passed:
-                    continue
-                sig = Signal(
-                    fixture_id=fixture.id,
-                    market=market,
-                    bayesian_prob=None, bayesian_edge=None, bayesian_best_odd=None,
-                    bayesian_bookmaker=None, bayesian_overround=None,
-                    bayesian_coverage=None, bayesian_bookmaker_count=None,
-                    bayesian_is_value=None, bayesian_confidence=None,
-                    bayesian_quality_score=None, bayesian_kelly_pct=None,
-                    bayesian_odds_outlier=None, bayesian_consensus_odd=None,
-                    poisson_lambda_h=None, poisson_lambda_a=None,
-                    poisson_lambda_total=None, poisson_prob=_wtcpm_result.p_corners_ge2,
-                    poisson_rule_key="wtcpm", poisson_rule_pass=True,
-                    poisson_rule_strong=_wtcpm_result.qualifier_tier == "strong",
-                    poisson_edge_pct=round(_wtcpm_result.ev * 100, 2),
-                    poisson_grade="A" if _wtcpm_result.ccs >= 80 else "B",
-                    poisson_mixed_signals=None,
-                    dual_confidence="Medium" if _wtcpm_result.qualifier_tier == "standard" else "High",
-                    dual_agreement="Poisson Only",
-                    dual_quality_score=round(_wtcpm_result.ccs / 100.0 * 0.08, 4),
-                    dual_recommended_stake_pct=_wtcpm_result.kelly_stake_pct,
-                    contradiction=False,
-                    odds_drift_pct=None,
-                    bos_si=_bos_result.si if _bos_result else None,
-                    bos_passed=_bos_result.passed if _bos_result else None,
-                    zinb_lambda_h=round(_zinb_lh, 4),
-                    zinb_lambda_a=round(_zinb_la, 4),
-                    ev_score=round(_wtcpm_result.ev, 4),
-                    glicko_r_diff=_glicko_rdiff,
-                    brea_ri1=None, brea_fss=None,
-                    fhgi_gpi=None, fhgi_fhgmi=None, fhgi_p_model=None,
-                    wtcpm_di=_wtcpm_result.di,
-                    wtcpm_ccs=_wtcpm_result.ccs,
-                    wtcpm_p_corners=_wtcpm_result.p_corners_ge2,
-                )
-                pending_signals.append(sig)
-                count += 1
                 continue
 
             b = bay_by_market.get(market)
@@ -876,6 +645,13 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             if ds.confidence == "None":
                 continue
 
+            # ── Home Over 1.5 — Both-agreement only ──────────────────────────
+            # Backtest: Poisson-only Home Over 1.5 hit 38% on 71 bets (-21% ROI).
+            # Both-agreement hit 66.7% on 18 bets (+91% ROI). Poisson fires too
+            # aggressively on this high-bar market without bookmaker confirmation.
+            if market == "Home Over 1.5" and ds.agreement == "Poisson Only":
+                continue
+
             # Also require displayable odds — Poisson-only signals are fine without
             # Bayesian odds, but pure Bayesian failures with no odds are not trackable.
             if b is None and (p is None or not p.rule_pass):
@@ -889,34 +665,14 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 if best_u25_odd is not None and best_u25_odd > under25_cap:
                     continue
 
-            # Under 3.5 odds cap: when best odds > 1.85 (< 54% prob),
-            # bookmakers are pricing a high-scoring match -- drop the signal.
-            if market == "Under 3.5":
-                under35_cap = float(POISSON_RULES.get("under35_max_odds", 1.85))
-                best_u35_odd = b.best_actual_odd if b else None
-                if best_u35_odd is not None and best_u35_odd > under35_cap:
-                    continue
-
             # League under-goals suppression.
-            # MLS, A-League, Chinese Super League, Allsvenskan, Eliteserien,
-            # and Iranian PGPL are structurally high-scoring leagues.
-            # Under 2.5 and Under 3.5 signals from these leagues have poor
-            # historical win-rates -- suppress them regardless of model output.
-            if market in ("Under 2.5", "Under 3.5"):
+            if market == "Under 2.5":
                 league_lower = (fixture.league or "").lower()
                 if _league_matches_suppression(league_lower, UNDER_GOALS_SUPPRESSED_LEAGUES):
                     continue
 
-            # League over-goals suppression.
-            # Some leagues are structurally low-scoring — 0-0 and 1-0 dominate —
-            # so even the lowest-bar Over picks (Over 0.5, Over 1.5) land as losers.
-            # Suppress all Over-goals and team-total-over markets for these leagues.
-            _OVER_MARKETS = {
-                "Over 0.5", "Over 1.5", "Over 2.5", "Over 3.5",
-                "Home Over 0.5", "Home Over 1.5",
-                "Away Over 0.5", "Away Over 1.5",
-            }
-            if market in _OVER_MARKETS:
+            # League over-goals suppression for remaining active over markets.
+            if market in {"Over 1.5", "Over 2.5", "Home Over 0.5"}:
                 league_lower = (fixture.league or "").lower()
                 if _league_matches_suppression(league_lower, OVER_GOALS_SUPPRESSED_LEAGUES):
                     continue
@@ -924,8 +680,8 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             # Adaptive confidence downgrade.
             # If the (market, league_tier) slice has a performance_factor < 0.72 for
             # 25+ settled bets, this combination has historically underperformed.
-            # Downgrade confidence by one tier so the accumulator generator sees it
-            # as less reliable. The raw engine output is NOT changed — dual_agreement
+            # Downgrade confidence by one tier so it ranks lower in the signal list.
+            # The raw engine output is NOT changed — dual_agreement
             # still reflects what the models said, only dual_confidence is adjusted.
             league_tier = fixture.league_tier
             final_confidence = ds.confidence
@@ -962,18 +718,54 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             if final_confidence == "Low" and (fixture.league_tier or 3) >= 3:
                 continue
 
-            # Performance-weighted stake sizing.
-            # Multiply the engine's recommended stake by a combined factor derived
-            # from (league, market) recency-adjusted performance × (confidence, market)
-            # all-time performance. This means:
-            #   • Proven combos (La Liga Away Over 0.5) → stake boosted up to 1.75×
-            #   • Underperforming combos → stake reduced down to 0.50×
-            #   • No data yet → neutral (1.0×, stake unchanged)
-            adjusted_stake_pct = ds.recommended_stake_pct
-            if perf_weights is not None and ds.recommended_stake_pct:
+            # ── Signal tier gates ─────────────────────────────────────────────
+            # Tier 1 — Dual Signal: Both engines agree at High confidence.
+            # Audit 2026-06-15: Both+High = +44.4% ROI, 61% WR (41 bets).
+            is_dual_signal = final_confidence == "High" and ds.agreement == "Both"
+
+            # Tier 2 — Poisson Signal: Poisson-only, rule_strong, odds < 2.49.
+            # Applies only to Home Over 0.5 — the only market with validated
+            # Poisson-only performance. Bayesian can't fire because CS odds are
+            # absent for many fixtures (data gap, not model disagreement).
+            # Backtest 2026-06-15: 269 signals, 78.1% WR, +47.2% ROI.
+            # <2.50 cap: ≥2.50 band drops to 38.5% WR — Poisson loses calibration.
+            _p_key_for_tier = MARKET_TO_POISSON_KEY.get(market, "")
+            _poi_best_odd = float(poi_signal_odds.get(_p_key_for_tier) or 0.0)
+            _poi_only_max = POISSON_ONLY_MAX_ODDS.get(market)
+            is_poisson_signal = (
+                market == "Home Over 0.5"
+                and ds.agreement == "Poisson Only"
+                and p is not None and p.rule_strong
+                and _poi_best_odd > 1.0
+                and (_poi_only_max is None or _poi_best_odd < _poi_only_max)
+            )
+
+            if not is_dual_signal and not is_poisson_signal:
+                continue
+
+            # ── Stake sizing ──────────────────────────────────────────────────
+            # Dual Signal: dual_engine already computed Kelly via Bayesian prob.
+            # Poisson Signal: dual_engine returns 0.0 (no Bayesian input) — compute
+            # quarter-Kelly directly from Poisson probability + bookmaker odds,
+            # capped at POISSON_ONLY_KELLY_CAP (1.5%) since only one engine confirms.
+            if is_poisson_signal and p is not None and p.poisson_prob:
+                adjusted_stake_pct = kelly_stake_pct(
+                    prob=p.poisson_prob,
+                    odds=_poi_best_odd,
+                    fraction=0.25,
+                    cap=POISSON_ONLY_KELLY_CAP,
+                )
+            else:
+                adjusted_stake_pct = ds.recommended_stake_pct
+
+            # Performance-weighted multiplier applies to both tiers.
+            # Proven (league, market) combos → stake boosted up to 1.75×
+            # Underperforming combos → stake reduced down to 0.50×
+            # No history yet → neutral (1.0×)
+            if perf_weights is not None and adjusted_stake_pct:
                 multiplier = perf_weights.stake_multiplier(fixture_league, market, final_confidence)
                 adjusted_stake_pct = round(
-                    min(0.10, max(0.002, ds.recommended_stake_pct * multiplier)), 4
+                    min(0.10, max(0.002, adjusted_stake_pct * multiplier)), 4
                 )
 
             # Odds drift: compare current best odd vs opening best odd for that bookmaker.
@@ -993,57 +785,103 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 if opening_odd and opening_odd > 0:
                     odds_drift = round((b.best_actual_odd - opening_odd) / opening_odd * 100, 2)
 
+            # ── Probability shrinkage — empirical calibration correction ─────
+            # Backtest: signals at 80–89% model prob hit only 76.9% (-7.6pp).
+            # At 90%+ they hit 71.4% (-21.6pp). The Bayesian overround correction
+            # is not fully eliminating bookmaker margin, leaving probabilities
+            # systematically inflated above 75%. Shrink toward the threshold to
+            # prevent over-staking on overconfident picks.
+            _shrink_threshold = float(POISSON_RULES.get("prob_shrink_threshold", 0.75))
+            _shrink_factor    = float(POISSON_RULES.get("prob_shrink_factor", 0.88))
+            _shrink_threshold_hi = float(POISSON_RULES.get("prob_shrink_threshold_hi", 0.80))
+            _shrink_factor_hi    = float(POISSON_RULES.get("prob_shrink_factor_hi", 0.35))
+            _raw_prob = (b.derived_prob if b else None) or (p.poisson_prob if p else None)
+            if _raw_prob is not None and _raw_prob > _shrink_threshold:
+                # Stage 1: gentle correction for 75-80% band
+                _raw_prob = _shrink_threshold + (_raw_prob - _shrink_threshold) * _shrink_factor
+                # Stage 2: stronger correction for 80%+ band, applied to stage-1 output.
+                # Audit 2026-06-03: 80-90% bucket showed -6.9pp calibration error.
+                if _raw_prob > _shrink_threshold_hi:
+                    _raw_prob = _shrink_threshold_hi + (_raw_prob - _shrink_threshold_hi) * _shrink_factor_hi
+
             # ── Explicit EV score ─────────────────────────────────────────────
-            # EV = p_model × best_odd − 1.  Use Bayesian prob with best odds;
-            # fall back to Poisson prob when Bayesian is unavailable.
-            _ev_prob = (b.derived_prob if b else None) or (p.poisson_prob if p else None)
-            _ev_odds = (b.best_actual_odd if b else None)
+            # EV = p_model × exec_odd − 1.  Use calibration-corrected probability
+            # and the EXECUTION price (Fix 1) — what the user actually gets at
+            # their book — not the longer displayed proxy odd.
+            _ev_prob = _raw_prob
+            _ev_odds = (b.exec_odd if b else None)
             _ev_score: float | None = None
             if _ev_prob is not None and _ev_odds is not None and _ev_odds > 1.0:
                 _ev_score = round(_ev(_ev_prob, _ev_odds), 4)
 
-            # ── BOS quality boost ─────────────────────────────────────────────
-            # When BOS passes, boost dual_quality_score by up to 10% to reward
-            # stable, low-scoring fixtures that models are more reliable on.
+            # Hard gate: if the calibration-shrunk EV is negative, the bet is
+            # loss-making at the real execution price — drop it regardless of
+            # model confidence.  Dual signals with is_value=True can still fail
+            # this gate when shrinkage pushes a high-probability pick below breakeven.
+            # Only enforced when we have Bayesian exec_odd — Poisson-only signals
+            # that pass the Both+High or Poisson-strong gates are not penalised here
+            # because their odds come from a different path (poi_signal_odds).
+            if _ev_score is not None and _ev_score < 0 and not is_poisson_signal:
+                continue
+
+            # ── BOS quality boost / penalty ───────────────────────────────────
+            # BOS high SI = stable, LOW-scoring fixture.  Apply a boost only to
+            # markets that benefit from low-scoring stability (Under 2.5 and Win
+            # to Nil).  For Over-goals markets, BOS passing is contradictory —
+            # apply a 5% quality penalty to reflect the misalignment.
+            _BOS_BOOSTED_MARKETS = frozenset({"Under 2.5", "Home Win to Nil", "Away Win to Nil"})
             _final_quality = adjusted_quality_score
             if _bos_result is not None and _bos_result.passed:
                 si_norm = min(_bos_result.si / 400.0, 1.0)  # normalise to [0,1]
-                _final_quality = round(_final_quality * (1.0 + 0.10 * si_norm), 4)
+                if market in _BOS_BOOSTED_MARKETS:
+                    _final_quality = round(_final_quality * (1.0 + 0.10 * si_norm), 4)
+                elif market in _OVER_GOALS_MARKETS:
+                    # Stable low-scoring fixture contradicts an over-goals pick.
+                    _final_quality = round(_final_quality * 0.95, 4)
 
-            # ── Attach BREA fields only for BTTS Yes signals ──────────────────
-            _sig_brea_ri1 = _brea_ri1 if market == "BTTS Yes" else None
-            _sig_brea_fss = _brea_fss if market == "BTTS Yes" else None
+            # ── ZINB × Under 2.5 cross-check ─────────────────────────────────
+            # When the Zero-Inflated NB model predicts total expected goals > 3.0
+            # the enriched scoring model disagrees with the Under 2.5 signal.
+            # Drop the pick rather than let the Bayesian CS model overrule a
+            # second opinion that saw more fixture context (home/away form, league
+            # attack/defence rates).  Guard: only block when ZINB is fitted for
+            # this league (lambda_h > 0.1 — values near zero indicate fallback).
+            if market == "Under 2.5" and _zinb_lh and _zinb_la:
+                if _zinb_lh > 0.1 and _zinb_la > 0.1 and (_zinb_lh + _zinb_la) > 3.0:
+                    continue
 
-            # ── Attach WTCPM fields only for corner signals ───────────────────
-            _sig_wtcpm_di = None
-            _sig_wtcpm_ccs = None
-            _sig_wtcpm_p = None
-            if market == "Underdog Over 1.5 Corners" and _wtcpm_result is not None:
-                _sig_wtcpm_di = _wtcpm_result.di
-                _sig_wtcpm_ccs = _wtcpm_result.ccs
-                _sig_wtcpm_p = _wtcpm_result.p_corners_ge2
+            # ── End-of-northern-season caution (May 10 – June 30) ────────────
+            # European leagues finish in this window.  Teams already promoted /
+            # relegated or with nothing to play for rotate squads, producing
+            # 0-0 and defensive results that defeat over-goals models.
+            # For Tier 2/3 fixtures in this period: drop Over-goals signals
+            # (Over 1.5, Over 2.5, Home Over 0.5) and downgrade any remaining
+            # signal confidence by one tier so dead-rubber picks rank lower.
+            if _is_end_of_northern_season(run_date):
+                _tier = fixture.league_tier or 3
+                if _tier >= 2 and market in _OVER_GOALS_MARKETS:
+                    continue
+                if _tier >= 3 and final_confidence in ("High", "Medium"):
+                    final_confidence = _CONFIDENCE_DOWNGRADE.get(final_confidence, final_confidence)
+                    # Re-check the signal tier gate after downgrade — a High→Medium
+                    # demotion means is_dual_signal is now false.
+                    is_dual_signal = final_confidence == "High" and ds.agreement == "Both"
+                    if not is_dual_signal and not is_poisson_signal:
+                        continue
 
-            # ── Attach FHGI fields only for "Over 0.5 1H" signals ────────────
-            _sig_fhgi_gpi = None
-            _sig_fhgi_fhgmi = None
-            _sig_fhgi_p_model = None
-            if market == "Over 0.5 1H" and _fhgi_result is not None and _fhgi_result.passed:
-                _sig_fhgi_gpi = _fhgi_result.gpi
-                _sig_fhgi_fhgmi = _fhgi_result.fhgmi
-                _sig_fhgi_p_model = _fhgi_result.p_model
-                # When FHGI disagrees (EV ≤ 0) but Poisson passes, downgrade confidence
-                # to reflect that the more rigorous model found no edge.
-                # When FHGI agrees (passed=True), boost quality slightly.
-            elif market == "Over 0.5 1H" and _fhgi_result is not None and not _fhgi_result.passed:
-                if final_confidence == "High":
-                    final_confidence = "Medium"
+            # For Poisson-only signals, surface the bookmaker odds from the
+            # Poisson signal odds dict so the router can display and rank them.
+            _effective_best_odd = (
+                (b.best_actual_odd if b else None)
+                or (_poi_best_odd if _poi_best_odd > 1.0 else None)
+            )
 
             sig = Signal(
                 fixture_id=fixture.id,
                 market=market,
                 bayesian_prob=b.derived_prob if b else None,
                 bayesian_edge=b.edge if b else None,
-                bayesian_best_odd=b.best_actual_odd if b else None,
+                bayesian_best_odd=_effective_best_odd,
                 bayesian_bookmaker=b.best_bookmaker if b else None,
                 bayesian_overround=b.overround if b else None,
                 bayesian_coverage=b.coverage if b else None,
@@ -1080,17 +918,143 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 zinb_lambda_a=round(_zinb_la, 4) if _zinb_la else None,
                 ev_score=_ev_score,
                 glicko_r_diff=_glicko_rdiff,
-                brea_ri1=_sig_brea_ri1,
-                brea_fss=_sig_brea_fss,
-                fhgi_gpi=_sig_fhgi_gpi,
-                fhgi_fhgmi=_sig_fhgi_fhgmi,
-                fhgi_p_model=_sig_fhgi_p_model,
-                wtcpm_di=None,
-                wtcpm_ccs=None,
-                wtcpm_p_corners=None,
             )
             pending_signals.append(sig)
             count += 1
+
+        # ── Shared lambda values used by flip signals ────────────────────────────
+        _fl_lh = (poi_by_key.get("home_o05") or None)
+        _fl_la = (poi_by_key.get("away_o05") or None)
+        _fl_lambda_h = _fl_lh.lambda_h if _fl_lh else None
+        _fl_lambda_a = _fl_la.lambda_a if _fl_la else None
+
+        def _flip_signal(
+            market: str,
+            rule_key: str,
+            prob: float | None,
+            best_odd: float | None,
+            bay: object,
+            lh: float | None,
+            la: float | None,
+            strong: bool,
+        ) -> Signal | None:
+            """Build a Poisson-only flip Signal, running it through dual_engine.fuse."""
+            if prob is None or best_odd is None or best_odd <= 1.0:
+                return None
+            _min_e = float(POISSON_RULES.get("min_edge_pct", 3.0))
+            _edge = prob - (1.0 / best_odd)
+            if _edge * 100 < _min_e:
+                return None
+            _grade = "A" if strong else "B"
+            _p = poi_engine.PoissonResult(
+                rule_key=rule_key, market=market,
+                rule_pass=True, rule_strong=strong,
+                poisson_prob=prob,
+                edge_pct=round(_edge * 100, 2),
+                has_edge=True,
+                grade=_grade,
+                lambda_h=lh, lambda_a=la,
+                lambda_total=(lh or 0) + (la or 0),
+                form_blended=bool(form_lambdas),
+            )
+            _ds = dual_engine.fuse(
+                fixture_id=fixture.id, market=market,
+                bayesian=bay, poisson=_p, mixed_signals=[],
+            )
+            if _ds.confidence == "None":
+                return None
+            # Apply same confidence + agreement gates as main signal path.
+            if _ds.confidence != "High" or _ds.agreement != "Both":
+                return None
+            if perf_weights is not None and perf_weights.should_suppress_league_market(fixture_league, market):
+                return None
+            _qs = _ds.quality_score
+            if _bos_result is not None and _bos_result.passed:
+                _qs = round(_qs * (1.0 + 0.10 * min(_bos_result.si / 400.0, 1.0)), 4)
+            _stake = _ds.recommended_stake_pct
+            if perf_weights is not None and _stake:
+                _m = perf_weights.stake_multiplier(fixture_league, market, _ds.confidence)
+                _stake = round(min(0.10, max(0.002, _stake * _m)), 4)
+            return Signal(
+                fixture_id=fixture.id, market=market,
+                bayesian_prob=bay.derived_prob if bay else None,
+                bayesian_edge=bay.edge if bay else None,
+                bayesian_best_odd=bay.best_actual_odd if bay else None,
+                bayesian_bookmaker=bay.best_bookmaker if bay else None,
+                bayesian_overround=bay.overround if bay else None,
+                bayesian_coverage=bay.coverage if bay else None,
+                bayesian_bookmaker_count=bay.bookmaker_count if bay else None,
+                bayesian_is_value=bay.is_value if bay else None,
+                bayesian_confidence=bay.confidence if bay else None,
+                bayesian_quality_score=bay.quality_score if bay else None,
+                bayesian_kelly_pct=bay.kelly_pct if bay else None,
+                bayesian_odds_outlier=bay.is_outlier_odds if bay else None,
+                bayesian_consensus_odd=bay.consensus_odd if bay else None,
+                poisson_lambda_h=lh, poisson_lambda_a=la,
+                poisson_lambda_total=(lh or 0) + (la or 0),
+                poisson_prob=prob,
+                poisson_rule_key=rule_key,
+                poisson_rule_pass=True, poisson_rule_strong=strong,
+                poisson_edge_pct=round(_edge * 100, 2),
+                poisson_grade=_grade,
+                poisson_mixed_signals=None,
+                dual_confidence=_ds.confidence, dual_agreement=_ds.agreement,
+                dual_quality_score=_qs, dual_recommended_stake_pct=_stake,
+                contradiction=False, odds_drift_pct=None,
+                bos_si=_bos_result.si if _bos_result else None,
+                bos_passed=_bos_result.passed if _bos_result else None,
+                zinb_lambda_h=round(_zinb_lh, 4) if _zinb_lh else None,
+                zinb_lambda_a=round(_zinb_la, 4) if _zinb_la else None,
+                ev_score=round(prob * best_odd - 1.0, 4) if prob and best_odd else None,
+                glicko_r_diff=_glicko_rdiff,
+            )
+
+        # ── Home Win to Nil flip — weak away scorer + scoring home ───────────────
+        # Empirical: when Away Over 0.5 loses (away=0), home scored ≥1 in 67% of cases.
+        # P(Home WtN) ≈ P(away=0) × P(home≥1) = e^(-λ_a) × (1 - e^(-λ_h))
+        # Trigger: λ_away < 0.90 (likely to blank) AND λ_home > 1.0 (likely to score).
+        if (
+            "Home Win to Nil" not in DISABLED_MARKETS
+            and _fl_lambda_h is not None and _fl_lambda_a is not None
+            and _fl_lambda_a < float(POISSON_RULES.get("hwtn_flip_away_lambda", 0.90))
+            and _fl_lambda_h > float(POISSON_RULES.get("hwtn_flip_home_lambda_min", 1.0))
+            and not any(s.market == "Home Win to Nil" and s.fixture_id == fixture.id for s in pending_signals)
+        ):
+            _b_hwtn = bay_by_market.get("Home Win to Nil")
+            _hwtn_odd = _b_hwtn.best_actual_odd if _b_hwtn else None
+            _hwtn_min = float(MARKET_MIN_ODDS.get("Home Win to Nil", 1.40))
+            if _hwtn_odd and _hwtn_odd >= _hwtn_min:
+                _hwtn_prob = math.exp(-_fl_lambda_a) * (1.0 - math.exp(-_fl_lambda_h))
+                _hwtn_strong = _fl_lambda_a < 0.70 and _fl_lambda_h > 1.3
+                _sig = _flip_signal("Home Win to Nil", "hwtn_flip", _hwtn_prob, _hwtn_odd,
+                                    _b_hwtn, _fl_lambda_h, _fl_lambda_a, _hwtn_strong)
+                if _sig:
+                    pending_signals.append(_sig)
+                    count += 1
+
+        # ── Away Win to Nil flip — weak home scorer + scoring away ───────────────
+        # Empirical: when Home Over 0.5 loses (home=0), away scored ≥1 in 48% of cases.
+        # Tighter lambda gate than Home WtN to keep accuracy above 60% threshold.
+        # P(Away WtN) ≈ P(home=0) × P(away≥1) = e^(-λ_h) × (1 - e^(-λ_a))
+        # Trigger: λ_home < 0.70 (very weak home scorer) AND λ_away > 1.0.
+        if (
+            "Away Win to Nil" not in DISABLED_MARKETS
+            and _fl_lambda_h is not None and _fl_lambda_a is not None
+            and _fl_lambda_h < float(POISSON_RULES.get("awtn_flip_home_lambda", 0.70))
+            and _fl_lambda_a > float(POISSON_RULES.get("awtn_flip_away_lambda_min", 1.0))
+            and not any(s.market == "Away Win to Nil" and s.fixture_id == fixture.id for s in pending_signals)
+        ):
+            _b_awtn = bay_by_market.get("Away Win to Nil")
+            _awtn_odd = _b_awtn.best_actual_odd if _b_awtn else None
+            _awtn_min = float(MARKET_MIN_ODDS.get("Away Win to Nil", 1.40))
+            if _awtn_odd and _awtn_odd >= _awtn_min:
+                _awtn_prob = math.exp(-_fl_lambda_h) * (1.0 - math.exp(-_fl_lambda_a))
+                _awtn_strong = _fl_lambda_h < 0.55 and _fl_lambda_a > 1.3
+                _sig = _flip_signal("Away Win to Nil", "awtn_flip", _awtn_prob, _awtn_odd,
+                                    _b_awtn, _fl_lambda_h, _fl_lambda_a, _awtn_strong)
+                if _sig:
+                    pending_signals.append(_sig)
+                    count += 1
 
     # ── Portfolio stake normalization ─────────────────────────────────────────
     # Cap total daily recommended exposure at MAX_DAILY_EXPOSURE (15 % of bankroll).
