@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, delete, update, or_
+from sqlalchemy import select, delete, update, or_, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -309,7 +309,15 @@ async def list_bets(
         .limit(limit)
     )
     if current_user:
-        query = query.where(TrackedBet.user_id == current_user.id)
+        query = query.where(
+            or_(
+                TrackedBet.user_id == current_user.id,
+                and_(
+                    TrackedBet.user_id.is_(None),
+                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+                ),
+            )
+        )
     else:
         query = query.where(TrackedBet.user_id.is_(None))
     if date_from:
@@ -554,7 +562,15 @@ async def analytics(
 ):
     q = select(TrackedBet)
     if current_user:
-        q = q.where(TrackedBet.user_id == current_user.id)
+        q = q.where(
+            or_(
+                TrackedBet.user_id == current_user.id,
+                and_(
+                    TrackedBet.user_id.is_(None),
+                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+                ),
+            )
+        )
     else:
         q = q.where(TrackedBet.user_id.is_(None))
     if date_from:

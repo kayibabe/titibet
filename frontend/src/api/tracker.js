@@ -85,15 +85,15 @@ export async function fetchModelInsights() {
  * whenever today's signals are loaded.  source_rule_key='system_auto' lets the
  * TrackerPage distinguish system picks from manual ones.
  */
-export async function autoTrackSignal(signal, { bankroll = 1000 } = {}) {
+const DEFAULT_FLAT_STAKE = 50_000
+
+export async function autoTrackSignal(signal, { bankroll = DEFAULT_FLAT_STAKE } = {}) {
   const odds =
     signal.bayesian?.best_odd ||
     (signal.poisson?.prob > 0 ? parseFloat((1 / signal.poisson.prob).toFixed(2)) : null)
   if (!odds || odds <= 1.01) return null   // nothing valid to track
 
-  const stakeAmt = signal.dual_recommended_stake_pct
-    ? Math.round(signal.dual_recommended_stake_pct * bankroll * 100) / 100
-    : Math.round(bankroll * 0.01 * 100) / 100   // 1% flat default
+  const stakeAmt = DEFAULT_FLAT_STAKE
 
   const q = signal.dual_quality_score
   const grade = q == null ? null : q >= 0.08 ? 'A' : q >= 0.055 ? 'B' : q >= 0.035 ? 'C' : 'D'
@@ -109,8 +109,8 @@ export async function autoTrackSignal(signal, { bankroll = 1000 } = {}) {
     odds,
     stake:                 stakeAmt,
     recommended_stake_pct: signal.dual_recommended_stake_pct,
-    source_rule_key:       'system_auto',
-    source_rule_label:     'System Auto-Pick',
+    source_rule_key:       (signal.dual_confidence === 'High' && signal.dual_agreement === 'Both') ? 'system_dual' : 'system_auto',
+    source_rule_label:     (signal.dual_confidence === 'High' && signal.dual_agreement === 'Both') ? 'Dual Signal (High+Both)' : 'System Auto-Pick',
     signal_grade:          grade,
     dual_confidence:       signal.dual_confidence,
     dual_agreement:        signal.dual_agreement,

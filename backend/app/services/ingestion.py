@@ -68,6 +68,7 @@ async def sync_date(
     # Skipped when force=True so callers can recover from bad cached state.
     if not force:
         cooldown_cutoff = datetime.now(timezone.utc) - timedelta(hours=SYNC_COOLDOWN_HOURS)
+        # Check 1: a successful completed run within the cooldown window.
         recent_run = await db.scalar(
             select(IngestionRun)
             .where(
@@ -87,6 +88,26 @@ async def sync_date(
                 SYNC_COOLDOWN_HOURS,
             )
             return recent_run
+        # Check 2: a run that started recently but hasn't finished yet (concurrent
+        # instance race — e.g. hot-reload starts a second backend while the first
+        # sync is still in progress). ended_at is NULL in this case so Check 1 misses it.
+        in_progress = await db.scalar(
+            select(IngestionRun)
+            .where(
+                IngestionRun.run_date == run_date,
+                IngestionRun.status == "running",
+                IngestionRun.started_at >= cooldown_cutoff,
+            )
+            .order_by(IngestionRun.started_at.desc())
+            .limit(1)
+        )
+        if in_progress is not None:
+            logger.info(
+                "Concurrent sync guard for %s: a run started at %s is still in progress — skipping.",
+                run_date,
+                in_progress.started_at.strftime("%H:%M UTC"),
+            )
+            return in_progress
     else:
         logger.info("Force sync for %s: bypassing cooldown and cache guards.", run_date)
 

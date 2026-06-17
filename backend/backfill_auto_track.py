@@ -52,12 +52,24 @@ async def backfill() -> None:
         }
         print(f"Existing system_auto bets: {len(existing_keys)}")
 
-        # ── 2. Load all High/Medium signals with their fixture ─────────────────
+        # ── 2. Load qualifying signals: High+Both (dual gate) OR
+        #       Home Over 0.5 + Poisson Only + rule_strong (Poisson path) ─────
+        from sqlalchemy import or_, and_
         rows = list(
             (await db.execute(
                 select(Signal, Fixture)
                 .join(Fixture, Signal.fixture_id == Fixture.id)
-                .where(Signal.dual_confidence.in_(["High", "Medium"]))
+                .where(or_(
+                    and_(
+                        Signal.dual_confidence == "High",
+                        Signal.dual_agreement == "Both",
+                    ),
+                    and_(
+                        Signal.market == "Home Over 0.5",
+                        Signal.dual_agreement == "Poisson Only",
+                        Signal.poisson_rule_strong == True,
+                    ),
+                ))
                 .order_by(Fixture.event_date.asc())
             )).all()
         )
@@ -87,14 +99,17 @@ async def backfill() -> None:
                     continue
 
             # Stake from recommended pct or flat 1% default
+            # Cap at 0.20 (20% max Kelly) to guard against corrupted engine values
             if signal.dual_recommended_stake_pct:
-                stake = round(signal.dual_recommended_stake_pct * BACKFILL_BANKROLL, 2)
+                safe_pct = min(float(signal.dual_recommended_stake_pct), 0.20)
+                stake = round(safe_pct * BACKFILL_BANKROLL, 2)
                 stake = max(1.0, stake)
             else:
                 stake = round(BACKFILL_BANKROLL * 0.01, 2)
 
             match_name = f"{fixture.home_team} vs {fixture.away_team}"
 
+            is_dual = signal.dual_confidence == "High" and signal.dual_agreement == "Both"
             bet = TrackedBet(
                 user_id           = None,                     # anonymous system row
                 fixture_id        = signal.fixture_id,
@@ -107,8 +122,8 @@ async def backfill() -> None:
                 odds              = odds,
                 stake             = stake,
                 recommended_stake_pct = signal.dual_recommended_stake_pct,
-                source_rule_key   = "system_auto",
-                source_rule_label = "System Auto-Pick",
+                source_rule_key   = "system_dual" if is_dual else "system_auto",
+                source_rule_label = "Dual Signal (High+Both)" if is_dual else "System Auto-Pick",
                 signal_grade      = _grade(signal.dual_quality_score),
                 dual_confidence   = signal.dual_confidence,
                 dual_agreement    = signal.dual_agreement,

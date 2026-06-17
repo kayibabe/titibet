@@ -5,7 +5,7 @@ import { fmtK } from '../../utils/format'
 
 export default function TrackModal({ signal, bankroll, onClose, onTracked }) {
   const recPct = signal.dual_recommended_stake_pct ?? 0.01
-  const recAmount = +((bankroll || 0) * recPct).toFixed(2)
+  const recAmount = 50_000
   const bestOdd = signal.bayesian?.best_odd ?? null
   const bookmaker = signal.bayesian?.bookmaker ?? null
   const offeredOdds = Array.isArray(signal.bookmaker_odds) ? signal.bookmaker_odds : []

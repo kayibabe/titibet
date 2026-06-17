@@ -39,16 +39,18 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
 
   const betFilters = { date_from: dateFrom || undefined, date_to: dateTo || undefined, result_status: statusFilter || undefined }
 
-  // Client-side source filter (system_auto vs manual)
+  const isSystemPick = b => b.source_rule_key === 'system_auto' || b.source_rule_key === 'system_dual'
+
+  // Client-side source filter (system picks vs manual)
   const filteredBets = useMemo(() => {
     if (!sourceFilter) return bets
-    if (sourceFilter === 'system') return bets.filter(b => b.source_rule_key === 'system_auto')
-    return bets.filter(b => b.source_rule_key !== 'system_auto')
+    if (sourceFilter === 'system') return bets.filter(isSystemPick)
+    return bets.filter(b => !isSystemPick(b))
   }, [bets, sourceFilter])
 
   // System performance stats (all-time, shown in system-pick mode)
   const systemStats = useMemo(() => {
-    const sys = bets.filter(b => b.source_rule_key === 'system_auto')
+    const sys = bets.filter(isSystemPick)
     if (!sys.length) return null
     const won     = sys.filter(b => b.result_status === 'Won').length
     const lost    = sys.filter(b => b.result_status === 'Lost').length

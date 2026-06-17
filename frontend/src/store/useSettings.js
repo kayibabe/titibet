@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect } from 'react'
 
 const DEFAULTS = {
-  bankroll: 1000,
+  bankroll: 50000,
   unitPct: 1,
   kellyFraction: 0.25,
   // Signal filters — wired to the /api/signals query params

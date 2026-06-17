@@ -328,6 +328,7 @@ DISABLED_LEAGUES: frozenset = frozenset({
     "ykkösliiga",    # Finnish Div 2 — 25% WR on 4 bets
     "friendlies",    # International/pre-season friendlies — rotation-heavy
     # ── Disabled 2026-06-16 (poor analytics performance) ──────────────────────
+    "primera división",               # Bolivia + Chile top-flight — 33% WR, -57k P&L on 3 bets
     "primera división femenina",
     "pro league",
     "reserve league",

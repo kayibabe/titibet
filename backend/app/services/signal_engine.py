@@ -369,12 +369,18 @@ async def _get_underperforming_leagues(
         HAVING COUNT(*) >= :min_bets
     """), {"min_bets": min_bets})
 
+    from app.core.config import TIER_1_LEAGUES
     bad: set[str] = set()
     for row in result.all():
         league, _n, total_pl, total_stake = row
+        league_lower = (league or "").lower().strip()
+        # Never auto-suppress Tier 1 leagues — they may share names across countries
+        # (e.g. "Premier League" = England + Ethiopia) and are too important to block.
+        if league_lower in TIER_1_LEAGUES:
+            continue
         roi = (total_pl / total_stake) * 100 if total_stake else -100.0
         if roi < min_roi_pct:
-            bad.add(league.lower().strip())
+            bad.add(league_lower)
 
     # Also include watch-guard-triggered suppressions.
     # These are substring keywords, not exact names — any league whose name contains

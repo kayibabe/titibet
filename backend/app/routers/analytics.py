@@ -5,7 +5,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_optional
@@ -20,10 +20,18 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
 def _base_query(current_user: Optional[User]):
-    """Start a TrackedBet query scoped to the current user (or anonymous rows only)."""
+    """Start a TrackedBet query scoped to the current user + system picks."""
     q = select(TrackedBet)
     if current_user:
-        q = q.where(TrackedBet.user_id == current_user.id)
+        q = q.where(
+            or_(
+                TrackedBet.user_id == current_user.id,
+                and_(
+                    TrackedBet.user_id.is_(None),
+                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+                ),
+            )
+        )
     else:
         q = q.where(TrackedBet.user_id.is_(None))
     return q
@@ -357,7 +365,15 @@ async def probability_calibration(
         .where(TrackedBet.result_status.in_(["Won", "Lost"]))
     )
     if current_user:
-        q = q.where(TrackedBet.user_id == current_user.id)
+        q = q.where(
+            or_(
+                TrackedBet.user_id == current_user.id,
+                and_(
+                    TrackedBet.user_id.is_(None),
+                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+                ),
+            )
+        )
     else:
         q = q.where(TrackedBet.user_id.is_(None))
     if date_from:

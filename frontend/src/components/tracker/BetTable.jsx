@@ -179,6 +179,12 @@ function BetRow({ bet }) {
           <span className="text-sm font-bold text-[var(--accent)]">({bet.odds?.toFixed(2)})</span>
         </div>
         <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--text)] opacity-80 flex-wrap">
+          {bet.source_rule_key === 'system_dual' && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 text-[10px] font-semibold">
+              <Bot size={9} />
+              Dual
+            </span>
+          )}
           {bet.source_rule_key === 'system_auto' && (
             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-violet-500/15 text-violet-400 border border-violet-500/25 text-[10px] font-semibold">
               <Bot size={9} />

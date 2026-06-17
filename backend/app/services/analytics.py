@@ -68,7 +68,7 @@ def build_analytics(bets: list) -> dict:
     # ── Daily trend ──────────────────────────────────────────────────────────
     daily: dict[str, dict] = {}
     for b in settled:
-        d = (b.settled_at or b.event_date or b.created_at)
+        d = (b.event_date or b.settled_at or b.created_at)
         d_str = d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10]
         if d_str not in daily:
             daily[d_str] = {
