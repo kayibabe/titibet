@@ -56,7 +56,7 @@ settings = get_settings()
 # Keys must match Signal.market values exactly (what the DB stores).
 MARKET_TO_POISSON_KEY: dict[str, str] = {
     "Under 2.5":    "cs00u25",   # CS cascade rule — enables dual-model agreement for Under 2.5
-    "Over 1.5":     "cs00o15",   # primary Poisson signal for Over 1.5
+    "Over 1.5":     "over15",    # dedicated evaluator (rule_strong capable); cs00o15 cascade hardcodes rule_strong=False
     "Over 2.5":     "over25",
     "Home Over 0.5":  "home_o05",
 }
@@ -645,10 +645,46 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 mixed_signals=market_mixed,
             )
 
+            # ── Candidate pre-check (must happen before confidence gate) ──────
+            # Candidate signals are stored in DB but NOT served to users.
+            # They bypass the confidence="None" gate so we collect year-round data
+            # for Over 1.5 / Over 2.5 even when only one engine fires weakly.
+            # Two paths to candidacy:
+            #   A) Poisson-strong (CS odds present): rule_pass AND rule_strong both True.
+            #      Over 1.5 requires 2+ CS support conditions; Over 2.5 requires all
+            #      core CS conditions to pass.
+            #   B) Bayesian fallback (Goals O/U odds present, CS odds absent or weak):
+            #      Bayesian derived_prob >= 0.70 AND odds imply positive EV (prob*odd > 1).
+            #      Covers inter-season fixtures where only goals lines are published.
+            # is_candidate is refined after is_dual_signal is known (below).
+            _candidate_markets = {"Over 1.5", "Over 2.5"}
+            _cand_best_odd = (
+                poi_signal_odds.get("over1_5") if market == "Over 1.5"
+                else poi_signal_odds.get("over2_5") if market == "Over 2.5"
+                else None
+            )
+            _poi_strong_candidate = p is not None and p.rule_pass and p.rule_strong and p.has_edge
+            _bay_only_candidate = (
+                b is not None
+                and (b.derived_prob or 0.0) >= 0.70
+                and _cand_best_odd is not None
+                and (b.derived_prob or 0.0) * _cand_best_odd > 1.0  # positive EV
+                and ds.confidence == "None"  # dual engine weak — Bayesian solo signal
+            )
+            # Preliminary flag; refined to `is_candidate = ... and not is_dual_signal` below.
+            is_candidate = (
+                market in _candidate_markets
+                and (_poi_strong_candidate or _bay_only_candidate)
+                and (ds.confidence != "High" or ds.agreement != "Both")
+                and _cand_best_odd is not None
+                and _cand_best_odd >= 1.30
+            )
+
             # Skip signals with no actionable confidence. This covers two cases:
             # (a) Zombie: both engines failed (confidence="None", agreement="None")
             # (b) Poisson-only grade-C or Bayesian-downgraded to None — untrackable noise.
-            if ds.confidence == "None":
+            # Candidates bypass this gate — their confidence is irrelevant for data collection.
+            if ds.confidence == "None" and not is_candidate:
                 continue
 
             # ── Home Over 1.5 — Both-agreement only ──────────────────────────
@@ -735,20 +771,11 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 and (_poi_only_max is None or _poi_best_odd < _poi_only_max)
             )
 
-            # Candidate signals — stored in DB but NOT served.
-            # Over 1.5 / Over 2.5 Bayesian-only High signals collected for future
-            # backtesting. Once ≥50 settled candidates exist we can run a real
-            # hit-rate / ROI analysis and decide whether to add a live Tier 3.
-            _candidate_markets = {"Over 1.5", "Over 2.5"}
-            is_candidate = (
-                market in _candidate_markets
-                and ds.agreement == "Bayesian Only"
-                and final_confidence == "High"
-                and b is not None
-                and b.is_value is True
-                and b.best_actual_odd is not None
-                and b.best_actual_odd >= 1.40
-            )
+            # Refine is_candidate now that is_dual_signal is known.
+            # A dual signal (Both+High) is already served live — no need to also flag as candidate.
+            # Once ≥50 settled candidates exist, run a hit-rate / ROI audit and
+            # enable as Tier 3 if numbers hold.
+            is_candidate = is_candidate and not is_dual_signal
 
             if not is_dual_signal and not is_poisson_signal and not is_candidate:
                 continue
@@ -870,8 +897,11 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             if _is_end_of_northern_season(run_date):
                 _tier = fixture.league_tier or 3
                 if _tier >= 2 and market in _OVER_GOALS_MARKETS:
-                    continue
-                if _tier >= 3 and final_confidence in ("High", "Medium"):
+                    # Candidates bypass the seasonal suppression — we need year-round
+                    # data collection to build a representative backtest sample.
+                    if not is_candidate:
+                        continue
+                if _tier >= 3 and final_confidence in ("High", "Medium") and not is_candidate:
                     final_confidence = _CONFIDENCE_DOWNGRADE.get(final_confidence, final_confidence)
                     # Re-check the signal tier gate after downgrade — a High→Medium
                     # demotion means is_dual_signal is now false.
@@ -881,9 +911,12 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
 
             # For Poisson-only signals, surface the bookmaker odds from the
             # Poisson signal odds dict so the router can display and rank them.
+            # Candidates for Over 1.5/2.5 use _cand_best_odd as final fallback
+            # because _poi_best_odd's key ("over25") differs from poi_signal_odds ("over2_5").
             _effective_best_odd = (
                 (b.best_actual_odd if b else None)
                 or (_poi_best_odd if _poi_best_odd > 1.0 else None)
+                or (_cand_best_odd if (is_candidate and _cand_best_odd and _cand_best_odd > 1.0) else None)
             )
 
             sig = Signal(

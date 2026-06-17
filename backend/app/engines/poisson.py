@@ -400,11 +400,12 @@ def _evaluate_over25_signal(odds: dict, signal_odds: dict) -> PoissonResult:
     pass_ = core_ok and support_ok
     lam = lambda_from_cs00(s00, R["cs_overround_factor"])
     edge_result = compute_edge("over2_5", lam, signal_odds.get("over2_5"), min_edge_pct=R["min_edge_pct"])
+    has_edge25 = edge_result.get("has_edge", False)
     return PoissonResult(
-        rule_key="over25", market="Over 2.5", rule_pass=pass_, rule_strong=False,
+        rule_key="over25", market="Over 2.5", rule_pass=pass_, rule_strong=pass_,
         poisson_prob=edge_result.get("poisson_prob"),
-        edge_pct=edge_result.get("edge_pct"), has_edge=edge_result.get("has_edge", False),
-        grade=_grade(pass_, False, edge_result.get("has_edge", False)),
+        edge_pct=edge_result.get("edge_pct"), has_edge=has_edge25,
+        grade=_grade(pass_, pass_, has_edge25),
         lambda_h=None, lambda_a=None, lambda_total=lam,
     )
 
