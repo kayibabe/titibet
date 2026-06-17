@@ -291,6 +291,7 @@ async def list_signals(
         select(Signal, Fixture)
         .join(Fixture, Signal.fixture_id == Fixture.id)
         .where(Fixture.event_date == target_date)
+        .where(Signal.is_candidate == False)  # noqa: E712 — exclude data-collection candidates
     )
 
     if confidence:

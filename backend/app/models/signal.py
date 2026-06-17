@@ -85,6 +85,10 @@ class Signal(Base):
     # Positive = home team is rated higher. Magnitude reflects strength gap.
     glicko_r_diff: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
+    # Candidate signals are stored for backtesting but excluded from the live feed.
+    # True for Over 1.5 / Over 2.5 Bayesian-only signals awaiting performance validation.
+    is_candidate: Mapped[bool] = mapped_column(Boolean, default=False)
+
     computed_at: Mapped[datetime] = mapped_column(DateTime, index=True, server_default=func.now())
 
     fixture: Mapped["Fixture"] = relationship("Fixture", back_populates="signals")  # noqa: F821

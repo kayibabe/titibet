@@ -15,6 +15,9 @@ from app.models import Fixture, TrackedBet
 
 logger = logging.getLogger("titibet.settlement")
 
+# Imported lazily (inside settle_bets_for_date) to avoid circular imports.
+# Computes closing odds + CLV for each just-settled bet from market_snapshots.
+
 FINAL_STATUSES = {"FT", "AET", "PEN"}
 # Terminal statuses that are not playable — treat as Void for settlement purposes
 VOID_STATUSES  = {"CANC", "ABD", "AWD", "WO", "TBD", "PST", "INT", "SUSP"}
@@ -110,6 +113,7 @@ async def settle_bets_for_date(
     skip_not_final    = 0
     skip_no_score     = 0
     skip_no_market    = 0
+    just_settled: list[TrackedBet] = []
 
     for bet in bets:
         if bet.fixture_id is None:
@@ -144,6 +148,7 @@ async def settle_bets_for_date(
 
         won = condition(fixture.home_score, fixture.away_score)
         _settle_bet(bet, won)
+        just_settled.append(bet)
         settled += 1
 
     logger.info(
@@ -153,6 +158,20 @@ async def settle_bets_for_date(
     )
 
     await db.commit()
+
+    # Compute CLV for each just-settled bet while market_snapshots are still present.
+    if just_settled:
+        from app.services.clv import compute_clv_for_bet
+        clv_updated = 0
+        for bet in just_settled:
+            closing, clv_pct = await compute_clv_for_bet(bet, db)
+            if closing is not None:
+                bet.closing_odds = closing
+                bet.clv_pct = clv_pct
+                clv_updated += 1
+        if clv_updated:
+            await db.commit()
+        logger.info("CLV: computed for %d/%d just-settled bets", clv_updated, len(just_settled))
 
     return {
         "settled":          settled,

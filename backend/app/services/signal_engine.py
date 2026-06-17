@@ -735,7 +735,22 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 and (_poi_only_max is None or _poi_best_odd < _poi_only_max)
             )
 
-            if not is_dual_signal and not is_poisson_signal:
+            # Candidate signals — stored in DB but NOT served.
+            # Over 1.5 / Over 2.5 Bayesian-only High signals collected for future
+            # backtesting. Once ≥50 settled candidates exist we can run a real
+            # hit-rate / ROI analysis and decide whether to add a live Tier 3.
+            _candidate_markets = {"Over 1.5", "Over 2.5"}
+            is_candidate = (
+                market in _candidate_markets
+                and ds.agreement == "Bayesian Only"
+                and final_confidence == "High"
+                and b is not None
+                and b.is_value is True
+                and b.best_actual_odd is not None
+                and b.best_actual_odd >= 1.40
+            )
+
+            if not is_dual_signal and not is_poisson_signal and not is_candidate:
                 continue
 
             # ── Stake sizing ──────────────────────────────────────────────────
@@ -913,6 +928,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 zinb_lambda_a=round(_zinb_la, 4) if _zinb_la else None,
                 ev_score=_ev_score,
                 glicko_r_diff=_glicko_rdiff,
+                is_candidate=is_candidate,
             )
             pending_signals.append(sig)
             count += 1

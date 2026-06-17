@@ -56,6 +56,10 @@ COLUMN_MIGRATIONS = [
     ("users",    "is_admin",        "INTEGER NOT NULL DEFAULT 0"),
     # ── Backtest agreement column ─────────────────────────────────────────────
     ("backtest_results", "dual_agreement", "TEXT"),
+    # ── Candidate signals (stored for backtesting, not served) ───────────────
+    # Over 1.5 / Over 2.5 Bayesian-only High signals collected to validate
+    # performance before enabling as a live tier. Default 0 = served normally.
+    ("signals", "is_candidate", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 TABLE_MIGRATIONS: list[str] = [
