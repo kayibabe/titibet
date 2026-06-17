@@ -256,12 +256,82 @@ async def startup_sync() -> None:
         await catchup_past_dates()
         return
 
-    # Step 1: resolve any pending bets from past dates before syncing today.
+    # Step 1: housekeeping — purge stale snapshots + deactivate redundant proposals.
+    await _cleanup_old_snapshots()
+
+    # Step 2: resolve any pending bets from past dates before syncing today.
     await catchup_past_dates()
 
-    # Step 2: sync today normally.
+    # Step 3: sync today normally.
     logger.info("Startup sync: pulling today (%s)", date.today())
     await sync_and_compute(date.today())
+
+
+async def _cleanup_old_snapshots() -> None:
+    """
+    Weekly housekeeping — deletes market_snapshots rows for fixtures older than
+    30 days.  These odds are no longer needed for signal computation or settlement
+    and are the primary driver of DB growth (1.15 M rows → ~300 MB).
+
+    Also deactivates learning proposals whose change_type is no longer consumed
+    by the current signal engine (tier_suppression, quality_threshold) or whose
+    target is already covered by a hard-coded ban in DISABLED_MARKETS /
+    DISABLED_LEAGUES.
+    """
+    from sqlalchemy import text
+    from app.core.config import DISABLED_MARKETS, DISABLED_LEAGUES
+
+    async with AsyncSessionLocal() as db:
+        try:
+            # 1. Purge stale market snapshots
+            result = await db.execute(text("""
+                DELETE FROM market_snapshots
+                WHERE fixture_id IN (
+                    SELECT id FROM fixtures WHERE event_date < date('now', '-30 days')
+                )
+            """))
+            deleted_snaps = result.rowcount
+            await db.commit()
+            if deleted_snaps:
+                logger.info("Cleanup: removed %d stale market_snapshots rows.", deleted_snaps)
+
+            # 2. Deactivate stale learning proposals
+            #    — change types not consumed by current code
+            unused_types = ("tier_suppression", "quality_threshold")
+            r1 = await db.execute(text("""
+                UPDATE learning_proposals SET is_active=0
+                WHERE is_active=1 AND change_type IN ('tier_suppression','quality_threshold')
+            """))
+            #    — market_suppression whose target is already in DISABLED_MARKETS
+            disabled_mkt_list = ", ".join(f"'{m}'" for m in DISABLED_MARKETS)
+            r2 = await db.execute(text(f"""
+                UPDATE learning_proposals SET is_active=0
+                WHERE is_active=1
+                  AND change_type='market_suppression'
+                  AND target IN ({disabled_mkt_list})
+            """))
+            #    — league_suppression whose target is already in DISABLED_LEAGUES
+            disabled_lg_list = ", ".join(f"'{lg}'" for lg in DISABLED_LEAGUES)
+            r3 = await db.execute(text(f"""
+                UPDATE learning_proposals SET is_active=0
+                WHERE is_active=1
+                  AND change_type='league_suppression'
+                  AND lower(trim(target)) IN ({disabled_lg_list})
+            """))
+            #    — market_odds_ceiling proposals referencing only disabled markets
+            r4 = await db.execute(text("""
+                UPDATE learning_proposals SET is_active=0
+                WHERE is_active=1
+                  AND change_type='market_odds_ceiling'
+                  AND id IN (25, 28, 31)
+            """))
+            deactivated = r1.rowcount + r2.rowcount + r3.rowcount + r4.rowcount
+            await db.commit()
+            if deactivated:
+                logger.info("Cleanup: deactivated %d stale learning proposals.", deactivated)
+
+        except Exception:
+            logger.exception("Cleanup job failed — continuing normally")
 
 
 async def _kickoff_alert_job() -> None:
@@ -358,6 +428,16 @@ def get_scheduler() -> AsyncIOScheduler:
             _weekly_calibration_job,
             CronTrigger(day_of_week="mon", hour=7, minute=0),
             id="weekly-calibration",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        # Weekly housekeeping -- every Wednesday 04:00 UTC.
+        # Purges market_snapshots for fixtures >30 days old and deactivates
+        # stale learning proposals whose targets are already hard-banned.
+        _scheduler.add_job(
+            _cleanup_old_snapshots,
+            CronTrigger(day_of_week="wed", hour=4, minute=0),
+            id="weekly-cleanup",
             replace_existing=True,
             misfire_grace_time=3600,
         )
