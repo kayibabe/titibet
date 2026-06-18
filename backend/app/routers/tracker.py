@@ -205,22 +205,38 @@ async def track_pick(
         # anonymous rows can still be claimed by a logged-in user later.
         existing = None
         if payload.fixture_id:
-            q = select(TrackedBet).where(
-                TrackedBet.fixture_id == payload.fixture_id,
-                TrackedBet.bookmaker == payload.bookmaker,
-                TrackedBet.market_type == payload.market_type,
-                TrackedBet.selection_name == payload.selection_name,
-            )
-            if uid is None:
-                q = q.where(TrackedBet.user_id.is_(None))
-            else:
-                q = q.where(
-                    or_(
-                        TrackedBet.user_id == uid,
-                        TrackedBet.user_id.is_(None),
+            _system_keys = ("system_auto", "system_dual")
+            # For system picks, check (fixture_id, market_type) only — bookmaker
+            # varies between frontend-implied and backend-real odds, causing false
+            # non-matches that create duplicate rows.
+            if payload.source_rule_key in _system_keys:
+                existing = await db.scalar(
+                    select(TrackedBet).where(
+                        TrackedBet.fixture_id == payload.fixture_id,
+                        TrackedBet.market_type == payload.market_type,
+                        or_(
+                            TrackedBet.user_id == uid,
+                            TrackedBet.user_id.is_(None),
+                        ) if uid is not None else TrackedBet.user_id.is_(None),
                     )
                 )
-            existing = await db.scalar(q)
+            else:
+                q = select(TrackedBet).where(
+                    TrackedBet.fixture_id == payload.fixture_id,
+                    TrackedBet.bookmaker == payload.bookmaker,
+                    TrackedBet.market_type == payload.market_type,
+                    TrackedBet.selection_name == payload.selection_name,
+                )
+                if uid is None:
+                    q = q.where(TrackedBet.user_id.is_(None))
+                else:
+                    q = q.where(
+                        or_(
+                            TrackedBet.user_id == uid,
+                            TrackedBet.user_id.is_(None),
+                        )
+                    )
+                existing = await db.scalar(q)
 
         if existing:
             # Claim anonymous (legacy) row for the current logged-in user
@@ -257,21 +273,31 @@ async def track_pick(
             await db.rollback()
             # Race condition: another request inserted between our check and INSERT.
             # Fall back to fetching the now-existing row.
-            fallback_q = select(TrackedBet).where(
-                TrackedBet.fixture_id == payload.fixture_id,
-                TrackedBet.bookmaker == payload.bookmaker,
-                TrackedBet.market_type == payload.market_type,
-                TrackedBet.selection_name == payload.selection_name,
-            )
-            if uid is None:
-                fallback_q = fallback_q.where(TrackedBet.user_id.is_(None))
-            else:
-                fallback_q = fallback_q.where(
+            if payload.source_rule_key in ("system_auto", "system_dual"):
+                fallback_q = select(TrackedBet).where(
+                    TrackedBet.fixture_id == payload.fixture_id,
+                    TrackedBet.market_type == payload.market_type,
                     or_(
                         TrackedBet.user_id == uid,
                         TrackedBet.user_id.is_(None),
-                    )
+                    ) if uid is not None else TrackedBet.user_id.is_(None),
                 )
+            else:
+                fallback_q = select(TrackedBet).where(
+                    TrackedBet.fixture_id == payload.fixture_id,
+                    TrackedBet.bookmaker == payload.bookmaker,
+                    TrackedBet.market_type == payload.market_type,
+                    TrackedBet.selection_name == payload.selection_name,
+                )
+                if uid is None:
+                    fallback_q = fallback_q.where(TrackedBet.user_id.is_(None))
+                else:
+                    fallback_q = fallback_q.where(
+                        or_(
+                            TrackedBet.user_id == uid,
+                            TrackedBet.user_id.is_(None),
+                        )
+                    )
             bet = await db.scalar(fallback_q)
             if bet is None:
                 raise HTTPException(status_code=409, detail="Duplicate bet could not be resolved.")
