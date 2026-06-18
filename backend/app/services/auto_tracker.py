@@ -68,22 +68,24 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
     if not rows:
         return 0
 
-    # Load existing system bets for this date to avoid duplicates
+    # Load existing bets for this date to avoid duplicates.
+    # Check on (fixture_id, market_type) only — bookmaker varies between the
+    # old per-user strategy-tracker rows and the new system_auto rows, so
+    # using bookmaker in the key would miss those collisions.
     existing_rows = list(
         (await db.execute(
-            select(TrackedBet.fixture_id, TrackedBet.market_type, TrackedBet.bookmaker)
+            select(TrackedBet.fixture_id, TrackedBet.market_type)
             .where(TrackedBet.event_date == run_date)
-            .where(TrackedBet.user_id.is_(None))
         )).all()
     )
     existing_keys: set[tuple] = {
-        (r.fixture_id, r.market_type, r.bookmaker) for r in existing_rows
+        (r.fixture_id, r.market_type) for r in existing_rows
     }
 
     inserted = 0
     for signal, fixture in rows:
         bookmaker = signal.bayesian_bookmaker or "Best Available"
-        key = (signal.fixture_id, signal.market, bookmaker)
+        key = (signal.fixture_id, signal.market)
         if key in existing_keys:
             continue
 
