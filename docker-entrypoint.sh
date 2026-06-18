@@ -1,6 +1,15 @@
 #!/bin/sh
 set -e
 
+# If a staged DB upload exists, install it before starting the app.
+# Upload process: tee /data/titibet.db.new.gz → gunzip → /data/titibet.db.new → restart.
+if [ -f /data/titibet.db.new ]; then
+    echo "Installing staged DB upload (/data/titibet.db.new)..."
+    rm -f /data/titibet.db
+    mv /data/titibet.db.new /data/titibet.db
+    echo "DB swap complete."
+fi
+
 # If the database exists but is malformed (e.g. interrupted SFTP upload), remove it
 # so SQLAlchemy recreates it cleanly on startup.
 if [ -f /data/titibet.db ]; then
