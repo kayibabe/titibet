@@ -1,13 +1,22 @@
+# fly.toml app configuration file generated for titibet on 2026-06-18T20:49:46Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
 app = 'titibet'
 primary_region = 'ams'
 
 [build]
 
 [env]
-  PORT = '8000'
-  DB_URL = 'sqlite+aiosqlite:////data/titibet.db'
   CORS_ORIGINS = 'https://titibet.fly.dev'
+  DB_URL = 'sqlite+aiosqlite:////data/titibet.db'
+  PORT = '8000'
   SKIP_STARTUP_SYNC = 'false'
+
+[[mounts]]
+  source = 'titibet_data'
+  destination = '/data'
 
 [http_service]
   internal_port = 8000
@@ -17,18 +26,15 @@ primary_region = 'ams'
   min_machines_running = 0
   processes = ['app']
 
-[[http_service.checks]]
-  grace_period = '15s'
-  interval = '30s'
-  method = 'GET'
-  timeout = '10s'
-  path = '/health'
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '10s'
+    grace_period = '15s'
+    method = 'GET'
+    path = '/health'
 
 [[vm]]
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
-
-[[mounts]]
-  source = 'titibet_data'
-  destination = '/data'
+  memory_mb = 1024
