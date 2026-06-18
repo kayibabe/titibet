@@ -100,15 +100,15 @@ export default function Sidebar({ activePage, onNavigate }) {
               {user?.name || user?.email?.split('@')[0] || 'User'}
             </p>
             {/* Tier pill — clickable to Plans for free users */}
-            <button
+            <span
               onClick={e => { e.stopPropagation(); onNavigate('pricing') }}
               className={`text-[10px] font-semibold ${tier.color} ${
-                tier.upgradeable ? 'hover:underline underline-offset-2' : 'cursor-default'
+                tier.upgradeable ? 'hover:underline underline-offset-2 cursor-pointer' : 'cursor-default'
               } leading-tight`}
               title={tier.upgradeable ? 'Upgrade plan' : undefined}
             >
               {tier.label}{tier.upgradeable ? ' · Upgrade ↑' : ''}
-            </button>
+            </span>
           </div>
         </button>
 

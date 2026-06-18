@@ -896,17 +896,16 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             # signal confidence by one tier so dead-rubber picks rank lower.
             if _is_end_of_northern_season(run_date):
                 _tier = fixture.league_tier or 3
-                if _tier >= 2 and market in _OVER_GOALS_MARKETS:
+                # Only suppress Tier 3 for over-goals markets.
+                # Tier 2 leagues active in June are summer/year-round competitions
+                # (Erovnuli Liga, Veikkausliiga, MLS Next Pro, Botola Pro, etc.) that
+                # are mid-season — not European dead-rubber end-of-season games.
+                # European Tier 2 leagues (Championship, Serie B, etc.) finish by
+                # end of May and produce no fixtures in June.
+                if _tier >= 3 and market in _OVER_GOALS_MARKETS:
                     # Candidates bypass the seasonal suppression — we need year-round
                     # data collection to build a representative backtest sample.
                     if not is_candidate:
-                        continue
-                if _tier >= 3 and final_confidence in ("High", "Medium") and not is_candidate:
-                    final_confidence = _CONFIDENCE_DOWNGRADE.get(final_confidence, final_confidence)
-                    # Re-check the signal tier gate after downgrade — a High→Medium
-                    # demotion means is_dual_signal is now false.
-                    is_dual_signal = final_confidence == "High" and ds.agreement == "Both"
-                    if not is_dual_signal and not is_poisson_signal:
                         continue
 
             # For Poisson-only signals, surface the bookmaker odds from the
