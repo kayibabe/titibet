@@ -1,0 +1,29 @@
+# Secrets — never bake into the image
+backend/.env
+.env
+
+# Dev artefacts
+backend/titibet.db
+backend/__pycache__
+backend/**/__pycache__
+backend/**/*.pyc
+backend/server.*.log
+
+# Frontend dev artefacts
+frontend/node_modules
+frontend/dist
+
+# Repo tooling
+.git
+.claude
+*.md
+docs/
+scripts/
+worktrees/
+*.py
+!backend/**/*.py
+
+# Windows / editor noise
+Thumbs.db
+.DS_Store
+*.bat

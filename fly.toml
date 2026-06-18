@@ -1,0 +1,34 @@
+app = 'titibet'
+primary_region = 'ams'
+
+[build]
+
+[env]
+  PORT = '8000'
+  DB_URL = 'sqlite+aiosqlite:////data/titibet.db'
+  CORS_ORIGINS = 'https://titibet.fly.dev'
+  SKIP_STARTUP_SYNC = 'false'
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+[[http_service.checks]]
+  grace_period = '15s'
+  interval = '30s'
+  method = 'GET'
+  timeout = '10s'
+  path = '/health'
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+[[mounts]]
+  source = 'titibet_data'
+  destination = '/data'

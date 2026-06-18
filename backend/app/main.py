@@ -135,3 +135,22 @@ app.include_router(arb_router.router)
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "1.0.0"}
+
+
+# Serve the React SPA when the frontend build is present (production Docker image).
+# Registered LAST so it never shadows any /api/* or /health route above.
+_frontend_dist = _Path(__file__).resolve().parent.parent / "frontend_dist"
+if _frontend_dist.exists():
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+
+    _assets = _frontend_dist / "assets"
+    if _assets.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets)), name="static_assets")
+
+    @app.get("/{full_path:path}")
+    async def _serve_spa(full_path: str):
+        candidate = _frontend_dist / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(str(candidate))
+        return FileResponse(str(_frontend_dist / "index.html"))
