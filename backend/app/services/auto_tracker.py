@@ -1,0 +1,128 @@
+"""
+auto_tracker.py — Backend auto-tracking of system signals.
+
+Creates TrackedBet rows (user_id=None) for every qualifying signal on a date.
+Idempotent: existing rows are skipped.  Called from sync_and_compute() so
+auto-tracking runs every sync cycle regardless of whether anyone visits the
+Signals page.
+
+Qualifying signals:
+  - High confidence + Both agreement  (dual signal)
+  - Home Over 0.5 + Poisson Only + rule_strong  (Poisson signal)
+"""
+from __future__ import annotations
+
+import logging
+from datetime import date
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import Signal, Fixture, TrackedBet
+from app.models.user import User as _User  # noqa: F401 — registers users table in SA metadata
+
+logger = logging.getLogger("titibet.auto_tracker")
+
+FLAT_STAKE = 50_000.0
+
+
+def _grade(q: float | None) -> str | None:
+    if q is None:
+        return None
+    if q >= 0.08:  return "A"
+    if q >= 0.055: return "B"
+    if q >= 0.035: return "C"
+    return "D"
+
+
+async def auto_track_date(db: AsyncSession, run_date: date) -> int:
+    """
+    Create system TrackedBet rows for all qualifying signals on run_date.
+    Returns count of newly inserted bets.
+    """
+    from sqlalchemy import or_, and_
+
+    # Load qualifying signals for this date
+    rows = list(
+        (await db.execute(
+            select(Signal, Fixture)
+            .join(Fixture, Signal.fixture_id == Fixture.id)
+            .where(Fixture.event_date == run_date)
+            .where(Signal.is_candidate == False)  # noqa: E712
+            .where(
+                or_(
+                    and_(
+                        Signal.dual_confidence == "High",
+                        Signal.dual_agreement == "Both",
+                    ),
+                    and_(
+                        Signal.market == "Home Over 0.5",
+                        Signal.dual_agreement == "Poisson Only",
+                        Signal.poisson_rule_strong == True,  # noqa: E712
+                    ),
+                )
+            )
+        )).all()
+    )
+
+    if not rows:
+        return 0
+
+    # Load existing system bets for this date to avoid duplicates
+    existing_rows = list(
+        (await db.execute(
+            select(TrackedBet.fixture_id, TrackedBet.market_type, TrackedBet.bookmaker)
+            .where(TrackedBet.event_date == run_date)
+            .where(TrackedBet.user_id.is_(None))
+        )).all()
+    )
+    existing_keys: set[tuple] = {
+        (r.fixture_id, r.market_type, r.bookmaker) for r in existing_rows
+    }
+
+    inserted = 0
+    for signal, fixture in rows:
+        bookmaker = signal.bayesian_bookmaker or "Best Available"
+        key = (signal.fixture_id, signal.market, bookmaker)
+        if key in existing_keys:
+            continue
+
+        odds = signal.bayesian_best_odd
+        if not odds or odds <= 1.01:
+            prob = signal.poisson_prob or signal.bayesian_prob
+            if prob and 0.0 < prob < 1.0:
+                odds = round(1.0 / prob, 3)
+            else:
+                continue
+
+        is_dual = signal.dual_confidence == "High" and signal.dual_agreement == "Both"
+        match_name = f"{fixture.home_team} vs {fixture.away_team}"
+
+        bet = TrackedBet(
+            user_id=None,
+            fixture_id=signal.fixture_id,
+            bookmaker=bookmaker,
+            event_date=fixture.event_date,
+            match_name=match_name,
+            league=fixture.league,
+            market_type=signal.market,
+            selection_name=signal.market,
+            odds=odds,
+            stake=FLAT_STAKE,
+            recommended_stake_pct=signal.dual_recommended_stake_pct,
+            source_rule_key="system_dual" if is_dual else "system_auto",
+            source_rule_label="Dual Signal (High+Both)" if is_dual else "System Auto-Pick",
+            signal_grade=_grade(signal.dual_quality_score),
+            dual_confidence=signal.dual_confidence,
+            dual_agreement=signal.dual_agreement,
+            result_status="Pending",
+        )
+        db.add(bet)
+        existing_keys.add(key)
+        inserted += 1
+
+    if inserted:
+        await db.commit()
+        logger.info("Auto-tracker: inserted %d system bets for %s", inserted, run_date)
+
+    return inserted
