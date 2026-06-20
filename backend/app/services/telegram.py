@@ -454,6 +454,13 @@ def build_general_message(signals: list[tuple], run_date: date) -> str:
 _CAT_OFFSET = timedelta(hours=2)
 _CAT_LABEL = "CAT"
 
+# How far ahead the digest reaches. The evening send (20:30 CAT) should cover
+# tonight + the after-midnight (overnight) window, NOT all of tomorrow — otherwise
+# tomorrow's afternoon/evening fixtures show up and look like today's. ~12h from
+# 20:30 CAT reaches ~08:30 CAT, covering the overnight slate only.
+import os as _os
+DIGEST_HORIZON_HOURS = int(_os.getenv("DIGEST_HORIZON_HOURS", "12"))
+
 
 def _ko_aware(kickoff_at: Any) -> datetime | None:
     """Return a tz-aware (UTC) datetime for a fixture kickoff, or None."""
@@ -472,17 +479,39 @@ def _kickoff_str_cat(kickoff_at: Any) -> str:
     return (ko + _CAT_OFFSET).strftime("%H:%M ") + _CAT_LABEL
 
 
+def _kickoff_label_cat(kickoff_at: Any, now_utc: datetime) -> str:
+    """Kickoff in CAT with a day prefix relative to now, e.g. 'Today 20:00 CAT',
+    'Tomorrow 02:30 CAT', or a weekday for anything further out. Prevents tomorrow's
+    matches from being mistaken for today's in the digest."""
+    ko = _ko_aware(kickoff_at)
+    if ko is None:
+        return ""
+    ko_cat = ko + _CAT_OFFSET
+    now_cat = now_utc + _CAT_OFFSET
+    day_diff = (ko_cat.date() - now_cat.date()).days
+    if day_diff == 0:
+        prefix = "Today "
+    elif day_diff == 1:
+        prefix = "Tomorrow "
+    else:
+        prefix = ko_cat.strftime("%a ")
+    return prefix + ko_cat.strftime("%H:%M ") + _CAT_LABEL
+
+
 def build_signal_digest(
     rows: list[tuple[Signal, Fixture]],
     channel_type: str = "general",
     limit: int | None = None,
     total: int | None = None,
+    now: datetime | None = None,
 ) -> str:
     """
     Build a 'tonight + overnight' digest. `rows` is already deduped and ordered
     by the caller (chronological for general/pro, top-ranked for free). `total`
     is the full count before any `limit` was applied (for the "+N more" teaser).
+    `now` is used to label each kickoff Today/Tomorrow in CAT.
     """
+    now = now or datetime.now(tz=timezone.utc)
     shown = rows[:limit] if limit else rows
     total = total if total is not None else len(rows)
     title = {
@@ -493,11 +522,11 @@ def build_signal_digest(
 
     parts = [
         f"🌙 <b>{title}</b>",
-        f"<i>Upcoming matches incl. after-midnight kickoffs · {len(shown)} picks · times in CAT</i>",
+        f"<i>Tonight &amp; after-midnight kickoffs · {len(shown)} picks · times in CAT</i>",
     ]
     for i, (sig, fix) in enumerate(shown, 1):
         primary = max((v for v in [sig.bayesian_prob, sig.poisson_prob] if v), default=None)
-        ko = _kickoff_str_cat(fix.kickoff_at)
+        ko = _kickoff_label_cat(fix.kickoff_at, now)
         league_line = f"{_esc(fix.country)} · {_esc(fix.league)}" if fix.country else _esc(fix.league or "")
         conf_tag = {"High": "🔥", "Medium": "📊", "Low": "📉"}.get(sig.dual_confidence or "", "•")
         parts.append(
@@ -530,6 +559,7 @@ async def push_signal_digest(db: AsyncSession, free_limit: int = 3) -> int:
         return 0
 
     now = datetime.now(tz=timezone.utc)
+    cutoff = now + timedelta(hours=DIGEST_HORIZON_HOURS)
     today = now.date()
     tomorrow = today + timedelta(days=1)
 
@@ -537,10 +567,16 @@ async def push_signal_digest(db: AsyncSession, free_limit: int = 3) -> int:
     rows += await _query_all_rows(db, tomorrow)
     deduped = _best_per_fixture(rows)
 
-    # Keep only fixtures that haven't kicked off yet.
-    upcoming = [(s, f) for s, f in deduped if (_ko_aware(f.kickoff_at) or now) >= now and f.kickoff_at]
+    # Keep only fixtures kicking off between now and the horizon (tonight + the
+    # after-midnight window). This excludes tomorrow's afternoon/evening fixtures,
+    # which otherwise show up and get mistaken for today's.
+    upcoming = []
+    for s, f in deduped:
+        ko = _ko_aware(f.kickoff_at)
+        if ko is not None and now <= ko <= cutoff:
+            upcoming.append((s, f))
     if not upcoming:
-        logger.info("Signal digest: no upcoming matches — nothing to send")
+        logger.info("Signal digest: no upcoming matches in the next %dh — nothing to send", DIGEST_HORIZON_HOURS)
         return 0
 
     chronological = sorted(upcoming, key=lambda r: _ko_aware(r[1].kickoff_at))
@@ -549,9 +585,9 @@ async def push_signal_digest(db: AsyncSession, free_limit: int = 3) -> int:
     sent = 0
     for chat_id, channel_type in targets:
         if channel_type == "free":
-            text = build_signal_digest(by_rank, channel_type="free", limit=free_limit, total=len(upcoming))
+            text = build_signal_digest(by_rank, channel_type="free", limit=free_limit, total=len(upcoming), now=now)
         else:
-            text = build_signal_digest(chronological, channel_type=channel_type, total=len(upcoming))
+            text = build_signal_digest(chronological, channel_type=channel_type, total=len(upcoming), now=now)
         ok = False
         for chunk in _split_message(text):
             ok = await _send_to(chat_id, chunk)
