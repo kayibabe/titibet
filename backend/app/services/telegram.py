@@ -440,6 +440,130 @@ def build_general_message(signals: list[tuple], run_date: date) -> str:
     return "\n".join(parts)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Nightly "tonight + overnight" digest
+#
+# Broadcast in the evening (20:30 CAT) so subscribers can see — and bet on —
+# matches that kick off after midnight Malawi time BEFORE going to bed. Those
+# after-midnight (CAT) matches fall on the *next* UTC date, so this digest spans
+# both today and tomorrow (UTC) and only lists fixtures that haven't kicked off.
+# Times are shown in CAT (UTC+2, Malawi) since that's the subscriber base.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Malawi / Central Africa Time — fixed UTC+2, no daylight saving.
+_CAT_OFFSET = timedelta(hours=2)
+_CAT_LABEL = "CAT"
+
+
+def _ko_aware(kickoff_at: Any) -> datetime | None:
+    """Return a tz-aware (UTC) datetime for a fixture kickoff, or None."""
+    if kickoff_at is None:
+        return None
+    if getattr(kickoff_at, "tzinfo", None) is None:
+        return kickoff_at.replace(tzinfo=timezone.utc)
+    return kickoff_at
+
+
+def _kickoff_str_cat(kickoff_at: Any) -> str:
+    """Format a kickoff time in Malawi local time, e.g. '02:30 CAT'."""
+    ko = _ko_aware(kickoff_at)
+    if ko is None:
+        return ""
+    return (ko + _CAT_OFFSET).strftime("%H:%M ") + _CAT_LABEL
+
+
+def build_signal_digest(
+    rows: list[tuple[Signal, Fixture]],
+    channel_type: str = "general",
+    limit: int | None = None,
+    total: int | None = None,
+) -> str:
+    """
+    Build a 'tonight + overnight' digest. `rows` is already deduped and ordered
+    by the caller (chronological for general/pro, top-ranked for free). `total`
+    is the full count before any `limit` was applied (for the "+N more" teaser).
+    """
+    shown = rows[:limit] if limit else rows
+    total = total if total is not None else len(rows)
+    title = {
+        "free": "TiTiBet Free — Tonight's Top Picks",
+        "pro":  "TiTiBet Pro — Tonight &amp; Overnight",
+        "general": "TiTiBet — Tonight &amp; Overnight",
+    }.get(channel_type, "TiTiBet — Tonight &amp; Overnight")
+
+    parts = [
+        f"🌙 <b>{title}</b>",
+        f"<i>Upcoming matches incl. after-midnight kickoffs · {len(shown)} picks · times in CAT</i>",
+    ]
+    for i, (sig, fix) in enumerate(shown, 1):
+        primary = max((v for v in [sig.bayesian_prob, sig.poisson_prob] if v), default=None)
+        ko = _kickoff_str_cat(fix.kickoff_at)
+        league_line = f"{_esc(fix.country)} · {_esc(fix.league)}" if fix.country else _esc(fix.league or "")
+        conf_tag = {"High": "🔥", "Medium": "📊", "Low": "📉"}.get(sig.dual_confidence or "", "•")
+        parts.append(
+            f"\n<b>{i}. {_esc(fix.home_team)} vs {_esc(fix.away_team)}</b>{(' · ' + ko) if ko else ''}\n"
+            f"   🏆 {league_line}\n"
+            f"   📌 {_esc(_verbose_market(sig.market))} · {_pct(primary)} {conf_tag}"
+        )
+    if limit and total > limit:
+        extra = total - limit
+        parts.append(
+            f"\n<i>➕ {extra} more pick{'s' if extra != 1 else ''} on the app — "
+            f"upgrade for the full list.</i>"
+        )
+    parts.append(f"\n<a href=\"{settings.app_url}\">{settings.app_url}</a>")
+    return "\n".join(parts)
+
+
+async def push_signal_digest(db: AsyncSession, free_limit: int = 3) -> int:
+    """
+    Broadcast the 'tonight + overnight' digest to all configured channels.
+    General/Pro get every upcoming match (chronological); Free gets the top
+    `free_limit` by model rank. Spans today + tomorrow (UTC) so after-midnight
+    (CAT) matches are included. Returns the number of channels sent to.
+    No-op when Telegram is not configured or there are no upcoming matches.
+    """
+    if not settings.telegram_bot_token:
+        return 0
+    targets = _configured_titibet_channels()
+    if not targets:
+        return 0
+
+    now = datetime.now(tz=timezone.utc)
+    today = now.date()
+    tomorrow = today + timedelta(days=1)
+
+    rows = await _query_all_rows(db, today)
+    rows += await _query_all_rows(db, tomorrow)
+    deduped = _best_per_fixture(rows)
+
+    # Keep only fixtures that haven't kicked off yet.
+    upcoming = [(s, f) for s, f in deduped if (_ko_aware(f.kickoff_at) or now) >= now and f.kickoff_at]
+    if not upcoming:
+        logger.info("Signal digest: no upcoming matches — nothing to send")
+        return 0
+
+    chronological = sorted(upcoming, key=lambda r: _ko_aware(r[1].kickoff_at))
+    by_rank = sorted(upcoming, key=lambda r: _system_rank(r[0], r[1]), reverse=True)
+
+    sent = 0
+    for chat_id, channel_type in targets:
+        if channel_type == "free":
+            text = build_signal_digest(by_rank, channel_type="free", limit=free_limit, total=len(upcoming))
+        else:
+            text = build_signal_digest(chronological, channel_type=channel_type, total=len(upcoming))
+        ok = False
+        for chunk in _split_message(text):
+            ok = await _send_to(chat_id, chunk)
+        if ok:
+            sent += 1
+
+    if sent:
+        logger.info(
+            "Signal digest sent to %d channel(s) — %d upcoming match(es) tonight + overnight",
+            sent, len(upcoming),
+        )
+    return sent
 
 
 # ─────────────────────────────────────────────────────────────────────────────
