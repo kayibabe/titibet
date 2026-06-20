@@ -9,7 +9,7 @@ primary_region = 'ams'
 [build]
 
 [env]
-  CORS_ORIGINS = 'https://titibet.fly.dev,https://www.titibet.com,https://titibet.com'
+  CORS_ORIGINS = 'https://titibet.fly.dev,https://titibet.app,https://www.titibet.app'
   DB_URL = 'sqlite+aiosqlite:////data/titibet.db'
   PORT = '8000'
   SKIP_STARTUP_SYNC = 'false'
