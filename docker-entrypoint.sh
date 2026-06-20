@@ -1,8 +1,17 @@
 #!/bin/sh
 set -e
 
+# If a gzipped staged upload exists, decompress it first. The slim base image has
+# no gunzip, so use Python (always present) to inflate it to /data/titibet.db.new.
+if [ -f /data/titibet.db.new.gz ]; then
+    echo "Decompressing staged DB upload (/data/titibet.db.new.gz)..."
+    python -c "import gzip, shutil; src=open('/data/titibet.db.new.gz','rb'); dst=open('/data/titibet.db.new','wb'); shutil.copyfileobj(gzip.GzipFile(fileobj=src), dst); dst.close(); src.close()"
+    rm -f /data/titibet.db.new.gz
+    echo "Decompress complete."
+fi
+
 # If a staged DB upload exists, install it before starting the app.
-# Upload process: tee /data/titibet.db.new.gz → gunzip → /data/titibet.db.new → restart.
+# Upload process: sftp put → /data/titibet.db.new(.gz) → restart → swap here.
 if [ -f /data/titibet.db.new ]; then
     echo "Installing staged DB upload (/data/titibet.db.new)..."
     rm -f /data/titibet.db
