@@ -111,14 +111,19 @@ async def lifespan(app: FastAPI):
     # only synced at scheduled cron times and never refreshed "today" on boot — which
     # left the signals/tracker empty after a restart until the next scheduled sync.
     import asyncio as _asyncio
-    from app.scheduler import startup_sync as _startup_sync
-    _asyncio.create_task(_startup_sync())
+    _force_today = os.getenv("RUN_FORCE_SYNC_TODAY", "").lower() in ("1", "true", "yes")
+
+    # Normal boot: run the startup sync. Skipped when a forced re-sync is requested,
+    # so the two don't write to SQLite concurrently (which caused "database is locked").
+    if not _force_today:
+        from app.scheduler import startup_sync as _startup_sync
+        _asyncio.create_task(_startup_sync())
 
     # One-shot forced re-sync for today, gated by an env flag. Bypasses the sync
     # cooldown/cache to re-pull fixtures AND odds from the live API and recompute
-    # signals — used to recover today's signals after a DB swap wiped them. Set
-    # RUN_FORCE_SYNC_TODAY=true, deploy/restart, then unset.
-    if os.getenv("RUN_FORCE_SYNC_TODAY", "").lower() in ("1", "true", "yes"):
+    # signals — used to recover today's signals. Set RUN_FORCE_SYNC_TODAY=true,
+    # deploy/restart, then unset. Runs alone (startup_sync skipped above).
+    if _force_today:
         logger.info("RUN_FORCE_SYNC_TODAY set — forcing fresh sync+compute for today")
 
         async def _force_sync_today():

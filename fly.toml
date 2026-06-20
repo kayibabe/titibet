@@ -15,6 +15,12 @@ primary_region = 'jnb'
   SKIP_STARTUP_SYNC = 'false'
   SYNC_TIMES = '04:00,08:00,12:00,18:00,22:01'
   APP_URL = 'https://titibet.fly.dev'
+  # Persist the API-Football response cache on the volume so redeploys don't wipe it.
+  API_CACHE_DIR = '/data/.cache/api_football'
+  # Odds pages per sync. The free API-Football plan HARD-CAPS this at 3 (page>=4
+  # returns an error), so ~30 fixtures/day is the ceiling until a paid plan.
+  # Configurable here only so it can be raised after upgrading the API plan.
+  MAX_ODDS_PAGES = '3'
 
 [[mounts]]
   source = 'titibet_data'

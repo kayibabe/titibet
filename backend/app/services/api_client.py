@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -73,12 +74,16 @@ SHARP_BOOKMAKER_NAMES: frozenset = frozenset({"Pinnacle", "Bet365"})
 # lets the user apply an additional % haircut on top of what William Hill offers.
 TARGET_BOOKMAKER_NAMES: frozenset = frozenset({"William Hill"})
 
-# Hard cap on pages fetched per sync. Each page ≈ 10 fixtures.
-# 3 pages covers ~30 fixtures — enough for any single match day.
-# Raise this only if you're regularly running >30 fixtures/day and have quota to spare.
-MAX_ODDS_PAGES = 3
+# Hard cap on odds pages fetched per sync. Each page ≈ 10 fixtures, 1 API request.
+# Default 3 (~30 fixtures) is far too low for busy days (400+ fixtures), which left
+# most fixtures — including the ones we actually want — with no odds and therefore no
+# signals. Tunable via MAX_ODDS_PAGES env so coverage can be raised against quota.
+MAX_ODDS_PAGES = int(os.getenv("MAX_ODDS_PAGES", "3"))
 
-_CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "api_football"
+# Cache location. Defaults to backend/.cache for local dev, but on Fly it MUST point
+# at the persistent /data volume (set API_CACHE_DIR) — otherwise every redeploy wipes
+# the cache and forces a full re-pull (and on quota-limited days, partial odds).
+_CACHE_DIR = Path(os.getenv("API_CACHE_DIR") or str(Path(__file__).resolve().parents[2] / ".cache" / "api_football"))
 _HISTORICAL_TTL = timedelta(days=30)
 _TODAY_TTL = timedelta(hours=2)
 _FIXTURE_TTL = timedelta(minutes=20)

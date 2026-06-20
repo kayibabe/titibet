@@ -640,6 +640,59 @@ async def explain_signal(
     }
 
 
+@router.get("/diag")
+async def signals_diag(
+    date_str: Optional[str] = Query(None, alias="date"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read-only diagnostics for a date: fixture / odds / signal counts. Counts
+    only (no PII), so it needs no auth — used to pinpoint why signals are empty.
+    Defined before /{fixture_id} so 'diag' isn't parsed as a fixture id."""
+    d = date.fromisoformat(date_str) if date_str else date.today()
+
+    fixtures = await db.scalar(
+        select(func.count(Fixture.id)).where(Fixture.event_date == d)
+    ) or 0
+    snaps = await db.scalar(
+        select(func.count(MarketSnapshot.id))
+        .select_from(MarketSnapshot)
+        .join(Fixture, MarketSnapshot.fixture_id == Fixture.id)
+        .where(Fixture.event_date == d)
+    ) or 0
+    fixtures_with_odds = await db.scalar(
+        select(func.count(func.distinct(MarketSnapshot.fixture_id)))
+        .select_from(MarketSnapshot)
+        .join(Fixture, MarketSnapshot.fixture_id == Fixture.id)
+        .where(Fixture.event_date == d)
+    ) or 0
+    signals = await db.scalar(
+        select(func.count(Signal.id))
+        .select_from(Signal)
+        .join(Fixture, Signal.fixture_id == Fixture.id)
+        .where(Fixture.event_date == d)
+    ) or 0
+    max_fixture_date = await db.scalar(select(func.max(Fixture.event_date)))
+    total_snaps = await db.scalar(select(func.count(MarketSnapshot.id))) or 0
+    leagues = (await db.execute(
+        select(Fixture.league, func.count(Fixture.id).label("c"))
+        .where(Fixture.event_date == d)
+        .group_by(Fixture.league)
+        .order_by(func.count(Fixture.id).desc())
+        .limit(8)
+    )).all()
+
+    return {
+        "date": d.isoformat(),
+        "fixtures": fixtures,
+        "fixtures_with_odds": fixtures_with_odds,
+        "market_snapshots": snaps,
+        "signals": signals,
+        "max_fixture_date_in_db": str(max_fixture_date),
+        "total_market_snapshots_all_dates": total_snaps,
+        "top_leagues_today": [{"league": lg, "fixtures": c} for lg, c in leagues],
+    }
+
+
 @router.get("/{fixture_id}", response_model=list[SignalOut])
 async def fixture_signals(fixture_id: int, db: AsyncSession = Depends(get_db)):
     """All markets for one fixture (Deep Dive). Includes per-bookmaker odds from snapshots."""
