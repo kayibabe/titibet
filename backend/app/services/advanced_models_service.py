@@ -75,9 +75,16 @@ class AdvancedModelsService:
             self._loaded = True
             return
 
-        self._fit_glicko(records)
-        self._fit_zinb_per_league(records)
-        self._compute_ht_proxies(records)
+        # These fit scipy/numpy models across every league in the history and are
+        # CPU-bound — seconds on a small DB, minutes once a full history is loaded.
+        # Run them in a worker thread so the async event loop keeps serving requests
+        # and health checks instead of freezing the single web worker (which made the
+        # Fly proxy return 503 for the whole site during each sync). numpy/scipy
+        # release the GIL during the heavy math, so the event loop stays responsive.
+        import asyncio
+        await asyncio.to_thread(self._fit_glicko, records)
+        await asyncio.to_thread(self._fit_zinb_per_league, records)
+        await asyncio.to_thread(self._compute_ht_proxies, records)
         self._loaded = True
         logger.info(
             "AdvancedModelsService loaded: %d fixtures, %d leagues with ZINB",

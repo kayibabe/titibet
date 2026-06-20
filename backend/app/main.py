@@ -105,6 +105,39 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     logger.info("TiTiBet starting up — scheduler running %d jobs", len(scheduler.get_jobs()))
 
+    # Run the startup sync (catch-up settlement + today's ingestion + signal compute)
+    # in the background so it never blocks app startup or health checks. startup_sync
+    # self-guards on SKIP_STARTUP_SYNC. It was defined but never wired in, so the app
+    # only synced at scheduled cron times and never refreshed "today" on boot — which
+    # left the signals/tracker empty after a restart until the next scheduled sync.
+    import asyncio as _asyncio
+    from app.scheduler import startup_sync as _startup_sync
+    _asyncio.create_task(_startup_sync())
+
+    # One-shot forced re-sync for today, gated by an env flag. Bypasses the sync
+    # cooldown/cache to re-pull fixtures AND odds from the live API and recompute
+    # signals — used to recover today's signals after a DB swap wiped them. Set
+    # RUN_FORCE_SYNC_TODAY=true, deploy/restart, then unset.
+    if os.getenv("RUN_FORCE_SYNC_TODAY", "").lower() in ("1", "true", "yes"):
+        logger.info("RUN_FORCE_SYNC_TODAY set — forcing fresh sync+compute for today")
+
+        async def _force_sync_today():
+            from app.core.database import AsyncSessionLocal as _S
+            from app.services import ingestion as _ing
+            from app.services.signal_engine import compute_signals_for_date as _csfd
+            from datetime import date as _d
+            async with _S() as _db:
+                try:
+                    run = await _ing.sync_date(_db, _d.today(), force=True)
+                    logger.info("FORCE sync: status=%s fixtures=%s", run.status, run.fixtures_pulled)
+                    count = await _csfd(_db, _d.today())
+                    await _db.commit()
+                    logger.info("FORCE compute: %d signals for today", count)
+                except Exception:
+                    logger.exception("FORCE sync+compute failed")
+
+        _asyncio.create_task(_force_sync_today())
+
     # One-shot manual trigger for the evening digest, used to verify the broadcast
     # outside its 18:30 UTC schedule. Gated by an env flag so it only fires when
     # explicitly requested: set RUN_DIGEST_ON_STARTUP=true, deploy, then unset.

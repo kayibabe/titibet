@@ -110,7 +110,7 @@ async def catchup_past_dates() -> int:
                 logger.error("Catch-up sync failed for %s: %s", d, e)
 
         # Settle all pending bets now that fixture statuses are refreshed.
-        n_settled = await settle_bets_for_date(db, None)
+        n_settled = (await settle_bets_for_date(db, None))["settled"]
         if n_settled:
             logger.info("Catch-up settlement: %d pending bet(s) settled.", n_settled)
             # Push results for any fully-settled date after catch-up.
@@ -183,7 +183,7 @@ async def sync_and_compute(run_date: date | None = None) -> None:
                 except Exception:
                     logger.exception("Auto-tracker failed for %s — continuing normally", run_date)
                 # Settle every pending bet with a final fixture (any event_date), not only run_date.
-                n_settled = await settle_bets_for_date(db, None)
+                n_settled = (await settle_bets_for_date(db, None))["settled"]
                 logger.info(
                     "Scheduler: %s done — %d fixtures, %d signals, %d bets settled",
                     run_date, run.fixtures_pulled, count, n_settled,
