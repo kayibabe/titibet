@@ -21,6 +21,13 @@ primary_region = 'jnb'
   # returns an error), so ~30 fixtures/day is the ceiling until a paid plan.
   # Configurable here only so it can be raised after upgrading the API plan.
   MAX_ODDS_PAGES = '3'
+  # Per-league odds fetch: one API call per (league, season) to bypass the
+  # date-paged cap. 25 covers ~80% of today's leagues in typical fixture sets
+  # (80 unique leagues, we pick 25). Fresh-fixture leagues are prioritised so
+  # quota goes to new data first; already-cached leagues hit the file cache.
+  # Quota math: 25 real calls on sync 1, ~1 per subsequent sync (cached).
+  # 100 API calls/day budget: sync-1 uses ~26 (1 fixture + 25 league), fine.
+  MAX_LEAGUE_ODDS_CALLS = '25'
 
 [[mounts]]
   source = 'titibet_data'

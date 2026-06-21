@@ -348,15 +348,26 @@ async def sync_date(
         # Build per-league odds fetch list directly from the fixture API response.
         # Fetching /odds?league=L&season=S&date=X (one call per league) bypasses
         # the free-plan 3-page cap on /odds?date=X&page=N, which only covers ~30
-        # random fixtures per sync. Tier-sorted so Tier 1/2 leagues consume the
-        # quota budget first; cap at MAX_LEAGUE_ODDS_CALLS env (default 12).
+        # random fixtures per sync.
         #
-        # We intentionally scan ALL fixture_rows (not just needs_refresh_ids) to
-        # avoid any DB/API type-mismatch that could silently empty the list.
-        # The deduplication step below already filters to needs_refresh_ids when
-        # writing snapshots, so extra per-league calls for cached fixtures are
-        # cheap (they hit the file cache after the first pull).
-        _max_league_calls = int(os.getenv("MAX_LEAGUE_ODDS_CALLS", "12"))
+        # Sort priority: leagues with at least one FRESH/STALE fixture come first
+        # so API quota goes toward new data, not re-querying already-cached odds.
+        # Within each freshness group, sort by tier (Tier 1 first) for quality.
+        # After selecting, already-cached leagues hit the file cache cheaply.
+        _max_league_calls = int(os.getenv("MAX_LEAGUE_ODDS_CALLS", "25"))
+
+        # Pre-compute which leagues have at least one fresh/stale fixture.
+        _fresh_league_keys: set[tuple[int, int]] = set()
+        for _row in fixture_rows:
+            _lid = _row.get("league_id")
+            _sea = _row.get("season")
+            _ext = _row.get("external_fixture_id")
+            if not _lid or not _sea or not _ext:
+                continue
+            _db_id = fixture_map.get(int(_ext))
+            if _db_id and _db_id in needs_refresh_ids:
+                _fresh_league_keys.add((int(_lid), int(_sea)))
+
         _league_tier_map: dict[tuple[int, int], int] = {}
         for _row in fixture_rows:
             league_name = (_row.get("league") or "").lower().strip()
@@ -372,13 +383,21 @@ async def sync_date(
                     _row.get("league") or "", _row.get("country") or ""
                 )
 
+        # Sort: fresh-fixture leagues first (sort key 0), then cached (1),
+        # then within each group by tier ascending (Tier 1 best).
         _leagues_to_fetch = [
-            ls for ls, _ in sorted(_league_tier_map.items(), key=lambda x: x[1])
+            ls for ls, _ in sorted(
+                _league_tier_map.items(),
+                key=lambda x: (0 if x[0] in _fresh_league_keys else 1, x[1])
+            )
         ][:_max_league_calls]
 
+        _n_fresh_selected = sum(1 for ls in _leagues_to_fetch if ls in _fresh_league_keys)
         logger.info(
-            "Per-league odds build for %s: %d fixture rows → %d unique leagues → %d selected (cap %d)",
-            date_str, len(fixture_rows), len(_league_tier_map), len(_leagues_to_fetch), _max_league_calls,
+            "Per-league odds build for %s: %d fixture rows → %d unique leagues → "
+            "%d selected (cap %d, %d with fresh fixtures)",
+            date_str, len(fixture_rows), len(_league_tier_map),
+            len(_leagues_to_fetch), _max_league_calls, _n_fresh_selected,
         )
 
         if _leagues_to_fetch:
