@@ -556,6 +556,7 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
   })()
 
   const isContradiction = signal.dual_agreement === 'Contradiction'
+  const isBayesianOnly = signal.dual_agreement === 'Bayesian Only'
   // Odds shown everywhere on the card respect the user's odds-adjustment setting.
   const displayBestOdd = applyOddsAdj(signal.bayesian?.best_odd, oddsAdjPct)
   // When odds are adjusted, recompute EV from the adjusted price (matches Value Bets);
@@ -574,13 +575,15 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
     <div className={`rounded-xl border shadow-sm overflow-hidden transition-colors ${
       isContradiction
         ? 'border-red-400/40 border-l-4 border-l-red-400'
-        : isUnderMarket
-          ? 'border-sky-400/40 border-l-4 border-l-sky-400'
-          : isHighProbabilityOutcome
-            ? 'border-emerald-500/40 border-l-4 border-l-emerald-500'
-            : isMediumConfidence
-              ? 'border-amber-400/30 hover:border-amber-400/50'
-              : 'border-[var(--border)] hover:border-[var(--accent)]/40'
+        : isBayesianOnly
+          ? 'border-violet-400/35 border-l-4 border-l-violet-400'
+          : isUnderMarket
+            ? 'border-sky-400/40 border-l-4 border-l-sky-400'
+            : isHighProbabilityOutcome
+              ? 'border-emerald-500/40 border-l-4 border-l-emerald-500'
+              : isMediumConfidence
+                ? 'border-amber-400/30 hover:border-amber-400/50'
+                : 'border-[var(--border)] hover:border-[var(--accent)]/40'
     }`}>
 
       {/* ── Header ── */}

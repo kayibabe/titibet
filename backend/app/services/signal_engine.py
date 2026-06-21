@@ -771,13 +771,22 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 and (_poi_only_max is None or _poi_best_odd < _poi_only_max)
             )
 
+            # Tier 3 — Bayesian Signal: Bayesian-only, High confidence.
+            # Surfaced as supplemental picks when no dual signals exist.
+            # Poisson didn't confirm — weaker evidence, quarter-Kelly staking.
+            is_bayesian_signal = (
+                final_confidence == "High"
+                and ds.agreement == "Bayesian Only"
+                and b is not None
+            )
+
             # Refine is_candidate now that is_dual_signal is known.
             # A dual signal (Both+High) is already served live — no need to also flag as candidate.
             # Once ≥50 settled candidates exist, run a hit-rate / ROI audit and
             # enable as Tier 3 if numbers hold.
             is_candidate = is_candidate and not is_dual_signal
 
-            if not is_dual_signal and not is_poisson_signal and not is_candidate:
+            if not is_dual_signal and not is_poisson_signal and not is_bayesian_signal and not is_candidate:
                 continue
 
             # ── Stake sizing ──────────────────────────────────────────────────
@@ -785,10 +794,18 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             # Poisson Signal: dual_engine returns 0.0 (no Bayesian input) — compute
             # quarter-Kelly directly from Poisson probability + bookmaker odds,
             # capped at POISSON_ONLY_KELLY_CAP (1.5%) since only one engine confirms.
+            # Bayesian Signal: quarter-Kelly from Bayesian prob, same cap — one engine only.
             if is_poisson_signal and p is not None and p.poisson_prob:
                 adjusted_stake_pct = kelly_stake_pct(
                     prob=p.poisson_prob,
                     odds=_poi_best_odd,
+                    fraction=0.25,
+                    cap=POISSON_ONLY_KELLY_CAP,
+                )
+            elif is_bayesian_signal and not is_dual_signal and b is not None and b.derived_prob and b.best_actual_odd:
+                adjusted_stake_pct = kelly_stake_pct(
+                    prob=b.derived_prob,
+                    odds=b.best_actual_odd,
                     fraction=0.25,
                     cap=POISSON_ONLY_KELLY_CAP,
                 )

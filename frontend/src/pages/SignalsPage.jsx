@@ -773,6 +773,7 @@ const reload = () => load(params)
               <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--text)] opacity-75 pt-1 border-t border-[var(--border)]">
                 <span className="font-medium">Card borders:</span>
                 <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-500/60 border border-emerald-400"></span> High probability (70%+)</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-violet-500/60 border border-violet-400"></span> Bayesian only</span>
                 <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-amber-500/60 border border-amber-400"></span> Medium confidence</span>
                 <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-500/60 border border-red-400"></span> Contradiction</span>
               </div>
@@ -876,9 +877,14 @@ const reload = () => load(params)
             /* No signals at all for this date */
             <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-3 text-center">
               <span className="text-4xl">📡</span>
-              <p className="text-sm font-semibold text-[var(--text-h)]">No signals for {fmtDate(date)}</p>
+              <p className="text-sm font-semibold text-[var(--text-h)]">No qualifying signals for {fmtDate(date)}</p>
               <p className="text-xs text-[var(--text)] opacity-75 max-w-sm">
-                Odds haven't been pulled for this date yet. Hit{' '}
+                Our dual-model gate requires both the Bayesian and Poisson engines to agree at High confidence.
+                Today&apos;s fixtures don&apos;t meet that threshold — typically because available matches are lopsided,
+                or odds data is unavailable for the leagues playing.
+              </p>
+              <p className="text-xs text-[var(--text)] opacity-60 max-w-sm">
+                Hit{' '}
                 <button
                   onClick={handleSync}
                   disabled={isBusy}
@@ -886,63 +892,105 @@ const reload = () => load(params)
                 >
                   Sync API
                 </button>{' '}
-                to fetch fixtures and odds, then the engines will score each market for value.
+                to pull fresh odds — if the Bayesian model finds value even without Poisson agreement,
+                supplemental picks will appear below the main list.
               </p>
               {isToday && (
-                <p className="text-[11px] text-[var(--text)] opacity-70 max-w-xs">
-                  Syncs run automatically at 06:00, 10:00, 14:00, 18:00 and 23:30 UTC on the production server.
+                <p className="text-[11px] text-[var(--text)] opacity-50 max-w-xs">
+                  Auto-syncs run at 04:00, 08:00, 12:00, 18:00 and 22:01 UTC.
                 </p>
               )}
             </div>
           )
         )}
 
-        {!loading && displayedSignals.length > 0 && (
-          <div className="space-y-3">
-            {/* Visible signals — always shown (all for Pro, first FREE_SIGNAL_LIMIT for free) */}
-            {displayedSignals.slice(0, isPro ? undefined : FREE_SIGNAL_LIMIT).map((signal, idx) => (
-              <SignalCard
-                key={signal.id}
-                signal={signal}
-                rank={idx + 1}
-                isPro={isPro}
-                isTracked={trackedKeys.has(`${signal.fixture_id}:${signal.market}`) || autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
-                isAutoTracked={autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
-                onTrackPick={sig => setTrackingSignal({ ...sig, tracking_source_family: trackingSourceFamily() })}
-                onDeepDive={onDeepDive}
-                oddsAdjPct={settings?.oddsAdjustmentPct ?? 0}
-              />
-            ))}
+        {!loading && displayedSignals.length > 0 && (() => {
+          const primarySignals = displayedSignals.filter(s => s.dual_agreement !== 'Bayesian Only')
+          const supplementalSignals = displayedSignals.filter(s => s.dual_agreement === 'Bayesian Only')
+          // Free-tier limit applies across both sections combined, primary first
+          const allOrdered = [...primarySignals, ...supplementalSignals]
+          const freeSlice = isPro ? allOrdered.length : FREE_SIGNAL_LIMIT
+          const visibleAll = allOrdered.slice(0, freeSlice)
+          const visiblePrimary = visibleAll.filter(s => s.dual_agreement !== 'Bayesian Only')
+          const visibleSupplemental = visibleAll.filter(s => s.dual_agreement === 'Bayesian Only')
 
-            {/* Peek cards — signals 6, 7, 8 shown blurred for free users */}
-            {!isPro && displayedSignals.slice(FREE_SIGNAL_LIMIT, FREE_SIGNAL_LIMIT + 3).map((sig, i) => (
-              <div key={sig.id || i} className="relative select-none pointer-events-none">
-                <div className="opacity-40 blur-sm">
-                  <div className="rounded-xl border border-white/8 bg-white/4 h-40 flex flex-col justify-between p-4">
-                    <div className="h-3 w-2/3 rounded bg-white/10" />
-                    <div className="h-6 w-1/2 rounded bg-white/10" />
-                    <div className="h-3 w-1/3 rounded bg-white/10" />
+          return (
+            <div className="space-y-3">
+              {/* Primary signals — Both + Poisson Only */}
+              {visiblePrimary.map((signal, idx) => (
+                <SignalCard
+                  key={signal.id}
+                  signal={signal}
+                  rank={idx + 1}
+                  isPro={isPro}
+                  isTracked={trackedKeys.has(`${signal.fixture_id}:${signal.market}`) || autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
+                  isAutoTracked={autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
+                  onTrackPick={sig => setTrackingSignal({ ...sig, tracking_source_family: trackingSourceFamily() })}
+                  onDeepDive={onDeepDive}
+                  oddsAdjPct={settings?.oddsAdjustmentPct ?? 0}
+                />
+              ))}
+
+              {/* Supplemental section — Bayesian Only picks */}
+              {supplementalSignals.length > 0 && (
+                <>
+                  <div className="flex items-center gap-3 pt-2">
+                    <div className="flex-1 h-px bg-violet-400/20" />
+                    <div className="flex items-center gap-2 px-3 py-1 rounded-full border border-violet-400/30 bg-violet-500/8">
+                      <span className="text-[10px] font-bold text-violet-400 tracking-wide uppercase">Supplemental Picks</span>
+                    </div>
+                    <div className="flex-1 h-px bg-violet-400/20" />
+                  </div>
+                  <div className="rounded-lg border border-violet-400/25 bg-violet-500/6 px-4 py-3 text-xs text-[var(--text)] leading-relaxed">
+                    <span className="font-semibold text-violet-300">Bayesian model only</span>
+                    {' — '}our Bayesian engine found High-confidence value here, but the Poisson model didn&apos;t confirm. One engine vs two: treat these as lower-conviction picks and size stakes accordingly.
+                  </div>
+                  {visibleSupplemental.map((signal, idx) => (
+                    <SignalCard
+                      key={signal.id}
+                      signal={signal}
+                      rank={visiblePrimary.length + idx + 1}
+                      isPro={isPro}
+                      isTracked={trackedKeys.has(`${signal.fixture_id}:${signal.market}`) || autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
+                      isAutoTracked={autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
+                      onTrackPick={sig => setTrackingSignal({ ...sig, tracking_source_family: trackingSourceFamily() })}
+                      onDeepDive={onDeepDive}
+                      oddsAdjPct={settings?.oddsAdjustmentPct ?? 0}
+                    />
+                  ))}
+                </>
+              )}
+
+              {/* Peek cards — next 3 signals blurred for free users */}
+              {!isPro && allOrdered.slice(freeSlice, freeSlice + 3).map((sig, i) => (
+                <div key={sig.id || i} className="relative select-none pointer-events-none">
+                  <div className="opacity-40 blur-sm">
+                    <div className="rounded-xl border border-white/8 bg-white/4 h-40 flex flex-col justify-between p-4">
+                      <div className="h-3 w-2/3 rounded bg-white/10" />
+                      <div className="h-6 w-1/2 rounded bg-white/10" />
+                      <div className="h-3 w-1/3 rounded bg-white/10" />
+                    </div>
+                  </div>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="rounded-lg bg-black/70 px-3 py-1.5 text-xs text-white font-medium backdrop-blur-sm border border-white/10">
+                      🔒 Pro only
+                    </div>
                   </div>
                 </div>
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="rounded-lg bg-black/70 px-3 py-1.5 text-xs text-white font-medium backdrop-blur-sm border border-white/10">
-                    🔒 Pro only
-                  </div>
-                </div>
-              </div>
-            ))}
+              ))}
 
-            {/* Upgrade banner — shown after peek cards when free user has more signals */}
-            {!isPro && displayedSignals.length > FREE_SIGNAL_LIMIT && (
-              <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/8 px-4 py-3 text-center text-sm">
-                <span className="text-slate-300">Viewing <strong className="text-white">5 of {displayedSignals.length}</strong> signals. </span>
-                <button onClick={onUpgrade} className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">
-                  Upgrade to Pro →
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+              {/* Upgrade banner */}
+              {!isPro && allOrdered.length > freeSlice && (
+                <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/8 px-4 py-3 text-center text-sm">
+                  <span className="text-slate-300">Viewing <strong className="text-white">{freeSlice} of {allOrdered.length}</strong> signals. </span>
+                  <button onClick={onUpgrade} className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">
+                    Upgrade to Pro →
+                  </button>
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </div>
 
       {/* ── VALUE BETS TAB ────────────────────────────────────────────────── */}
