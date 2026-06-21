@@ -772,18 +772,20 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 and (_poi_only_max is None or _poi_best_odd < _poi_only_max)
             )
 
-            # Tier 3 — Bayesian-led Signal: Bayesian engine fired at High
-            # confidence but the dual gate didn't activate. Two sub-cases:
-            # (a) "Bayesian Only": Poisson had no data. Dual engine always
-            #     downgrades these one tier (High→Medium), so we check the
-            #     raw b.confidence, NOT final_confidence — which would be
-            #     "Medium" and make this gate permanently unreachable.
-            # (b) "Both" at Medium: both engines agree direction but Poisson
-            #     grade < A; Bayesian leads. final_confidence = "Medium".
+            # Tier 3 — Bayesian-led Signal: Bayesian engine found value but
+            # the dual gate didn't activate. Accepts High OR Medium Bayesian
+            # confidence (edge ≥ 5%, positive EV at exec price). Two sub-cases:
+            # (a) "Bayesian Only": Poisson had no data. Dual engine downgrades
+            #     one tier: High→Medium, Medium→Low. We check raw b.confidence,
+            #     NOT the downgraded final_confidence.
+            # (b) "Both" at Medium: both agree direction but Poisson grade < A.
+            # Accepting Medium catches markets where exec_odd fix unlocks
+            # positive EV (e.g. 1xBet Goals O/U when William Hill is absent)
+            # but edge is 5-7% (below the 7% High threshold).
             # Quarter-Kelly staking, same cap as Poisson-only.
             is_bayesian_signal = (
                 b is not None
-                and b.confidence == "High"
+                and b.confidence in ("High", "Medium")
                 and not is_dual_signal
                 and ds.agreement in ("Bayesian Only", "Both")
             )
