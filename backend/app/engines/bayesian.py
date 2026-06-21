@@ -540,9 +540,17 @@ def analyse_fixture(
         market_edge_floor = MARKET_MIN_EDGE.get(market_name, settings.min_value_edge)
 
         # ── Execution price (Fix 1) ───────────────────────────────────────────
-        # The user does NOT bet at effective_odd; they bet at a shorter soft-book
-        # price. Haircut the proxy down to a realistic exec price and DECIDE on it.
-        exec_odd = exec_odd_from(effective_odd, market_name)
+        # The haircut converts a soft-book proxy (William Hill) into the price the
+        # user actually gets at their African book.  Only apply it when a target
+        # bookmaker price was found — i.e. best_target_odd > 1.0.
+        # When no target bookmaker has this market, effective_odd already comes from
+        # a sharp book (Pinnacle/Bet365), and the user's book tracks that line at
+        # near-parity.  Haircutting a sharp price overshoots and makes EV falsely
+        # negative, suppressing valid signals.
+        if best_target_odd > 1.0:
+            exec_odd = exec_odd_from(effective_odd, market_name)
+        else:
+            exec_odd = max(1.01, round(effective_odd, 4))
         # Proxy-price EV kept only for diagnostics (the "looks good on screen" number).
         ev_pct_ref = round((derived_prob * effective_odd - 1.0) * 100, 2)
         # Decision EV — computed at the price the user can actually take.
