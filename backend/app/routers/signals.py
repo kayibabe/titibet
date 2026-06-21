@@ -761,6 +761,114 @@ async def signals_diag(
     }
 
 
+@router.get("/debug-engine")
+async def debug_engine(
+    date_str: Optional[str] = Query(None, alias="date"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Run bayesian + poisson engines on the FIRST fixture with snapshots for a date
+    and return all intermediate values so we can see exactly where signals fail.
+    No auth required — read-only diagnostic.
+    """
+    from app.engines import bayesian as bay_engine, poisson as poi_engine
+    from app.services.signal_engine import (
+        _build_cs_by_bookie, _build_goals_ou, _build_match_winner,
+        _build_home_totals, _build_away_totals, _build_poisson_odds,
+        _latest_snapshots,
+    )
+
+    d = date.fromisoformat(date_str) if date_str else date.today()
+
+    # Find first fixture that has snapshots for this date
+    fixture_result = await db.execute(
+        select(Fixture)
+        .where(Fixture.event_date == d)
+        .join(MarketSnapshot, Fixture.id == MarketSnapshot.fixture_id)
+        .group_by(Fixture.id)
+        .order_by(Fixture.id)
+        .limit(1)
+    )
+    fixture = fixture_result.scalars().first()
+    if not fixture:
+        return {"error": "no fixture with snapshots found for this date"}
+
+    snap_result = await db.execute(
+        select(MarketSnapshot).where(MarketSnapshot.fixture_id == fixture.id)
+    )
+    snapshots_raw = list(snap_result.scalars().all())
+    snapshots = _latest_snapshots(snapshots_raw)
+
+    cs_by_bookie = _build_cs_by_bookie(snapshots)
+    goals_ou = _build_goals_ou(snapshots)
+    match_winner = _build_match_winner(snapshots)
+    home_totals = _build_home_totals(snapshots)
+    away_totals = _build_away_totals(snapshots)
+    poi_odds, poi_signal_odds = _build_poisson_odds(snapshots)
+
+    bay_result = bay_engine.analyse_fixture(
+        fixture_id=fixture.id,
+        home_team=fixture.home_team,
+        away_team=fixture.away_team,
+        league=fixture.league or "",
+        country=fixture.country or "",
+        cs_by_bookie=cs_by_bookie,
+        goals_ou=goals_ou,
+        btts={},
+        match_winner=match_winner,
+        double_chance={},
+        home_totals=home_totals,
+        away_totals=away_totals,
+        all_markets=True,
+    )
+
+    poi_result = poi_engine.analyse_fixture(
+        fixture_id=fixture.id,
+        odds=poi_odds,
+        signal_odds=poi_signal_odds,
+    )
+
+    cs_keys_sample = sorted(poi_odds.keys())[:10]
+    goals_ou_sample = {bk: list(v.keys())[:5] for bk, v in list(goals_ou.items())[:2]}
+
+    return {
+        "fixture": f"{fixture.home_team} vs {fixture.away_team}",
+        "league": fixture.league,
+        "fixture_id": fixture.id,
+        "snapshots_total": len(snapshots_raw),
+        "snapshots_deduped": len(snapshots),
+        "cs_bookmakers": list(cs_by_bookie.keys()),
+        "cs_scorelines_count": sum(len(v) for v in cs_by_bookie.values()),
+        "cs_keys_in_poi_odds": cs_keys_sample,
+        "goals_ou_bookmakers": list(goals_ou.keys()),
+        "goals_ou_selections_sample": goals_ou_sample,
+        "poi_signal_odds": poi_signal_odds,
+        "poi_s00": poi_odds.get("s00"),
+        "poi_s10": poi_odds.get("s10"),
+        "poi_s01": poi_odds.get("s01"),
+        "bay_result_is_none": bay_result is None,
+        "bay_market_results_count": len(bay_result.market_results) if bay_result else 0,
+        "bay_market_results": [
+            {"market": mr.market, "derived_prob": mr.derived_prob,
+             "best_odd": mr.best_actual_odd, "edge": mr.edge,
+             "confidence": mr.confidence}
+            for mr in (bay_result.market_results if bay_result else [])
+        ],
+        "bay_coverage": bay_result.coverage if bay_result else None,
+        "bay_overround": bay_result.overround if bay_result else None,
+        "poi_passing_rules": [
+            {"rule_key": r.rule_key, "market": r.market, "rule_pass": r.rule_pass,
+             "poisson_prob": r.poisson_prob, "edge_pct": r.edge_pct}
+            for r in poi_result.results if r.rule_pass
+        ],
+        "poi_all_rules": [
+            {"rule_key": r.rule_key, "market": r.market, "rule_pass": r.rule_pass,
+             "lambda_h": r.lambda_h, "lambda_a": r.lambda_a}
+            for r in poi_result.results
+        ],
+    }
+
+
 @router.get("/{fixture_id}", response_model=list[SignalOut])
 async def fixture_signals(fixture_id: int, db: AsyncSession = Depends(get_db)):
     """All markets for one fixture (Deep Dive). Includes per-bookmaker odds from snapshots."""
