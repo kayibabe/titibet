@@ -703,6 +703,32 @@ async def signals_diag(
         .limit(15)
     )).all()
 
+    # Per-bookmaker × market-type breakdown for today's fixtures.
+    # Shows exactly which bookmakers have CS data (critical: bayesian engine
+    # needs ≥2 bookmakers with Correct Score / Exact Score to produce any signals).
+    from sqlalchemy import text as _sql_text
+    bk_mkt_rows = (await db.execute(_sql_text("""
+        SELECT ms.bookmaker, ms.market_type, COUNT(*) as cnt
+        FROM market_snapshots ms
+        JOIN fixtures f ON ms.fixture_id = f.id
+        WHERE f.event_date = :d
+          AND ms.market_type IN (
+            'Correct Score', 'Correct Score (Regular Time)', 'Exact Score',
+            'Goals Over/Under', 'Total Goals', 'Over/Under',
+            'Match Winner', '1X2', 'Total - Home', 'Total - Away'
+          )
+        GROUP BY ms.bookmaker, ms.market_type
+        ORDER BY ms.bookmaker, cnt DESC
+    """), {"d": d.isoformat()})).all()
+
+    bk_summary: dict = {}
+    for bk, mt, cnt in bk_mkt_rows:
+        bk_summary.setdefault(bk, {})[mt] = cnt
+
+    # How many distinct bookmakers have Correct Score / Exact Score?
+    cs_market_types = {"Correct Score", "Correct Score (Regular Time)", "Exact Score"}
+    cs_bookmakers = [bk for bk, mkt_map in bk_summary.items() if any(mt in cs_market_types for mt in mkt_map)]
+
     # Suppressed leagues for today — shows what the signal engine is filtering out.
     from app.services.signal_engine import _get_underperforming_leagues
     from app.core.config import DISABLED_LEAGUES
@@ -728,6 +754,10 @@ async def signals_diag(
             lg for lg, _ in leagues_with_odds
             if (lg or "").lower().strip() in all_suppressed
         ],
+        "bookmaker_market_breakdown": bk_summary,
+        "cs_bookmakers_count": len(cs_bookmakers),
+        "cs_bookmakers": cs_bookmakers,
+        "bayesian_min_bookmakers_required": 2,
     }
 
 
