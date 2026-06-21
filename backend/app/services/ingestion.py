@@ -345,46 +345,43 @@ async def sync_date(
         )
 
         # -- Market snapshots --------------------------------------------------
-        # Build per-league odds fetch list from fixtures that need a refresh.
+        # Build per-league odds fetch list directly from the fixture API response.
         # Fetching /odds?league=L&season=S&date=X (one call per league) bypasses
         # the free-plan 3-page cap on /odds?date=X&page=N, which only covers ~30
         # random fixtures per sync. Tier-sorted so Tier 1/2 leagues consume the
         # quota budget first; cap at MAX_LEAGUE_ODDS_CALLS env (default 12).
+        #
+        # We intentionally scan ALL fixture_rows (not just needs_refresh_ids) to
+        # avoid any DB/API type-mismatch that could silently empty the list.
+        # The deduplication step below already filters to needs_refresh_ids when
+        # writing snapshots, so extra per-league calls for cached fixtures are
+        # cheap (they hit the file cache after the first pull).
         _max_league_calls = int(os.getenv("MAX_LEAGUE_ODDS_CALLS", "12"))
-        _ext_to_api_row = {
-            r["external_fixture_id"]: r
-            for r in fixture_rows
-            if r.get("external_fixture_id")
-        }
         _league_tier_map: dict[tuple[int, int], int] = {}
-        for ext_id, int_id in fixture_map.items():
-            if int_id not in needs_refresh_ids:
-                continue
-            api_row = _ext_to_api_row.get(ext_id)
-            if not api_row:
-                continue
-            league_name = (api_row.get("league") or "").lower().strip()
+        for _row in fixture_rows:
+            league_name = (_row.get("league") or "").lower().strip()
             if any(d in league_name for d in DISABLED_LEAGUES):
                 continue
-            lid = api_row.get("league_id")
-            sea = api_row.get("season")
+            lid = _row.get("league_id")
+            sea = _row.get("season")
             if not lid or not sea:
                 continue
             key = (int(lid), int(sea))
             if key not in _league_tier_map:
                 _league_tier_map[key] = get_league_tier(
-                    api_row.get("league") or "", api_row.get("country") or ""
+                    _row.get("league") or "", _row.get("country") or ""
                 )
 
         _leagues_to_fetch = [
             ls for ls, _ in sorted(_league_tier_map.items(), key=lambda x: x[1])
         ][:_max_league_calls]
 
+        logger.info(
+            "Per-league odds build for %s: %d fixture rows → %d unique leagues → %d selected (cap %d)",
+            date_str, len(fixture_rows), len(_league_tier_map), len(_leagues_to_fetch), _max_league_calls,
+        )
+
         if _leagues_to_fetch:
-            logger.info(
-                "Per-league odds fetch for %s: %d league(s) selected (cap %d, total unique %d)",
-                date_str, len(_leagues_to_fetch), _max_league_calls, len(_league_tier_map),
-            )
             market_rows_api = await api_client.fetch_markets_by_leagues(date_str, _leagues_to_fetch)
         else:
             logger.warning(
