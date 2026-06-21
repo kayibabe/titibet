@@ -85,7 +85,12 @@ MAX_ODDS_PAGES = int(os.getenv("MAX_ODDS_PAGES", "3"))
 # the cache and forces a full re-pull (and on quota-limited days, partial odds).
 _CACHE_DIR = Path(os.getenv("API_CACHE_DIR") or str(Path(__file__).resolve().parents[2] / ".cache" / "api_football"))
 _HISTORICAL_TTL = timedelta(days=30)
-_TODAY_TTL = timedelta(hours=2)
+# 8h keeps the file cache valid through two sync cycles (max gap is ~8h:
+# 22:01→04:00 = 5h59m; 04:00→08:00 = 4h) so odds data survives even when
+# a live re-fetch fails (free-plan season restriction, quota, network error).
+# Must exceed STALE_MIN_AGE_HOURS (default 4h) so the cache is still readable
+# when DB snapshots are classified stale and live re-fetch is attempted.
+_TODAY_TTL = timedelta(hours=8)
 _FIXTURE_TTL = timedelta(minutes=20)
 
 # In-memory quota snapshot — updated after every live API call.
