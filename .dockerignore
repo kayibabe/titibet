@@ -3,6 +3,7 @@ backend/.env
 .env
 
 # Dev artefacts
+backend/.cache
 backend/titibet.db
 backend/__pycache__
 backend/**/__pycache__
