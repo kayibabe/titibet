@@ -771,13 +771,20 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 and (_poi_only_max is None or _poi_best_odd < _poi_only_max)
             )
 
-            # Tier 3 — Bayesian Signal: Bayesian-only, High confidence.
-            # Surfaced as supplemental picks when no dual signals exist.
-            # Poisson didn't confirm — weaker evidence, quarter-Kelly staking.
+            # Tier 3 — Bayesian-led Signal: Bayesian engine fired at High
+            # confidence but the dual gate didn't activate. Two sub-cases:
+            # (a) "Bayesian Only": Poisson had no data. Dual engine always
+            #     downgrades these one tier (High→Medium), so we check the
+            #     raw b.confidence, NOT final_confidence — which would be
+            #     "Medium" and make this gate permanently unreachable.
+            # (b) "Both" at Medium: both engines agree direction but Poisson
+            #     grade < A; Bayesian leads. final_confidence = "Medium".
+            # Quarter-Kelly staking, same cap as Poisson-only.
             is_bayesian_signal = (
-                final_confidence == "High"
-                and ds.agreement == "Bayesian Only"
-                and b is not None
+                b is not None
+                and b.confidence == "High"
+                and not is_dual_signal
+                and ds.agreement in ("Bayesian Only", "Both")
             )
 
             # Refine is_candidate now that is_dual_signal is known.

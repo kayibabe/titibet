@@ -905,14 +905,16 @@ const reload = () => load(params)
         )}
 
         {!loading && displayedSignals.length > 0 && (() => {
-          const primarySignals = displayedSignals.filter(s => s.dual_agreement !== 'Bayesian Only')
-          const supplementalSignals = displayedSignals.filter(s => s.dual_agreement === 'Bayesian Only')
+          // Supplemental = Bayesian-only OR Both+Medium (Bayesian High but Poisson not grade A)
+          const isSupplemental = s => s.dual_agreement === 'Bayesian Only' || (s.dual_agreement === 'Both' && s.dual_confidence !== 'High')
+          const primarySignals = displayedSignals.filter(s => !isSupplemental(s))
+          const supplementalSignals = displayedSignals.filter(isSupplemental)
           // Free-tier limit applies across both sections combined, primary first
           const allOrdered = [...primarySignals, ...supplementalSignals]
           const freeSlice = isPro ? allOrdered.length : FREE_SIGNAL_LIMIT
           const visibleAll = allOrdered.slice(0, freeSlice)
-          const visiblePrimary = visibleAll.filter(s => s.dual_agreement !== 'Bayesian Only')
-          const visibleSupplemental = visibleAll.filter(s => s.dual_agreement === 'Bayesian Only')
+          const visiblePrimary = visibleAll.filter(s => !isSupplemental(s))
+          const visibleSupplemental = visibleAll.filter(isSupplemental)
 
           return (
             <div className="space-y-3">

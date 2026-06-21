@@ -556,7 +556,7 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
   })()
 
   const isContradiction = signal.dual_agreement === 'Contradiction'
-  const isBayesianOnly = signal.dual_agreement === 'Bayesian Only'
+  const isBayesianOnly = signal.dual_agreement === 'Bayesian Only' || (signal.dual_agreement === 'Both' && signal.dual_confidence !== 'High')
   // Odds shown everywhere on the card respect the user's odds-adjustment setting.
   const displayBestOdd = applyOddsAdj(signal.bayesian?.best_odd, oddsAdjPct)
   // When odds are adjusted, recompute EV from the adjusted price (matches Value Bets);
