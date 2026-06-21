@@ -351,6 +351,37 @@ async def fetch_markets(date_str: str) -> list[dict[str, Any]]:
     return rows
 
 
+async def fetch_markets_by_leagues(
+    date_str: str,
+    league_seasons: list[tuple[int, int]],
+) -> list[dict[str, Any]]:
+    """
+    Fetch market odds for specific leagues, one API call per (league_id, season) pair.
+
+    This is the quota-efficient path for free-plan API keys: instead of fetching
+    /odds?date=X&page=N (capped at 3 pages = ~30 random fixtures), we fetch
+    /odds?league=L&season=S&date=X for each league we care about. Each league's
+    data fits on page 1 (1–10 fixtures/day), so the free-plan page cap never bites.
+
+    Returns flat list of market_snapshot rows identical to fetch_markets().
+    """
+    now = datetime.now(timezone.utc)
+    rows: list[dict[str, Any]] = []
+    for league_id, season in league_seasons:
+        path = f"/odds?league={league_id}&season={season}&date={date_str}"
+        try:
+            payload = await _get(path)
+        except Exception as exc:
+            logger.warning(
+                "fetch_markets_by_leagues: league=%s season=%s date=%s failed: %s",
+                league_id, season, date_str, exc,
+            )
+            continue
+        for entry in payload.get("response", []):
+            rows.extend(_parse_bookmakers(entry, now))
+    return rows
+
+
 async def fetch_fixture_by_id(ext_id: int, *, force: bool = False) -> dict[str, Any] | None:
     """
     Fetch a single fixture by its API-Football ID and return a normalised dict

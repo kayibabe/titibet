@@ -25,12 +25,13 @@ Rules (inner to outer — first match wins):
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, date, timedelta, timezone
 
 from sqlalchemy import select, update, delete, func as sql_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_league_tier
+from app.core.config import get_league_tier, DISABLED_LEAGUES
 from app.models import Fixture, MarketSnapshot, IngestionRun
 from app.services import api_client
 
@@ -264,19 +265,34 @@ async def sync_date(
 
         # Which fixture IDs already have at least one snapshot in the DB?
         fixtures_with_snapshots: set[int] = set()
+        snapshot_latest: dict[int, datetime] = {}
         if all_fixture_ids:
             counts_result = await db.execute(
-                select(MarketSnapshot.fixture_id, sql_func.count(MarketSnapshot.id).label("cnt"))
+                select(
+                    MarketSnapshot.fixture_id,
+                    sql_func.count(MarketSnapshot.id).label("cnt"),
+                    sql_func.max(MarketSnapshot.pulled_at).label("latest_pull"),
+                )
                 .where(MarketSnapshot.fixture_id.in_(all_fixture_ids))
                 .group_by(MarketSnapshot.fixture_id)
                 .having(sql_func.count(MarketSnapshot.id) > 0)
             )
-            fixtures_with_snapshots = {row.fixture_id for row in counts_result}
+            snap_rows = counts_result.all()
+            fixtures_with_snapshots = {r.fixture_id for r in snap_rows}
+            snapshot_latest = {r.fixture_id: r.latest_pull for r in snap_rows}
 
         # Classify each fixture.
         cached_ids: set[int] = set()    # final + has snapshots -> preserve as-is
         stale_ids: set[int] = set()     # non-final + has snapshots -> clear and refresh
         fresh_ids: set[int] = set()     # no snapshots yet -> insert
+
+        # Minimum age (hours) before a pre-match snapshot is cleared and re-fetched.
+        # Prevents the nightly digest's freshly-fetched odds being wiped by a sync
+        # that runs a few hours later (e.g. 18:30 UTC digest → 22:01 UTC sync = 3.5 h).
+        # Configurable: STALE_MIN_AGE_HOURS env var. Default 4 h covers the largest
+        # inter-sync gap while still allowing daily refreshes.
+        _stale_min_age_h = float(os.getenv("STALE_MIN_AGE_HOURS", "4"))
+        _now_utc = datetime.now(timezone.utc)
 
         for fid in all_fixture_ids:
             status = fixture_status.get(fid)
@@ -284,7 +300,16 @@ async def sync_date(
             if has_snaps and status in FINAL_STATUSES:
                 cached_ids.add(fid)
             elif has_snaps:
-                stale_ids.add(fid)
+                latest = snapshot_latest.get(fid)
+                if latest is not None:
+                    latest_aware = latest if latest.tzinfo else latest.replace(tzinfo=timezone.utc)
+                    age_h = (_now_utc - latest_aware).total_seconds() / 3600
+                else:
+                    age_h = _stale_min_age_h  # unknown age — treat as stale
+                if age_h >= _stale_min_age_h:
+                    stale_ids.add(fid)
+                else:
+                    cached_ids.add(fid)  # recent odds — keep, avoid wiping digest data
             else:
                 fresh_ids.add(fid)
 
@@ -320,7 +345,54 @@ async def sync_date(
         )
 
         # -- Market snapshots --------------------------------------------------
-        market_rows_api = await api_client.fetch_markets(date_str)
+        # Build per-league odds fetch list from fixtures that need a refresh.
+        # Fetching /odds?league=L&season=S&date=X (one call per league) bypasses
+        # the free-plan 3-page cap on /odds?date=X&page=N, which only covers ~30
+        # random fixtures per sync. Tier-sorted so Tier 1/2 leagues consume the
+        # quota budget first; cap at MAX_LEAGUE_ODDS_CALLS env (default 12).
+        _max_league_calls = int(os.getenv("MAX_LEAGUE_ODDS_CALLS", "12"))
+        _ext_to_api_row = {
+            r["external_fixture_id"]: r
+            for r in fixture_rows
+            if r.get("external_fixture_id")
+        }
+        _league_tier_map: dict[tuple[int, int], int] = {}
+        for ext_id, int_id in fixture_map.items():
+            if int_id not in needs_refresh_ids:
+                continue
+            api_row = _ext_to_api_row.get(ext_id)
+            if not api_row:
+                continue
+            league_name = (api_row.get("league") or "").lower().strip()
+            if any(d in league_name for d in DISABLED_LEAGUES):
+                continue
+            lid = api_row.get("league_id")
+            sea = api_row.get("season")
+            if not lid or not sea:
+                continue
+            key = (int(lid), int(sea))
+            if key not in _league_tier_map:
+                _league_tier_map[key] = get_league_tier(
+                    api_row.get("league") or "", api_row.get("country") or ""
+                )
+
+        _leagues_to_fetch = [
+            ls for ls, _ in sorted(_league_tier_map.items(), key=lambda x: x[1])
+        ][:_max_league_calls]
+
+        if _leagues_to_fetch:
+            logger.info(
+                "Per-league odds fetch for %s: %d league(s) selected (cap %d, total unique %d)",
+                date_str, len(_leagues_to_fetch), _max_league_calls, len(_league_tier_map),
+            )
+            market_rows_api = await api_client.fetch_markets_by_leagues(date_str, _leagues_to_fetch)
+        else:
+            logger.warning(
+                "Per-league odds: no eligible league IDs found for %s — "
+                "falling back to date-paged fetch",
+                date_str,
+            )
+            market_rows_api = await api_client.fetch_markets(date_str)
         markets_inserted = 0
         now = datetime.now(timezone.utc)
 
