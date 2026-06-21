@@ -28,6 +28,23 @@ _MIN_FIXTURES_FOR_ZINB: int = 20
 # How far back (days) to pull historical fixtures for model fitting.
 _LOOKBACK_DAYS: int = 365
 
+# Process-level cache — ZINB + Glicko-2 fitting takes ~5 min; reuse across
+# all Recompute calls within the same day. Keyed by reference_date.
+_cache: dict[date, "AdvancedModelsService"] = {}
+
+
+async def get_or_load(db: "AsyncSession", reference_date: date) -> "AdvancedModelsService":
+    """Return a fully-loaded AdvancedModelsService, reusing the cached instance
+    for the same reference_date so models are only fitted once per day per process."""
+    if reference_date not in _cache:
+        svc = AdvancedModelsService(db)
+        await svc.load(reference_date=reference_date)
+        _cache[reference_date] = svc
+        # Evict any entries for other dates — keep memory bounded.
+        for old_date in [d for d in list(_cache) if d != reference_date]:
+            del _cache[old_date]
+    return _cache[reference_date]
+
 
 class AdvancedModelsService:
     """

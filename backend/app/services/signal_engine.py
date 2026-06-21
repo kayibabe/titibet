@@ -436,13 +436,14 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
     # Initialise advanced models (ZINB, Glicko-2, BOS rate tables).
     # Fitted lazily from historical fixture data; gracefully no-ops if data
     # or scipy are unavailable.
-    from app.services.advanced_models_service import AdvancedModelsService
-    adv = AdvancedModelsService(db)
+    from app.services.advanced_models_service import get_or_load as _adv_get
     try:
-        await adv.load(reference_date=run_date)
+        adv = await _adv_get(db, run_date)
     except Exception as _adv_err:
         import logging as _l
         _l.getLogger(__name__).warning("AdvancedModelsService.load() failed: %s", _adv_err)
+        from app.services.advanced_models_service import AdvancedModelsService
+        adv = AdvancedModelsService(db)
 
     # Collect all new Signal objects across all fixtures before writing to DB.
     # This allows portfolio-level stake normalization (improvement #1) to run
