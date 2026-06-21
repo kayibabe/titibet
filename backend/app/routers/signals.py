@@ -681,6 +681,37 @@ async def signals_diag(
         .limit(8)
     )).all()
 
+    # Market types present in today's snapshots — helps diagnose engine mismatches.
+    market_type_rows = (await db.execute(
+        select(MarketSnapshot.market_type, func.count(MarketSnapshot.id).label("c"))
+        .select_from(MarketSnapshot)
+        .join(Fixture, MarketSnapshot.fixture_id == Fixture.id)
+        .where(Fixture.event_date == d)
+        .group_by(MarketSnapshot.market_type)
+        .order_by(func.count(MarketSnapshot.id).desc())
+        .limit(20)
+    )).all()
+
+    # Fixtures with odds and their leagues — shows what's actually getting odds data.
+    leagues_with_odds = (await db.execute(
+        select(Fixture.league, func.count(func.distinct(MarketSnapshot.fixture_id)).label("c"))
+        .select_from(MarketSnapshot)
+        .join(Fixture, MarketSnapshot.fixture_id == Fixture.id)
+        .where(Fixture.event_date == d)
+        .group_by(Fixture.league)
+        .order_by(func.count(func.distinct(MarketSnapshot.fixture_id)).desc())
+        .limit(15)
+    )).all()
+
+    # Suppressed leagues for today — shows what the signal engine is filtering out.
+    from app.services.signal_engine import _get_underperforming_leagues
+    from app.core.config import DISABLED_LEAGUES
+    try:
+        bad_leagues = await _get_underperforming_leagues(db, min_roi_pct=60.0)
+    except Exception:
+        bad_leagues = frozenset()
+    all_suppressed = bad_leagues | DISABLED_LEAGUES
+
     return {
         "date": d.isoformat(),
         "fixtures": fixtures,
@@ -690,6 +721,13 @@ async def signals_diag(
         "max_fixture_date_in_db": str(max_fixture_date),
         "total_market_snapshots_all_dates": total_snaps,
         "top_leagues_today": [{"league": lg, "fixtures": c} for lg, c in leagues],
+        "market_types_in_snapshots": [{"market_type": mt, "count": c} for mt, c in market_type_rows],
+        "leagues_with_odds": [{"league": lg, "fixtures_with_odds": c} for lg, c in leagues_with_odds],
+        "suppressed_leagues_count": len(all_suppressed),
+        "leagues_with_odds_suppressed": [
+            lg for lg, _ in leagues_with_odds
+            if (lg or "").lower().strip() in all_suppressed
+        ],
     }
 
 
