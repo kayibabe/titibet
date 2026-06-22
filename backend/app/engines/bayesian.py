@@ -542,12 +542,11 @@ def analyse_fixture(
         # ── Execution price (Fix 1) ───────────────────────────────────────────
         # The haircut converts a soft-book proxy (William Hill) into the price the
         # user actually gets at their African book.  Only apply it when a target
-        # bookmaker price was found — i.e. best_target_odd > 1.0.
-        # When no target bookmaker has this market, effective_odd already comes from
-        # a sharp book (Pinnacle/Bet365), and the user's book tracks that line at
-        # near-parity.  Haircutting a sharp price overshoots and makes EV falsely
-        # negative, suppressing valid signals.
-        if best_target_odd > 1.0:
+        # bookmaker (William Hill) is the display source — best_bookie tells us which
+        # bookmaker provided best_odd.  When no target book has this market, the
+        # display price is a sharp price (Pinnacle/Bet365) which the user's book
+        # tracks near-parity; haircutting it overshoots and makes EV falsely negative.
+        if best_bookie in TARGET_BOOKMAKER_NAMES:
             exec_odd = exec_odd_from(effective_odd, market_name)
         else:
             exec_odd = max(1.01, round(effective_odd, 4))

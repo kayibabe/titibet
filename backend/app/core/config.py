@@ -519,6 +519,13 @@ TIER_1_LEAGUES = {
     "eredivisie", "primeira liga", "jupiler",
     "scottish premiership", "super lig",
     "premier liga", "premiership",
+    # International tournaments — World Cup / continental championships are
+    # the highest-quality football and should never be suppressed by the
+    # end-of-northern-season or underperforming-league gates.
+    "world cup", "copa america", "nations league",
+    "gold cup", "africa cup", "asian cup",
+    "euro",        # UEFA Euro / EURO Championship (substring safe for football)
+    "olympic",     # Olympic football tournament
 }
 
 TIER_2_LEAGUES = {
