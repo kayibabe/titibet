@@ -37,6 +37,7 @@ from app.core.config import (
     POISSON_ONLY_KELLY_CAP,
     MAX_DAILY_EXPOSURE,
     YOUTH_LEAGUE_KEYWORDS,
+    get_league_tier,
 )
 from app.engines import bayesian as bay_engine
 from app.services.form_service import get_team_form_lambdas, get_team_over25_history
@@ -584,6 +585,10 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         await db.execute(delete(Signal).where(Signal.fixture_id == fixture.id))
 
         fixture_league = (fixture.league or "").strip()
+        # Recompute tier from league/country name — not the cached DB value.
+        # This ensures config changes (e.g. adding World Cup to TIER_1_LEAGUES)
+        # take effect immediately without needing to re-ingest fixtures.
+        fixture_league_tier = get_league_tier(fixture.league or "", fixture.country or "")
 
         for market in all_markets:
             # Skip markets that have been permanently disabled (e.g. BTTS No, Under 3.5).
@@ -726,7 +731,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             # Downgrade confidence by one tier so it ranks lower in the signal list.
             # The raw engine output is NOT changed — dual_agreement
             # still reflects what the models said, only dual_confidence is adjusted.
-            league_tier = fixture.league_tier
+            league_tier = fixture_league_tier
             final_confidence = ds.confidence
             if (
                 perf_weights is not None
@@ -922,7 +927,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             # (Over 1.5, Over 2.5, Home Over 0.5) and downgrade any remaining
             # signal confidence by one tier so dead-rubber picks rank lower.
             if _is_end_of_northern_season(run_date):
-                _tier = fixture.league_tier or 3
+                _tier = fixture_league_tier
                 # Only suppress Tier 3 for over-goals markets.
                 # Tier 2 leagues active in June are summer/year-round competitions
                 # (Erovnuli Liga, Veikkausliiga, MLS Next Pro, Botola Pro, etc.) that
