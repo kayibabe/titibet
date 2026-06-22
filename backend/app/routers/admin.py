@@ -392,6 +392,196 @@ async def deactivate_learning_proposal(
     return {"deactivated": True, "id": proposal_id}
 
 
+# ── Autobet catchup ──────────────────────────────────────────────────────────
+
+@router.post("/autobet-catchup")
+async def autobet_catchup(
+    date_from: str = Query("2026-06-01"),
+    date_to: Optional[str] = Query(None, description="ISO date, inclusive (default: today)"),
+    dry_run: bool = Query(False, description="Preview only — no DB writes"),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Backfill system auto-picks for a date range.
+
+    For each date:
+      1. If 0 signals exist, recompute them from existing market snapshots.
+      2. Create TrackedBet rows (user_id=None, source_rule_key='system_auto') for
+         every Medium/High confidence non-contradiction signal, one per fixture slot.
+      3. Skip dates/fixtures that already have a system pick.
+    After all dates, run settlement so past matches resolve Won/Lost immediately.
+    """
+    import asyncio
+    from datetime import date, timedelta
+    from sqlalchemy import func as sqlfunc, or_
+    from app.models import Signal, Fixture, TrackedBet
+    from app.services.signal_engine import compute_signals_for_date
+    from app.services.settlement import settle_bets_for_date
+    from app.core.config import DISABLED_MARKETS, DISABLED_LEAGUES
+
+    start = date.fromisoformat(date_from)
+    end = date.fromisoformat(date_to) if date_to else date.today()
+    if end < start:
+        raise HTTPException(400, "date_to must be >= date_from")
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+    _OVER_MARKETS = frozenset({
+        "Over 1.5", "Over 2.5",
+        "Home Over 0.5", "Home Over 1.5", "Away Over 0.5", "Away Over 1.5",
+    })
+    _UNDER_MARKETS = frozenset({"Under 2.5", "Under 3.5", "Under 1.5"})
+
+    def _slot(market: str) -> str:
+        if market in _UNDER_MARKETS:
+            return "under"
+        if market in _OVER_MARKETS:
+            return "over"
+        return "other"
+
+    def _rank(sig: Signal, fix: Fixture) -> tuple:
+        bp = sig.bayesian_prob or 0.0
+        pp = sig.poisson_prob or 0.0
+        primary = max(bp, pp)
+        avg = ((bp + pp) / 2.0) if bp and pp else primary
+        conf = {"High": 3, "Medium": 2, "Low": 1}.get(sig.dual_confidence or "", 0)
+        agr = {"Both": 3, "Bayesian Only": 2, "Poisson Only": 1}.get(sig.dual_agreement or "", 0)
+        tier = 1 if fix.league_tier == 1 else 0
+        return (conf, agr, 1 if primary >= 0.70 else 0, round(primary, 6),
+                sig.bayesian_bookmaker_count or 0, tier, round(avg, 6),
+                sig.dual_quality_score or 0.0)
+
+    # ── per-date loop ─────────────────────────────────────────────────────────
+    results = []
+    current = start
+    while current <= end:
+        date_str = current.isoformat()
+        entry: dict = {"date": date_str, "recomputed": False,
+                       "signals_found": 0, "bets_created": 0, "bets_skipped": 0}
+
+        # 1. Recompute signals if none exist for this date
+        sig_count_row = await db.execute(
+            select(sqlfunc.count(Signal.id))
+            .join(Fixture, Signal.fixture_id == Fixture.id)
+            .where(Fixture.event_date == current)
+            .where(Signal.is_candidate == False)  # noqa: E712
+        )
+        if sig_count_row.scalar() == 0:
+            try:
+                new_count = await asyncio.wait_for(
+                    compute_signals_for_date(db, current), timeout=90
+                )
+                entry["recomputed"] = True
+                entry["recomputed_count"] = new_count
+            except asyncio.TimeoutError:
+                entry["error"] = "signal recompute timed out (>90s) — skipped"
+                results.append(entry)
+                current += timedelta(days=1)
+                continue
+            except Exception as exc:
+                entry["error"] = f"signal recompute failed: {exc}"
+                results.append(entry)
+                current += timedelta(days=1)
+                continue
+
+        # 2. Query qualifying signals for this date
+        q = (
+            select(Signal, Fixture)
+            .join(Fixture, Signal.fixture_id == Fixture.id)
+            .where(Fixture.event_date == current)
+            .where(Signal.is_candidate == False)  # noqa: E712
+            .where(Signal.dual_confidence.in_(["High", "Medium"]))
+            .where(Signal.dual_agreement.notin_(["Contradiction", "None"]))
+            .where(Signal.bayesian_best_odd > 1.0)  # must have a bettable price
+        )
+        if DISABLED_MARKETS:
+            q = q.where(Signal.market.notin_(list(DISABLED_MARKETS)))
+        if DISABLED_LEAGUES:
+            q = q.where(
+                sqlfunc.lower(sqlfunc.trim(Fixture.league)).notin_(DISABLED_LEAGUES)
+            )
+        rows = list((await db.execute(q)).all())
+
+        # 3. Deduplicate to best signal per (fixture, market_slot)
+        best: dict[tuple, tuple] = {}
+        for sig, fix in rows:
+            key = (sig.fixture_id, _slot(sig.market))
+            prev = best.get(key)
+            if prev is None or _rank(sig, fix) > _rank(prev[0], prev[1]):
+                best[key] = (sig, fix)
+
+        deduped = sorted(best.values(), key=lambda x: _rank(x[0], x[1]), reverse=True)
+        entry["signals_found"] = len(deduped)
+
+        # 4. Create TrackedBet rows
+        for sig, fix in deduped:
+            # Check for existing system pick on this fixture+market
+            existing = await db.scalar(
+                select(TrackedBet).where(
+                    TrackedBet.fixture_id == sig.fixture_id,
+                    TrackedBet.market_type == sig.market,
+                    TrackedBet.source_rule_key == "system_auto",
+                    TrackedBet.user_id.is_(None),
+                )
+            )
+            if existing:
+                entry["bets_skipped"] += 1
+                continue
+
+            entry["bets_created"] += 1
+            if dry_run:
+                continue
+
+            bet = TrackedBet(
+                user_id=None,
+                fixture_id=sig.fixture_id,
+                bookmaker=sig.bayesian_bookmaker or "Best Available",
+                event_date=fix.event_date,
+                match_name=f"{fix.home_team} vs {fix.away_team}",
+                league=fix.league,
+                market_type=sig.market,
+                selection_name=sig.market,
+                odds=round(sig.bayesian_best_odd, 4),
+                stake=1.0,
+                recommended_stake_pct=sig.dual_recommended_stake_pct,
+                source_rule_key="system_auto",
+                source_rule_label="System Auto Pick",
+                signal_grade=sig.poisson_grade,
+                dual_confidence=sig.dual_confidence,
+                dual_agreement=sig.dual_agreement,
+            )
+            db.add(bet)
+
+        if not dry_run and entry["bets_created"] > 0:
+            await db.commit()
+
+        results.append(entry)
+        current += timedelta(days=1)
+
+    # 5. Settle all pending bets now that past scores are known
+    settled_count = 0
+    if not dry_run:
+        try:
+            settle_info = await settle_bets_for_date(db, None)
+            settled_count = settle_info.get("settled", 0)
+        except Exception as exc:
+            settled_count = -1
+
+    total_created = sum(r.get("bets_created", 0) for r in results)
+    total_skipped = sum(r.get("bets_skipped", 0) for r in results)
+
+    return {
+        "dry_run": dry_run,
+        "date_from": date_from,
+        "date_to": end.isoformat(),
+        "days_processed": len(results),
+        "total_bets_created": total_created,
+        "total_bets_skipped": total_skipped,
+        "total_settled": settled_count,
+        "detail": results,
+    }
+
+
 # ── Calibration ──────────────────────────────────────────────────────────────
 
 @router.get("/calibration")
