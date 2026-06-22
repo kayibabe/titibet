@@ -1,33 +1,23 @@
-# fly.toml app configuration file generated for titibet on 2026-06-21T06:11:18Z
+# fly.toml app configuration file generated for titibets on 2026-06-22T09:54:03Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'titibet'
+app = 'titibets'
 primary_region = 'jnb'
 
 [build]
 
 [env]
+  API_CACHE_DIR = '/data/.cache/api_football'
+  APP_URL = 'https://titibet.fly.dev'
   CORS_ORIGINS = 'https://titibet.fly.dev,https://titibet.app,https://www.titibet.app'
   DB_URL = 'sqlite+aiosqlite:////data/titibet.db'
+  MAX_LEAGUE_ODDS_CALLS = '25'
+  MAX_ODDS_PAGES = '3'
   PORT = '8000'
   SKIP_STARTUP_SYNC = 'false'
   SYNC_TIMES = '04:00,08:00,12:00,18:00,22:01'
-  APP_URL = 'https://titibet.fly.dev'
-  # Persist the API-Football response cache on the volume so redeploys don't wipe it.
-  API_CACHE_DIR = '/data/.cache/api_football'
-  # Odds pages per sync. The free API-Football plan HARD-CAPS this at 3 (page>=4
-  # returns an error), so ~30 fixtures/day is the ceiling until a paid plan.
-  # Configurable here only so it can be raised after upgrading the API plan.
-  MAX_ODDS_PAGES = '3'
-  # Per-league odds fetch: one API call per (league, season) to bypass the
-  # date-paged cap. 25 covers ~80% of today's leagues in typical fixture sets
-  # (80 unique leagues, we pick 25). Fresh-fixture leagues are prioritised so
-  # quota goes to new data first; already-cached leagues hit the file cache.
-  # Quota math: 25 real calls on sync 1, ~1 per subsequent sync (cached).
-  # 100 API calls/day budget: sync-1 uses ~26 (1 fixture + 25 league), fine.
-  MAX_LEAGUE_ODDS_CALLS = '25'
 
 [[mounts]]
   source = 'titibet_data'
@@ -44,7 +34,7 @@ primary_region = 'jnb'
   [[http_service.checks]]
     interval = '30s'
     timeout = '10s'
-    grace_period = '180s'
+    grace_period = '3m0s'
     method = 'GET'
     path = '/health'
 
