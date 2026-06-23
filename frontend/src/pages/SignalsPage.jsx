@@ -340,7 +340,7 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
     leagueSearch,
   ].filter(Boolean).length
 const dateInputRef = useRef(null)
-  const { signals, loading, error, load } = useSignals()
+  const { signals, loading, error, load, invalidate } = useSignals()
 const params = {
     date,
     confidence:  confidence || undefined,
@@ -463,6 +463,7 @@ const reload = () => load(params)
     try {
       await syncData(date, { force: true })
       await computeSignals(date)
+      invalidate()
       await reload()
     } catch (e) { console.error(e) }
     finally { setSyncing(false) }
@@ -472,6 +473,7 @@ const reload = () => load(params)
     setComputing(true)
     try {
       await computeSignals(date)
+      invalidate()
       await reload()
     } catch (e) { console.error(e) }
     finally { setComputing(false) }
