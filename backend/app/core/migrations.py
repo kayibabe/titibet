@@ -171,6 +171,21 @@ INDEX_MIGRATIONS: list[tuple[str, str]] = [
         "CREATE INDEX IF NOT EXISTS ix_lp_change_type_target "
         "ON learning_proposals(change_type, target)",
     ),
+    (
+        "ix_tb_user_created",
+        "CREATE INDEX IF NOT EXISTS ix_tb_user_created "
+        "ON tracked_bets(user_id, created_at DESC)",
+    ),
+    (
+        "ix_tb_source_created",
+        "CREATE INDEX IF NOT EXISTS ix_tb_source_created "
+        "ON tracked_bets(source_rule_key, created_at DESC)",
+    ),
+    (
+        "ix_tb_event_date",
+        "CREATE INDEX IF NOT EXISTS ix_tb_event_date "
+        "ON tracked_bets(event_date)",
+    ),
 ]
 
 

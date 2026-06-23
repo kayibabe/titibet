@@ -32,7 +32,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const [showImport, setShowImport]     = useState(false)
   const [moreOpen, setMoreOpen]         = useState(false)
   const [clvResult, setClvResult]       = useState(null)
-  const { bets, loading, error, loadBets } = useTracker()
+  const { bets, loading, error, loadBets, invalidate } = useTracker()
 
   const pendingCount = bets.filter(b => b.result_status === 'Pending').length
   const noCLVCount   = bets.filter(b => b.fixture_id && b.clv_pct == null).length
@@ -91,6 +91,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   async function handleSync() {
     setSyncing(true)
     try { await syncData() } catch (e) { console.error(e) } finally { setSyncing(false) }
+    invalidate()
     await loadBets(betFilters)
   }
 
@@ -106,6 +107,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     } finally {
       setSettling(false)
     }
+    invalidate()
     await loadBets(betFilters)
   }
 
@@ -115,6 +117,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     try {
       const result = await computeCLV()
       setClvResult(result)
+      invalidate()
       await loadBets(betFilters)
     } catch (e) { console.error(e) }
     finally { setComputingCLV(false) }
