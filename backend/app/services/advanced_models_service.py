@@ -92,15 +92,14 @@ class AdvancedModelsService:
             self._loaded = True
             return
 
-        # These fit scipy/numpy models across every league in the history and are
-        # CPU-bound — seconds on a small DB, minutes once a full history is loaded.
-        # Run them in a worker thread so the async event loop keeps serving requests
-        # and health checks instead of freezing the single web worker (which made the
-        # Fly proxy return 503 for the whole site during each sync). numpy/scipy
-        # release the GIL during the heavy math, so the event loop stays responsive.
+        # CPU-bound fitting — run in worker threads so the event loop keeps serving
+        # requests and health checks. Glicko-2 and ht_proxies are each one thread
+        # call (they're fast). ZINB fits each league in a separate thread so the
+        # event loop gets a turn between leagues (preventing health-check timeouts
+        # during the largest leagues, which previously caused Fly to report 503).
         import asyncio
         await asyncio.to_thread(self._fit_glicko, records)
-        await asyncio.to_thread(self._fit_zinb_per_league, records)
+        await self._fit_zinb_leagues_async(records)
         await asyncio.to_thread(self._compute_ht_proxies, records)
         self._loaded = True
         logger.info(
@@ -146,35 +145,42 @@ class AdvancedModelsService:
         except Exception as exc:
             logger.warning("Glicko-2 fitting failed: %s", exc)
 
-    def _fit_zinb_per_league(self, records: list[dict]) -> None:
+    async def _fit_zinb_leagues_async(self, records: list[dict]) -> None:
+        """Fit one ZINB model per league, each in its own thread.
+
+        Running each league as a separate asyncio.to_thread() call means the
+        event loop gets a turn between leagues. Previously all leagues were
+        batched into one thread; the largest league (90+ teams, 3000-iteration
+        Nelder-Mead per team) held the GIL long enough to fail Fly health checks.
+        """
+        import asyncio
         try:
             from app.engines.zinb import ZINBGoalModel
-
-            # Group by league
-            from collections import defaultdict
-            by_league: dict[str, list[dict]] = defaultdict(list)
-            for r in records:
-                league = (r.get("league") or "unknown").lower().strip()
-                by_league[league].append({
-                    "home_team_id": _team_hash(r["home_team"]),
-                    "away_team_id": _team_hash(r["away_team"]),
-                    "home_goals": int(r["home_score"]),
-                    "away_goals": int(r["away_score"]),
-                    "match_date": str(r["event_date"]),
-                })
-
-            for league, matches in by_league.items():
-                if len(matches) < _MIN_FIXTURES_FOR_ZINB:
-                    continue
-                try:
-                    m = ZINBGoalModel()
-                    m.fit(matches)
-                    if m.fitted:
-                        self._zinb_models[league] = m
-                except Exception as exc:
-                    logger.debug("ZINB fit failed for %r: %s", league, exc)
         except ImportError:
-            pass
+            return
+
+        from collections import defaultdict
+        by_league: dict[str, list[dict]] = defaultdict(list)
+        for r in records:
+            league = (r.get("league") or "unknown").lower().strip()
+            by_league[league].append({
+                "home_team_id": _team_hash(r["home_team"]),
+                "away_team_id": _team_hash(r["away_team"]),
+                "home_goals": int(r["home_score"]),
+                "away_goals": int(r["away_score"]),
+                "match_date": str(r["event_date"]),
+            })
+
+        for league, matches in by_league.items():
+            if len(matches) < _MIN_FIXTURES_FOR_ZINB:
+                continue
+            try:
+                m = ZINBGoalModel()
+                await asyncio.to_thread(m.fit, matches)
+                if m.fitted:
+                    self._zinb_models[league] = m
+            except Exception as exc:
+                logger.debug("ZINB fit failed for %r: %s", league, exc)
 
     def _compute_ht_proxies(self, records: list[dict]) -> None:
         """
