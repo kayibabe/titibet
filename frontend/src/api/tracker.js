@@ -61,6 +61,12 @@ export async function deduplicateBets() {
   return res.json()
 }
 
+export async function normalizeStakes(stake = 50_000) {
+  const res = await apiFetch(`${BASE}/bets/normalize-stakes?stake=${stake}`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Normalize stakes failed: ${res.status}`)
+  return res.json()
+}
+
 export async function settleResults(run_date) {
   const params = run_date ? `?run_date=${run_date}` : ''
   const res = await apiFetch(`${BASE}/settle-results${params}`, { method: 'POST' })

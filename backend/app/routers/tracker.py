@@ -525,6 +525,29 @@ async def delete_bet(
     return {"deleted": True}
 
 
+@router.post("/bets/normalize-stakes")
+async def normalize_stakes(
+    stake: float = Query(50_000.0, description="Target flat stake to apply to all bets"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Set every tracked bet for this user to the given flat stake and recompute P/L."""
+    result = await db.execute(
+        select(TrackedBet).where(TrackedBet.user_id == current_user.id)
+    )
+    bets = list(result.scalars().all())
+    updated = 0
+    for bet in bets:
+        if bet.stake == stake:
+            continue
+        bet.stake = round(stake, 2)
+        if bet.result_status in {"Won", "Lost", "Void"}:
+            _apply_settlement(bet, bet.result_status)
+        updated += 1
+    await db.commit()
+    return {"updated": updated, "stake": stake}
+
+
 @router.post("/bets/deduplicate")
 async def deduplicate_bets(
     db: AsyncSession = Depends(get_db),

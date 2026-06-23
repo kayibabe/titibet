@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { RefreshCw, CheckCircle, TrendingUp, Lock, Upload, MoreHorizontal, Bot, User, Layers } from 'lucide-react'
 import { useTracker } from '../store/useTracker'
-import { syncData, computeCLV, deduplicateBets } from '../api/tracker'
+import { syncData, computeCLV, deduplicateBets, normalizeStakes } from '../api/tracker'
 import { triggerAdminSettle } from '../api/admin'
 import BetTable from '../components/tracker/BetTable'
 import PLChart from '../components/tracker/PLChart'
@@ -32,8 +32,10 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const [showImport, setShowImport]     = useState(false)
   const [moreOpen, setMoreOpen]         = useState(false)
   const [clvResult, setClvResult]       = useState(null)
-  const [deduping, setDeduping]         = useState(false)
-  const [dedupResult, setDedupResult]   = useState(null)
+  const [deduping, setDeduping]           = useState(false)
+  const [dedupResult, setDedupResult]     = useState(null)
+  const [normalizing, setNormalizing]     = useState(false)
+  const [normalizeResult, setNormalizeResult] = useState(null)
   const { bets, loading, error, loadBets, invalidate } = useTracker()
 
   const pendingCount = bets.filter(b => b.result_status === 'Pending').length
@@ -113,6 +115,19 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     await loadBets(betFilters)
   }
 
+  async function handleNormalizeStakes() {
+    setNormalizing(true)
+    setNormalizeResult(null)
+    try {
+      const res = await normalizeStakes(50_000)
+      setNormalizeResult(res)
+      setTimeout(() => setNormalizeResult(null), 6000)
+      invalidate()
+      await loadBets(betFilters)
+    } catch (e) { console.error(e) }
+    finally { setNormalizing(false) }
+  }
+
   async function handleDedup() {
     setDeduping(true)
     setDedupResult(null)
@@ -182,6 +197,13 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           )
         })()}
 
+        {/* Normalize stakes result toast */}
+        {normalizeResult != null && (
+          <span className="text-xs font-medium text-emerald-400">
+            ✓ {normalizeResult.updated} bet{normalizeResult.updated !== 1 ? 's' : ''} updated to K50,000
+          </span>
+        )}
+
         {/* Dedup result toast */}
         {dedupResult != null && (
           <span className="text-xs font-medium text-emerald-400">
@@ -228,6 +250,15 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
                     <Lock size={14} /> CLV · Pro
                   </div>
                 )}
+                <button
+                  onClick={() => { setMoreOpen(false); handleNormalizeStakes() }}
+                  disabled={normalizing}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors text-left"
+                  title="Set all bets to K50,000 flat stake and recompute P/L"
+                >
+                  <Layers size={14} className={`text-emerald-400 ${normalizing ? 'animate-pulse' : ''}`} />
+                  {normalizing ? 'Updating stakes…' : 'Set All Stakes → K50k'}
+                </button>
                 <button
                   onClick={() => { setMoreOpen(false); handleDedup() }}
                   disabled={deduping}
