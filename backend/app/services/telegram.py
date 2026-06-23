@@ -34,6 +34,7 @@ from app.core.config import (
     DISABLED_MARKETS,
     DISABLED_LEAGUES,
     OVER_GOALS_SUPPRESSED_LEAGUES,
+    DUAL_HIGH_ODDS_CEILING,
 )
 from app.models import Signal, Fixture
 from app.services.signal_engine import _get_underperforming_leagues
@@ -394,7 +395,22 @@ async def _query_all_rows(db: AsyncSession, run_date: date) -> list[tuple[Signal
                     & Signal.market.in_(_over_list)
                 )
             )
-    return list((await db.execute(query)).all())
+    rows = list((await db.execute(query)).all())
+
+    # Mirror the router's Both+High odds ceiling — don't push picks to subscribers
+    # that the signal list would suppress.
+    if DUAL_HIGH_ODDS_CEILING:
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.dual_confidence == "High"
+                and sig.dual_agreement == "Both"
+                and sig.market in DUAL_HIGH_ODDS_CEILING
+                and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
+            )
+        ]
+
+    return rows
 
 
 def _configured_titibet_channels() -> list[tuple[str, str]]:

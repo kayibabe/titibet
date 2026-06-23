@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Signal, Fixture, TrackedBet
 from app.models.user import User as _User  # noqa: F401 — registers users table in SA metadata
+from app.core.config import DUAL_HIGH_ODDS_CEILING
 
 logger = logging.getLogger("titibet.auto_tracker")
 
@@ -96,6 +97,17 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
                 odds = round(1.0 / prob, 3)
             else:
                 continue
+
+        # Skip Both+High picks whose odds exceed the serving-time ceiling —
+        # consistent with what the router shows subscribers.
+        ceiling = DUAL_HIGH_ODDS_CEILING.get(signal.market)
+        if (
+            ceiling is not None
+            and signal.dual_confidence == "High"
+            and signal.dual_agreement == "Both"
+            and odds >= ceiling
+        ):
+            continue
 
         is_dual = signal.dual_confidence == "High" and signal.dual_agreement == "Both"
         match_name = f"{fixture.home_team} vs {fixture.away_team}"

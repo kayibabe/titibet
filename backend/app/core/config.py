@@ -447,6 +447,17 @@ POISSON_ONLY_MAX_ODDS: dict[str, float] = {
     "Home Over 0.5": 2.49,
 }
 
+# Serving-time odds ceiling for Both+High signals where the market is most
+# sceptical. Empirical evidence (n=95 settled, 2026-06-23): Home Over 0.5
+# Both+High at odds ≥2.50 — market implies ≤40% but our model fights hardest
+# here and is least reliable. Overall Both+High hit rate is 65.3% vs 85.0%
+# for Poisson Only; the gap widens at the high-odds tail.
+# Applied at serving time (router) and auto-tracker; does not require
+# signal recomputation.
+DUAL_HIGH_ODDS_CEILING: dict[str, float] = {
+    "Home Over 0.5": 2.50,
+}
+
 # Kelly fraction cap for Poisson-only signals.
 # Lower than Dual (max_kelly_pct = 2%) because Poisson-only has no Bayesian
 # confirmation — one engine rather than two. Quarter-Kelly applied, capped at 1.5%.

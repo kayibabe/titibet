@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_optional, get_current_user
 from app.core.database import get_db
 from sqlalchemy import func
-from app.core.config import get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES, MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET
+from app.core.config import get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES, MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING
 from app.models import Signal, Fixture, TrackedBet
 from app.models.odds import MarketSnapshot
 from app.models.user import User
@@ -344,6 +344,20 @@ async def list_signals(
 
     rows = (await db.execute(query)).all()
 
+    # Serving-time odds ceiling for Both+High signals — suppresses picks where
+    # the market is most sceptical and our models fight hardest but hit least.
+    # DUAL_HIGH_ODDS_CEILING is keyed by market; signals not in the dict are unaffected.
+    if DUAL_HIGH_ODDS_CEILING:
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.dual_confidence == "High"
+                and sig.dual_agreement == "Both"
+                and sig.market in DUAL_HIGH_ODDS_CEILING
+                and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
+            )
+        ]
+
     # CLV market ranks: one DB query, used for all signals in this response.
     # Only computed for the default "system" sort where the ranking matters most.
     clv_ranks: dict[str, int] = {}
@@ -463,6 +477,16 @@ async def stat_driven_picks(
                 )
 
     rows = (await db.execute(query)).all()
+
+    # Apply the same Both+High odds ceiling as the main list endpoint.
+    if DUAL_HIGH_ODDS_CEILING:
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.market in DUAL_HIGH_ODDS_CEILING
+                and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
+            )
+        ]
 
     clv_ranks: dict[str, int] = {}
     try:

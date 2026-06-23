@@ -52,8 +52,10 @@ def _recommended_stake(kelly_pct: float, confidence: str, agreement: str) -> flo
     # Do NOT multiply by settings.kelly_fraction again -- that would apply the
     # fraction twice (e.g. 0.25 x 0.25 = 6.25% instead of the intended 25%).
     base = min(kelly_pct, unit)
-    if agreement == "Both" and confidence == "High":
-        base = min(base * 1.5, settings.max_kelly_pct)
+    # No agreement/confidence stake multiplier — empirical data (n=208 settled,
+    # 2026-06-23) shows Both+High picks hit 65.3% vs Poisson Only 85.0%.
+    # The higher odds on Both+High do not compensate; Kelly fraction is lower
+    # (10% vs 17.4%). Adding a boost here would over-stake the weaker signal.
     return round(base, 4)
 
 
