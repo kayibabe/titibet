@@ -25,6 +25,7 @@ class TrackPickRequest(BaseModel):
 
 class BetUpdate(BaseModel):
     stake: Optional[float] = None
+    odds: Optional[float] = None
     result_status: Optional[str] = None
     notes: Optional[str] = None
 

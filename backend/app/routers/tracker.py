@@ -413,13 +413,14 @@ async def update_bet(
     if not bet:
         raise HTTPException(404, "Bet not found")
     prior_status = bet.result_status
+    if payload.odds is not None:
+        bet.odds = round(payload.odds, 4)
     if payload.stake is not None:
         bet.stake = round(payload.stake, 2)
     if payload.result_status is not None:
         _apply_settlement(bet, payload.result_status)
-    elif payload.stake is not None and prior_status in {"Won", "Lost", "Void"}:
-        # Stake-only edits on settled bets must recompute P/L so analytics, ROI,
-        # and ticket summaries remain trustworthy.
+    elif (payload.stake is not None or payload.odds is not None) and prior_status in {"Won", "Lost", "Void"}:
+        # Stake or odds edits on settled bets must recompute P/L.
         _apply_settlement(bet, prior_status)
     if payload.notes is not None:
         bet.notes = payload.notes
@@ -502,6 +503,61 @@ async def bulk_import_bets(
 
     await db.commit()
     return {"imported": imported, "skipped": skipped, "errors": errors}
+
+
+@router.delete("/bets/{bet_id}")
+async def delete_bet(
+    bet_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(TrackedBet).where(
+            TrackedBet.id == bet_id,
+            TrackedBet.user_id == current_user.id,
+        )
+    )
+    bet = result.scalar_one_or_none()
+    if not bet:
+        raise HTTPException(404, "Bet not found")
+    await db.delete(bet)
+    await db.commit()
+    return {"deleted": True}
+
+
+@router.post("/bets/deduplicate")
+async def deduplicate_bets(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Keep the highest-stake bet per (fixture_id, market_type) group; delete the rest."""
+    result = await db.execute(
+        select(TrackedBet).where(
+            TrackedBet.user_id == current_user.id,
+            TrackedBet.fixture_id.isnot(None),
+        ).order_by(TrackedBet.fixture_id, TrackedBet.market_type, TrackedBet.stake.desc(), TrackedBet.created_at.desc())
+    )
+    bets = list(result.scalars().all())
+
+    seen: dict[tuple, int] = {}
+    to_delete: list[int] = []
+    for bet in bets:
+        key = (bet.fixture_id, bet.market_type)
+        if key not in seen:
+            seen[key] = bet.id
+        else:
+            to_delete.append(bet.id)
+
+    if to_delete:
+        await db.execute(
+            delete(TrackedBet).where(
+                TrackedBet.id.in_(to_delete),
+                TrackedBet.user_id == current_user.id,
+            )
+        )
+        await db.commit()
+
+    return {"removed": len(to_delete)}
 
 
 @router.delete("/bets/pending")

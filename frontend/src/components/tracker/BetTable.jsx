@@ -1,6 +1,7 @@
 ﻿import { useState } from 'react'
-import { Download, Lock, ChevronDown, ChevronRight, Ticket, StickyNote, Bot } from 'lucide-react'
+import { Download, Lock, ChevronDown, ChevronRight, Ticket, StickyNote, Bot, Pencil, Trash2, X } from 'lucide-react'
 import { fmtK, fmtPL, fmtPLCompact } from '../../utils/format'
+import { updateBet, deleteBet } from '../../api/tracker'
 
 function escapeCsv(val) {
   if (val == null) return ''
@@ -150,8 +151,138 @@ function CLVPill({ clvPct, closingOdds }) {
   )
 }
 
+// ── Edit Bet modal ────────────────────────────────────────────────────────────
+const RESULT_OPTIONS = ['Pending', 'Won', 'Lost', 'Void']
+
+function EditBetModal({ bet, onClose, onSaved }) {
+  const matchName = bet.home_team && bet.away_team
+    ? `${bet.home_team} vs ${bet.away_team}`
+    : bet.match_name
+
+  const [stake, setStake]   = useState(String(bet.stake ?? ''))
+  const [odds, setOdds]     = useState(String(bet.odds ?? ''))
+  const [status, setStatus] = useState(bet.result_status ?? 'Pending')
+  const [notes, setNotes]   = useState(bet.notes ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState(null)
+
+  const parsedStake = parseFloat(stake)
+  const parsedOdds  = parseFloat(odds)
+  const estimatedPL = Number.isFinite(parsedStake) && Number.isFinite(parsedOdds) && parsedOdds > 1
+    ? status === 'Won'  ? parsedStake * (parsedOdds - 1)
+    : status === 'Lost' ? -parsedStake
+    : null
+    : null
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!Number.isFinite(parsedStake) || parsedStake <= 0) { setError('Enter a valid stake.'); return }
+    if (!Number.isFinite(parsedOdds)  || parsedOdds  <= 1) { setError('Enter valid odds > 1.'); return }
+    setSaving(true)
+    setError(null)
+    try {
+      await updateBet(bet.id, {
+        stake: parsedStake,
+        odds:  parsedOdds,
+        result_status: status,
+        notes: notes.trim() || null,
+      })
+      onSaved()
+      onClose()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="bg-[var(--bg)] rounded-2xl border border-[var(--border)] shadow-xl w-full max-w-md mx-4">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
+          <div>
+            <h3 className="font-semibold text-[var(--text-h)]">Edit Bet</h3>
+            <p className="text-xs text-[var(--text)] opacity-70 mt-0.5">{matchName} · {bet.market_type}</p>
+          </div>
+          <button onClick={onClose} className="text-[var(--text)] hover:text-[var(--text-h)]">
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-sm text-[var(--text)] mb-1 block">Stake (K)</span>
+              <input
+                type="number" step="0.01" min="0.01"
+                value={stake}
+                onChange={e => setStake(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--text-h)] text-sm focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]"
+                required
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm text-[var(--text)] mb-1 block">Odds</span>
+              <input
+                type="number" step="0.001" min="1.01"
+                value={odds}
+                onChange={e => setOdds(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--text-h)] text-sm focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]"
+                required
+              />
+            </label>
+          </div>
+
+          <label className="block">
+            <span className="text-sm text-[var(--text)] mb-1 block">Result</span>
+            <select
+              value={status}
+              onChange={e => setStatus(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--text-h)] text-sm focus:outline-none focus:border-[var(--accent)]"
+            >
+              {RESULT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </label>
+
+          {estimatedPL !== null && (
+            <div className={`px-3 py-2 rounded-lg text-sm font-mono font-semibold ${estimatedPL >= 0 ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+              New P&L: {fmtPL(estimatedPL)}
+            </div>
+          )}
+
+          <label className="block">
+            <span className="text-sm text-[var(--text)] mb-1 block">Notes</span>
+            <textarea
+              rows="2"
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--text-h)] text-sm focus:outline-none focus:border-[var(--accent)] resize-none"
+            />
+          </label>
+
+          {error && <p className="text-xs text-red-400">{error}</p>}
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 px-4 py-2 rounded-lg border border-[var(--border)] text-sm text-[var(--text)] hover:bg-[var(--code-bg)] transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="flex-1 px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-60 transition-opacity">
+              {saving ? 'Saving…' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ── Shared bet row renderer (used inside every source section) ────────────────
-function BetRow({ bet }) {
+function BetRow({ bet, onRefresh }) {
+  const [editing, setEditing]   = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
   const status = bet.result_status
   const pl = actualPL(bet)
   const isPending = status === 'Pending'
@@ -171,7 +302,24 @@ function BetRow({ bet }) {
     ? `${bet.home_team} vs ${bet.away_team}`
     : bet.match_name
 
+  async function handleDelete() {
+    if (!window.confirm(`Delete this bet?\n${matchName} · ${bet.market_type}`)) return
+    setDeleting(true)
+    try {
+      await deleteBet(bet.id)
+      onRefresh?.()
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
+    <>
+    {editing && (
+      <EditBetModal bet={bet} onClose={() => setEditing(false)} onSaved={() => onRefresh?.()} />
+    )}
     <div className="flex items-center justify-between px-4 py-3 bg-[var(--bg)] hover:bg-[var(--code-bg)] transition-colors gap-3">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
@@ -220,16 +368,35 @@ function BetRow({ bet }) {
         <CLVPill clvPct={bet.clv_pct} closingOdds={bet.closing_odds} />
       </div>
 
+      <div className="shrink-0 flex flex-col gap-1">
+        <button
+          onClick={() => setEditing(true)}
+          title="Edit bet"
+          className="p-1.5 rounded-md text-[var(--text)] opacity-50 hover:opacity-100 hover:bg-[var(--code-bg)] transition-all"
+        >
+          <Pencil size={13} />
+        </button>
+        <button
+          onClick={handleDelete}
+          disabled={deleting}
+          title="Delete bet"
+          className="p-1.5 rounded-md text-[var(--text)] opacity-50 hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 disabled:opacity-30 transition-all"
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+
       <div className={`shrink-0 rounded-lg px-4 py-2 text-center min-w-[110px] ${badgeBg}`}>
         <div className={`text-xs font-semibold ${badgeText}`}>{status}</div>
         <div className={`text-sm font-bold font-mono ${badgeText}`}>{plText}</div>
       </div>
     </div>
+    </>
   )
 }
 
 // ── Date-grouped list inside a source section ─────────────────────────────────
-function DateGroupedBets({ bets }) {
+function DateGroupedBets({ bets, onRefresh }) {
   const groups = groupByDate(bets)
   return (
     <div className="space-y-4">
@@ -253,7 +420,7 @@ function DateGroupedBets({ bets }) {
               </span>
             </div>
             <div className="rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
-              {groupBets.map(bet => <BetRow key={bet.id} bet={bet} />)}
+              {groupBets.map(bet => <BetRow key={bet.id} bet={bet} onRefresh={onRefresh} />)}
             </div>
           </div>
         )
@@ -280,7 +447,7 @@ const SOURCE_META = {
   },
 }
 
-function SourceSection({ sourceKey, bets }) {
+function SourceSection({ sourceKey, bets, onRefresh }) {
   const [open, setOpen] = useState(true)
   const meta = SOURCE_META[sourceKey] || SOURCE_META.individual
   const Icon = meta.icon
@@ -309,12 +476,12 @@ function SourceSection({ sourceKey, bets }) {
         </span>
       </button>
 
-      {open && <DateGroupedBets bets={bets} />}
+      {open && <DateGroupedBets bets={bets} onRefresh={onRefresh} />}
     </div>
   )
 }
 
-export default function BetTable({ bets, isPro = true, onUpgrade }) {
+export default function BetTable({ bets, isPro = true, onUpgrade, onRefresh }) {
   if (!bets.length) {
     return (
       <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-2 text-center">
@@ -430,10 +597,10 @@ export default function BetTable({ bets, isPro = true, onUpgrade }) {
 
       <div className="space-y-6">
         {ho05Singles.length > 0 && (
-          <SourceSection key="ho05_singles" sourceKey="ho05_singles" bets={ho05Singles} />
+          <SourceSection key="ho05_singles" sourceKey="ho05_singles" bets={ho05Singles} onRefresh={onRefresh} />
         )}
         {otherBets.length > 0 && (
-          <SourceSection key="individual" sourceKey="individual" bets={otherBets} />
+          <SourceSection key="individual" sourceKey="individual" bets={otherBets} onRefresh={onRefresh} />
         )}
       </div>
     </div>

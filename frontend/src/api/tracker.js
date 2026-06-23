@@ -49,6 +49,18 @@ export async function updateBet(id, payload) {
   return res.json()
 }
 
+export async function deleteBet(id) {
+  const res = await apiFetch(`${BASE}/bets/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Delete bet failed: ${res.status}`)
+  return res.json()
+}
+
+export async function deduplicateBets() {
+  const res = await apiFetch(`${BASE}/bets/deduplicate`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Dedup failed: ${res.status}`)
+  return res.json()
+}
+
 export async function settleResults(run_date) {
   const params = run_date ? `?run_date=${run_date}` : ''
   const res = await apiFetch(`${BASE}/settle-results${params}`, { method: 'POST' })

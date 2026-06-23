@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { RefreshCw, CheckCircle, TrendingUp, Lock, Upload, MoreHorizontal, Bot, User } from 'lucide-react'
+import { RefreshCw, CheckCircle, TrendingUp, Lock, Upload, MoreHorizontal, Bot, User, Layers } from 'lucide-react'
 import { useTracker } from '../store/useTracker'
-import { syncData, computeCLV } from '../api/tracker'
+import { syncData, computeCLV, deduplicateBets } from '../api/tracker'
 import { triggerAdminSettle } from '../api/admin'
 import BetTable from '../components/tracker/BetTable'
 import PLChart from '../components/tracker/PLChart'
@@ -32,6 +32,8 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const [showImport, setShowImport]     = useState(false)
   const [moreOpen, setMoreOpen]         = useState(false)
   const [clvResult, setClvResult]       = useState(null)
+  const [deduping, setDeduping]         = useState(false)
+  const [dedupResult, setDedupResult]   = useState(null)
   const { bets, loading, error, loadBets, invalidate } = useTracker()
 
   const pendingCount = bets.filter(b => b.result_status === 'Pending').length
@@ -111,6 +113,19 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     await loadBets(betFilters)
   }
 
+  async function handleDedup() {
+    setDeduping(true)
+    setDedupResult(null)
+    try {
+      const res = await deduplicateBets()
+      setDedupResult(res)
+      setTimeout(() => setDedupResult(null), 5000)
+      invalidate()
+      await loadBets(betFilters)
+    } catch (e) { console.error(e) }
+    finally { setDeduping(false) }
+  }
+
   async function handleComputeCLV() {
     setComputingCLV(true)
     setClvResult(null)
@@ -167,6 +182,13 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           )
         })()}
 
+        {/* Dedup result toast */}
+        {dedupResult != null && (
+          <span className="text-xs font-medium text-emerald-400">
+            ✓ {dedupResult.removed} duplicate{dedupResult.removed !== 1 ? 's' : ''} removed
+          </span>
+        )}
+
         {/* CLV result toast */}
         {clvResult && (
           <span className="text-xs text-green-400 font-medium">
@@ -206,6 +228,15 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
                     <Lock size={14} /> CLV · Pro
                   </div>
                 )}
+                <button
+                  onClick={() => { setMoreOpen(false); handleDedup() }}
+                  disabled={deduping}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors text-left"
+                  title="Remove duplicate entries for the same fixture"
+                >
+                  <Layers size={14} className={`text-amber-400 ${deduping ? 'animate-pulse' : ''}`} />
+                  {deduping ? 'Removing duplicates…' : 'Remove Duplicates'}
+                </button>
                 <button
                   onClick={() => { setMoreOpen(false); setShowImport(true) }}
                   className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-[var(--text-h)] hover:bg-[var(--code-bg)] transition-colors text-left"
@@ -301,7 +332,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
 
       {loading && <div className="flex justify-center py-8"><LoadingSpinner /></div>}
       {error && <p className="text-sm text-red-400">{error}</p>}
-      {!loading && <BetTable bets={filteredBets} isPro={isPro} onUpgrade={onUpgrade} />}
+      {!loading && <BetTable bets={filteredBets} isPro={isPro} onUpgrade={onUpgrade} onRefresh={() => { invalidate(); loadBets(betFilters) }} />}
 
       {/* Import CSV modal */}
       {showImport && (
