@@ -21,6 +21,7 @@ from app.services.league_watch_guard import get_watchlist_status, run_league_wat
 from app.services.telegram import (
     _send_to as telegram_send_to,
     push_results_report as telegram_push_results,
+    push_morning_digest as telegram_push_morning_digest,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -317,6 +318,19 @@ async def telegram_push_results_endpoint(
         target = _date.today()
     sent = await telegram_push_results(db, target, force=True)
     return {"sent": sent, "date": target.isoformat()}
+
+
+@router.post("/telegram/push-digest")
+async def telegram_push_digest_endpoint(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Manually push today's signal digest to all configured Telegram channels.
+    Useful for testing or forcing a send outside the scheduled 07:30/18:30 UTC windows.
+    """
+    n_sent = await telegram_push_morning_digest(db)
+    return {"sent": n_sent, "message": f"Digest sent to {n_sent} channel(s)"}
 
 
 # ── API-Football Quota ────────────────────────────────────────────────────────

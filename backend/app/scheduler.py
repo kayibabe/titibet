@@ -40,6 +40,7 @@ from app.services.telegram import (
     push_kickoff_alerts,
     check_and_push_pending_results,
     push_signal_digest,
+    push_morning_digest,
 )
 
 logger = logging.getLogger("titibet.scheduler")
@@ -354,6 +355,23 @@ async def _kickoff_alert_job() -> None:
             logger.exception("Kickoff alert job failed — continuing normally")
 
 
+async def _morning_digest_job() -> None:
+    """
+    Morning digest — runs 07:30 UTC (09:30 CAT).
+
+    Broadcasts today's ranked signal picks to all configured Telegram channels
+    so subscribers see the day's full list at wake-up time. Runs 90 min after
+    the 06:00 UTC sync to guarantee signals are computed.
+    No-op when Telegram is not configured.
+    """
+    async with AsyncSessionLocal() as db:
+        try:
+            n_sent = await push_morning_digest(db)
+            logger.info("Morning digest: broadcast to %d channel(s)", n_sent)
+        except Exception:
+            logger.exception("Morning digest push failed")
+
+
 async def _nightly_digest_job() -> None:
     """
     Evening digest — runs 18:30 UTC (20:30 CAT).
@@ -456,6 +474,16 @@ def get_scheduler() -> AsyncIOScheduler:
             replace_existing=True,
             misfire_grace_time=120,
         )
+        # Morning digest — 07:30 UTC (09:30 CAT). Runs 90 min after the 06:00
+        # sync so today's signals are computed. Pushes the day's ranked picks
+        # so subscribers see them at wake-up time.
+        _scheduler.add_job(
+            _morning_digest_job,
+            CronTrigger(hour=7, minute=30),
+            id="morning-digest",
+            replace_existing=True,
+            misfire_grace_time=1800,
+        )
         # Evening digest — 18:30 UTC (20:30 CAT). Pre-syncs tomorrow so
         # after-midnight (CAT) matches have signals, then broadcasts the
         # 'tonight + overnight' digest to General/Free/Pro channels.
@@ -497,7 +525,8 @@ def get_scheduler() -> AsyncIOScheduler:
         )
         logger.info(
             "Scheduler configured for %d sync times + kickoff alerts every 60 min "
-            "(06:00-00:00 UTC) + evening digest 18:30 UTC + nightly results 02:00 UTC",
+            "(06:00-00:00 UTC) + morning digest 07:30 UTC + evening digest 18:30 UTC "
+            "+ nightly results 02:00 UTC",
             len(settings.sync_times_list),
         )
     return _scheduler

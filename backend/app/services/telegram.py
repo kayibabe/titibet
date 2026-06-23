@@ -344,7 +344,7 @@ async def push_kickoff_alerts(db: AsyncSession) -> int:
         text = text[:_MAX_CHARS - 50] + "\n... (truncated)"
 
     sent = 0
-    for chat_id, _profile in targets:
+    for chat_id, channel_type in targets:
         try:
             ok = await _send_to(chat_id, text)
         except Exception as _exc:
@@ -862,6 +862,50 @@ async def push_results_report(
             )
 
     return any_sent
+
+
+async def push_morning_digest(db: AsyncSession, free_limit: int = 3) -> int:
+    """
+    Broadcast today's full signal list as a morning digest (all-day picks).
+    Called after the 06:00 UTC sync so subscribers see the day's picks at wake-up.
+    Returns the number of channels sent to.
+    """
+    if not settings.telegram_bot_token:
+        return 0
+    targets = _configured_titibet_channels()
+    if not targets:
+        return 0
+
+    today = date.today()
+    now = datetime.now(tz=timezone.utc)
+
+    rows = await _query_all_rows(db, today)
+    deduped = _best_per_fixture(rows)
+    if not deduped:
+        logger.info("Morning digest: no signals for %s — skipping", today)
+        return 0
+
+    by_rank = sorted(deduped, key=lambda r: _system_rank(r[0], r[1]), reverse=True)
+
+    sent = 0
+    for chat_id, channel_type in targets:
+        if channel_type == "free":
+            text = build_signal_digest(by_rank, channel_type="free", limit=free_limit, total=len(deduped), now=now)
+        else:
+            # Morning digest: rank order (best first) so subscribers see top picks immediately
+            text = build_signal_digest(by_rank, channel_type=channel_type, total=len(deduped), now=now)
+        # Override title line to say "Today's Picks" instead of "Tonight & Overnight"
+        text = text.replace("Tonight &amp; Overnight", "Today's Picks")
+        text = text.replace("Tonight &amp; after-midnight kickoffs", "Today's signal picks")
+        ok = False
+        for chunk in _split_message(text):
+            ok = await _send_to(chat_id, chunk)
+        if ok:
+            sent += 1
+
+    if sent:
+        logger.info("Morning digest sent to %d channel(s) — %d picks for %s", sent, len(deduped), today)
+    return sent
 
 
 async def check_and_push_pending_results(db: AsyncSession) -> int:
