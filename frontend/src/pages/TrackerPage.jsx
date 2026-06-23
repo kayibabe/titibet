@@ -36,6 +36,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const [dedupResult, setDedupResult]     = useState(null)
   const [normalizing, setNormalizing]     = useState(false)
   const [normalizeResult, setNormalizeResult] = useState(null)
+  const [actionError, setActionError]     = useState(null)
   const { bets, loading, error, loadBets, invalidate } = useTracker()
 
   const pendingCount = bets.filter(b => b.result_status === 'Pending').length
@@ -124,8 +125,10 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
       setTimeout(() => setNormalizeResult(null), 6000)
       invalidate()
       await loadBets(betFilters)
-    } catch (e) { console.error(e) }
-    finally { setNormalizing(false) }
+    } catch (e) {
+      setActionError(e.message || 'Failed — are you logged in?')
+      setTimeout(() => setActionError(null), 7000)
+    } finally { setNormalizing(false) }
   }
 
   async function handleDedup() {
@@ -137,8 +140,10 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
       setTimeout(() => setDedupResult(null), 5000)
       invalidate()
       await loadBets(betFilters)
-    } catch (e) { console.error(e) }
-    finally { setDeduping(false) }
+    } catch (e) {
+      setActionError(e.message || 'Failed — are you logged in?')
+      setTimeout(() => setActionError(null), 7000)
+    } finally { setDeduping(false) }
   }
 
   async function handleComputeCLV() {
@@ -208,6 +213,13 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
         {dedupResult != null && (
           <span className="text-xs font-medium text-emerald-400">
             ✓ {dedupResult.removed} duplicate{dedupResult.removed !== 1 ? 's' : ''} removed
+          </span>
+        )}
+
+        {/* Action error toast */}
+        {actionError && (
+          <span className="text-xs font-medium text-red-400">
+            ✗ {actionError}
           </span>
         )}
 
