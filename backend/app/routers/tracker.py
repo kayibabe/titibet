@@ -533,7 +533,15 @@ async def normalize_stakes(
 ):
     """Set every tracked bet for this user to the given flat stake and recompute P/L."""
     result = await db.execute(
-        select(TrackedBet).where(TrackedBet.user_id == current_user.id)
+        select(TrackedBet).where(
+            or_(
+                TrackedBet.user_id == current_user.id,
+                and_(
+                    TrackedBet.user_id.is_(None),
+                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+                ),
+            )
+        )
     )
     bets = list(result.scalars().all())
     updated = 0
@@ -556,8 +564,14 @@ async def deduplicate_bets(
     """Keep the highest-stake bet per (fixture_id, market_type) group; delete the rest."""
     result = await db.execute(
         select(TrackedBet).where(
-            TrackedBet.user_id == current_user.id,
             TrackedBet.fixture_id.isnot(None),
+            or_(
+                TrackedBet.user_id == current_user.id,
+                and_(
+                    TrackedBet.user_id.is_(None),
+                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+                ),
+            ),
         ).order_by(TrackedBet.fixture_id, TrackedBet.market_type, TrackedBet.stake.desc(), TrackedBet.created_at.desc())
     )
     bets = list(result.scalars().all())
