@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useEffect } from 'react'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine,
@@ -89,6 +89,13 @@ const MARGIN        = { top: 8, right: 16, bottom: 0, left: 0 }
 export default function PLChart({ bets }) {
   const scrollRef = useRef(null)
   const data = useMemo(() => buildData(bets), [bets])
+
+  // Scroll to the rightmost (most recent) end on mount and whenever data changes
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollLeft = scrollRef.current.scrollWidth
+    }
+  }, [data])
 
   if (data.length < 2) return null
 
