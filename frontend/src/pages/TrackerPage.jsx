@@ -38,6 +38,14 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const [normalizeResult, setNormalizeResult] = useState(null)
   const [actionError, setActionError]     = useState(null)
   const { bets, loading, error, loadBets, invalidate } = useTracker()
+  const [slowLoad, setSlowLoad] = useState(false)
+
+  // After 8 s of loading with no data, surface a hint so the user isn't staring at a blank spinner
+  useEffect(() => {
+    if (!loading || bets.length > 0) { setSlowLoad(false); return }
+    const id = setTimeout(() => setSlowLoad(true), 8_000)
+    return () => clearTimeout(id)
+  }, [loading, bets.length])
 
   const pendingCount = bets.filter(b => b.result_status === 'Pending').length
   const noCLVCount   = bets.filter(b => b.fixture_id && b.clv_pct == null).length
@@ -373,8 +381,27 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
         </>
       )}
 
-      {loading && <div className="flex justify-center py-8"><LoadingSpinner /></div>}
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {loading && (
+        <div className="flex flex-col items-center gap-3 py-8">
+          <LoadingSpinner />
+          {slowLoad && (
+            <p className="text-xs text-[var(--text)] opacity-60 text-center max-w-xs">
+              Server is starting up — this can take up to 30 seconds on first load.
+            </p>
+          )}
+        </div>
+      )}
+      {error && (
+        <div className="flex flex-col items-center gap-2 py-6">
+          <p className="text-sm text-red-400">{error}</p>
+          <button
+            onClick={() => { invalidate(); loadBets(betFilters) }}
+            className="text-xs px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {!loading && <BetTable bets={filteredBets} isPro={isPro} onUpgrade={onUpgrade} onRefresh={() => { invalidate(); loadBets(betFilters) }} />}
 
       {/* Import CSV modal */}

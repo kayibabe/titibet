@@ -6,6 +6,23 @@ import { fetchBets } from '../api/tracker'
 const _cache = { bets: [], key: null, fetchedAt: 0 }
 let _listeners = []
 
+// ── sessionStorage hydration ──────────────────────────────────────────────────
+// Seed the in-memory cache from the previous session so the tracker shows
+// data immediately on page reload instead of a blank spinner.
+const _STORAGE_KEY  = 'titibet_bets_cache'
+const _STORAGE_TTL  = 10 * 60 * 1000   // treat stored bets as fresh for 10 min
+try {
+  const raw = sessionStorage.getItem(_STORAGE_KEY)
+  if (raw) {
+    const { bets, key, fetchedAt } = JSON.parse(raw)
+    if (Array.isArray(bets) && Date.now() - fetchedAt < _STORAGE_TTL) {
+      _cache.bets      = bets
+      _cache.key       = key
+      _cache.fetchedAt = fetchedAt
+    }
+  }
+} catch { /* ignore parse/quota errors */ }
+
 function _subscribe(fn) {
   _listeners.push(fn)
   return () => { _listeners = _listeners.filter(l => l !== fn) }
@@ -45,15 +62,29 @@ export function useTracker() {
     const seq = ++reqSeq.current
     setError(null)
 
+    // 20-second abort so a sleeping Fly.io machine doesn't hang the page forever
+    const controller = new AbortController()
+    const timeoutId  = setTimeout(() => controller.abort(), 20_000)
+
     try {
-      const data = await fetchBets(filters)
+      const data = await fetchBets(filters, { signal: controller.signal })
       if (seq !== reqSeq.current) return   // stale response — a newer fetch is in flight
       _cache.key       = key
       _cache.fetchedAt = Date.now()
       _publish(data)
+      // Persist to sessionStorage so next page reload shows data instantly
+      try {
+        sessionStorage.setItem(_STORAGE_KEY, JSON.stringify({ bets: data, key, fetchedAt: _cache.fetchedAt }))
+      } catch { /* quota exceeded — silent */ }
     } catch (e) {
-      if (seq === reqSeq.current) setError(e.message)
+      if (seq === reqSeq.current) {
+        const msg = e.name === 'AbortError'
+          ? 'Server is taking too long to respond — it may be starting up. Please retry.'
+          : e.message
+        setError(msg)
+      }
     } finally {
+      clearTimeout(timeoutId)
       if (seq === reqSeq.current) setLoading(false)
     }
   }, [])

@@ -28,13 +28,13 @@ export async function trackPick(payload) {
   return res.json()
 }
 
-export async function fetchBets({ date_from, date_to, market_type, result_status } = {}) {
+export async function fetchBets({ date_from, date_to, market_type, result_status } = {}, { signal } = {}) {
   const params = new URLSearchParams()
   if (date_from) params.set('date_from', date_from)
   if (date_to) params.set('date_to', date_to)
   if (market_type) params.set('market_type', market_type)
   if (result_status) params.set('result_status', result_status)
-  const res = await apiFetch(`${BASE}/bets?${params}`)
+  const res = await apiFetch(`${BASE}/bets?${params}`, { signal })
   if (!res.ok) throw new Error(`Bets fetch failed: ${res.status}`)
   return res.json()
 }
