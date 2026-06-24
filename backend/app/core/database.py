@@ -19,8 +19,10 @@ def _set_sqlite_pragmas(dbapi_connection, _connection_record):
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=15000")
+        cursor.execute("PRAGMA busy_timeout=30000")   # 30 s — matches frontend AbortController
         cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA wal_autocheckpoint=400")  # checkpoint every ~1.6 MB (keeps WAL small)
+        cursor.execute("PRAGMA cache_size=-32000")       # 32 MB page cache (speeds up repeated reads)
     finally:
         cursor.close()
 

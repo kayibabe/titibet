@@ -410,6 +410,11 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
     has a performance_factor below 0.72 for 25+ settled bets, confidence is downgraded
     by one tier (High→Medium, Medium→Low). This prevents consistently-poor
     market+league combinations from ranking as high-confidence picks.
+
+    Transaction strategy: all per-date signals are deleted in one short commit BEFORE
+    the fixture loop, so the loop runs with no open write transaction. This prevents
+    the 5-minute write lock that was blocking user track-picks and settlement writes
+    (which hit SQLite's busy_timeout=15 s and then propagated as 30 s frontend timeouts).
     """
     fixture_result = await db.execute(
         select(Fixture).where(Fixture.event_date == run_date)
@@ -446,13 +451,28 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         from app.services.advanced_models_service import AdvancedModelsService
         adv = AdvancedModelsService(db)
 
+    # Pre-delete all existing signals for today in ONE short write transaction,
+    # committed immediately before the fixture loop starts.  This keeps the loop
+    # itself entirely read-only, so other writers (user track-picks, settlement,
+    # auto-tracker) never hit SQLite's busy_timeout waiting for this session.
+    if fixtures:
+        fixture_ids_today = [f.id for f in fixtures]
+        await db.execute(delete(Signal).where(Signal.fixture_id.in_(fixture_ids_today)))
+        await db.commit()
+
     # Collect all new Signal objects across all fixtures before writing to DB.
     # This allows portfolio-level stake normalization (improvement #1) to run
     # after all per-signal Kelly stakes are computed, before the batch commit.
     pending_signals: list[Signal] = []
 
     count = 0
+    _fixture_idx = 0
     for fixture in fixtures:
+        _fixture_idx += 1
+        # Yield to the event loop every 10 fixtures so HTTP requests can be
+        # processed without waiting for the entire computation batch.
+        if _fixture_idx % 10 == 0:
+            await asyncio.sleep(0)
         # Skip fixtures from suppressed leagues (poor ROI or hard-disabled).
         if all_suppressed_leagues and (fixture.league or "").lower().strip() in all_suppressed_leagues:
             continue
@@ -581,8 +601,6 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 bay_by_market[mr.market] = mr
 
         all_markets = set(bay_by_market.keys()) | set(poi_by_market.keys())
-
-        await db.execute(delete(Signal).where(Signal.fixture_id == fixture.id))
 
         fixture_league = (fixture.league or "").strip()
         # Recompute tier from league/country name — not the cached DB value.
