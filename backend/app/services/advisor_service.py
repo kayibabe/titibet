@@ -596,6 +596,75 @@ async def _call_advisor(
     return "none", _err("no_provider", "All configured AI providers are at quota. Add more keys to .env.")
 
 
+# ── Auto-tracking helper ──────────────────────────────────────────────────────
+
+async def _auto_track_acca(
+    db:           AsyncSession,
+    acca:         dict,
+    target_date:  date,
+    current_user: Any | None,
+) -> bool:
+    """
+    Persist the AI acca as a single TrackedBet row (idempotent per user+date).
+    Returns True if newly created, False if a row already existed.
+    """
+    from sqlalchemy import select, or_
+    from sqlalchemy.exc import IntegrityError
+    from app.models.bet import TrackedBet
+
+    legs = acca.get("legs", [])
+    combined_odds = acca.get("combined_odds")
+    if not legs or not combined_odds or combined_odds <= 1.0:
+        return False
+
+    uid: int | None = getattr(current_user, "id", None) if current_user else None
+
+    # Dedup: one acca_advisory row per (user, event_date)
+    dup_q = select(TrackedBet).where(
+        TrackedBet.source_rule_key == "acca_advisory",
+        TrackedBet.event_date == target_date,
+    )
+    if uid is None:
+        dup_q = dup_q.where(TrackedBet.user_id.is_(None))
+    else:
+        dup_q = dup_q.where(
+            or_(TrackedBet.user_id == uid, TrackedBet.user_id.is_(None))
+        )
+    if await db.scalar(dup_q):
+        return False  # already tracked
+
+    leg_summary = "\n".join(
+        f"{i+1}. {leg.get('home_team','')} vs {leg.get('away_team','')} · "
+        f"{leg.get('market','')} @ {float(leg.get('odd') or 0):.2f}"
+        for i, leg in enumerate(legs)
+    )
+    notes = json.dumps({"legs": legs, "leg_summary": leg_summary})
+
+    bet = TrackedBet(
+        user_id=uid,
+        fixture_id=None,
+        bookmaker="AI Acca",
+        event_date=target_date,
+        match_name=f"AI Acca · {len(legs)} leg{'s' if len(legs) != 1 else ''}",
+        league=None,
+        market_type="Accumulator",
+        selection_name="Accumulator",
+        odds=combined_odds,
+        stake=50_000.0,
+        source_rule_key="acca_advisory",
+        source_rule_label="AI Acca of the Day",
+        dual_confidence=acca.get("confidence"),
+        notes=notes,
+    )
+    db.add(bet)
+    try:
+        await db.commit()
+        return True
+    except IntegrityError:
+        await db.rollback()
+        return False
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 async def get_advisor_insights(
@@ -733,6 +802,25 @@ async def get_advisor_insights(
         except (TypeError, ValueError):
             combined_odds = None
 
+    accumulator = {
+        "model":         acca_model_label,
+        "legs":          acca_legs,
+        "combined_odds": combined_odds,
+        "rationale":     acca_result.get("rationale", "") if isinstance(acca_result, dict) else "",
+        "confidence":    acca_result.get("confidence", "Medium") if isinstance(acca_result, dict) else "Medium",
+        "error":         acca_result.get("error") if isinstance(acca_result, dict) else None,
+    }
+
+    # Auto-track the acca as a single TrackedBet row (idempotent — deduped by date)
+    tracked = False
+    if acca_legs and not accumulator.get("error"):
+        try:
+            tracked = await _auto_track_acca(db, accumulator, target_date, current_user)
+        except Exception as exc:
+            logger.warning("_auto_track_acca failed: %s", exc)
+
+    accumulator["tracked"] = tracked
+
     return {
         "configured":        True,
         "date":              target_date.isoformat(),
@@ -749,12 +837,5 @@ async def get_advisor_insights(
             }
             for adv, (model_label, result) in zip(ADVISORS, advisor_outputs)
         ],
-        "accumulator": {
-            "model":         acca_model_label,
-            "legs":          acca_legs,
-            "combined_odds": combined_odds,
-            "rationale":     acca_result.get("rationale", "") if isinstance(acca_result, dict) else "",
-            "confidence":    acca_result.get("confidence", "Medium") if isinstance(acca_result, dict) else "Medium",
-            "error":         acca_result.get("error") if isinstance(acca_result, dict) else None,
-        },
+        "accumulator": accumulator,
     }

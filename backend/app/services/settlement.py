@@ -173,13 +173,136 @@ async def settle_bets_for_date(
             await db.commit()
         logger.info("CLV: computed for %d/%d just-settled bets", clv_updated, len(just_settled))
 
+    # Also settle any pending accumulator bets
+    acca_info = await settle_acca_bets(db)
+
     return {
-        "settled":          settled,
+        "settled":          settled + acca_info["acca_settled"],
+        "acca_settled":     acca_info["acca_settled"],
         "skip_no_fixture":  skip_no_fixture,
         "skip_not_final":   skip_not_final,
         "skip_no_score":    skip_no_score,
         "skip_no_market":   skip_no_market,
     }
+
+
+async def settle_acca_bets(db: AsyncSession) -> dict:
+    """
+    Auto-settle pending accumulator bets (source_rule_key='acca_advisory').
+
+    Rules (standard accumulator settlement):
+    - All legs Won → ticket Wins; P/L = stake × (combined_odds − 1)
+    - Any leg Lost → ticket Lost; P/L = −stake
+    - Void leg(s) → removed; remaining legs decide the ticket; adjusted
+      odds = product of non-void leg odds; P/L = stake × (adjusted_odds − 1)
+    - All legs Void → ticket Void; P/L = 0
+    - Any fixture not yet final → ticket stays Pending
+    """
+    import json as _json
+
+    q = select(TrackedBet).where(
+        TrackedBet.result_status == "Pending",
+        TrackedBet.source_rule_key == "acca_advisory",
+    )
+    result = await db.execute(q)
+    acca_bets: list[TrackedBet] = list(result.scalars().all())
+
+    settled = 0
+
+    for bet in acca_bets:
+        try:
+            notes_data = _json.loads(bet.notes or "{}")
+            legs = notes_data.get("legs", [])
+        except Exception:
+            continue
+
+        if not legs or bet.event_date is None:
+            continue
+
+        leg_outcomes: list[tuple[str, float]] = []  # ("won"|"lost"|"void", odd)
+        all_decided = True
+
+        for leg in legs:
+            home_team = (leg.get("home_team") or "").strip()
+            away_team = (leg.get("away_team") or "").strip()
+            market    = (leg.get("market") or "").strip()
+            odd       = float(leg.get("odd") or 1.0)
+
+            if not home_team or not away_team or not market:
+                leg_outcomes.append(("void", odd))
+                continue
+
+            # Locate the fixture by team names + date
+            fix_q = (
+                select(Fixture)
+                .where(
+                    Fixture.event_date == bet.event_date,
+                    Fixture.home_team  == home_team,
+                    Fixture.away_team  == away_team,
+                )
+            )
+            fixture = await db.scalar(fix_q)
+
+            if fixture is None:
+                # No fixture in DB — void this leg
+                leg_outcomes.append(("void", odd))
+                continue
+
+            fx_status = (fixture.status or "").strip().upper()
+            if fx_status in VOID_STATUSES:
+                leg_outcomes.append(("void", odd))
+                continue
+
+            if not _fixture_is_final(fixture):
+                all_decided = False
+                break
+
+            if fixture.home_score is None or fixture.away_score is None:
+                all_decided = False
+                break
+
+            condition = _score_condition(market)
+            if condition is None:
+                # Unknown market — void the leg rather than blocking settlement
+                leg_outcomes.append(("void", odd))
+                continue
+
+            won = condition(fixture.home_score, fixture.away_score)
+            leg_outcomes.append(("won" if won else "lost", odd))
+
+        if not all_decided or len(leg_outcomes) != len(legs):
+            continue  # one or more fixtures still pending
+
+        has_lost = any(outcome == "lost" for outcome, _ in leg_outcomes)
+        all_void = all(outcome == "void" for outcome, _ in leg_outcomes)
+
+        if has_lost:
+            bet.result_status = "Lost"
+            bet.profit_loss   = round(-bet.stake, 2)
+        elif all_void:
+            bet.result_status = "Void"
+            bet.profit_loss   = 0.0
+        else:
+            # Won — multiply odds of non-void legs only
+            adjusted_odds = 1.0
+            for outcome, odd in leg_outcomes:
+                if outcome == "won":
+                    adjusted_odds *= odd
+            bet.result_status = "Won"
+            bet.profit_loss   = round(bet.stake * (adjusted_odds - 1.0), 2)
+
+        bet.settled_at = datetime.now(timezone.utc)
+        settled += 1
+        logger.info(
+            "settle_acca: bet %s → %s  P/L=%.2f",
+            bet.id, bet.result_status, bet.profit_loss,
+        )
+
+    if settled:
+        await db.commit()
+
+    logger.info("settle_acca_bets: settled %d acca bet(s)", settled)
+    return {"acca_settled": settled}
 
 
 async def refresh_stale_fixtures_and_settle(db: AsyncSession) -> dict:
