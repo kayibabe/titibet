@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Sparkles, AlertTriangle, CheckCircle, MinusCircle, Loader2, RefreshCw, ArrowRight,
-  Download, FileText, Printer, Ticket,
+  Download, FileText, Printer, Ticket, PlusCircle,
 } from 'lucide-react'
 import { fetchAdvisorInsights } from '../../api/advisor'
+import { trackAcca } from '../../api/tracker'
 import ADVISORS_META from './advisorsMeta'
 
 // ── Report export helpers ─────────────────────────────────────────────────────
@@ -249,9 +250,24 @@ function ExportButton({ data, date }) {
 }
 
 // ── Accumulator ticket ────────────────────────────────────────────────────────
-function AccaTicket({ acca }) {
+function AccaTicket({ acca, date }) {
   if (!acca) return null
   const { legs = [], combined_odds, rationale, confidence, error } = acca
+
+  const [trackState, setTrackState] = useState('idle') // idle | loading | done | error
+
+  async function handleTrack() {
+    if (trackState !== 'idle') return
+    setTrackState('loading')
+    try {
+      await trackAcca(acca, date)
+      setTrackState('done')
+    } catch (e) {
+      console.error('Track acca failed:', e)
+      setTrackState('error')
+      setTimeout(() => setTrackState('idle'), 3000)
+    }
+  }
 
   const confCfg = {
     High:   { cls: 'text-green-400 border-green-500/40 bg-green-500/10',  dot: 'bg-green-400' },
@@ -279,6 +295,24 @@ function AccaTicket({ acca }) {
             <span className="text-sm font-bold text-[var(--accent)] tabular-nums">
               @{combined_odds}
             </span>
+          )}
+          {legs.length > 0 && (
+            <button
+              onClick={handleTrack}
+              disabled={trackState === 'loading' || trackState === 'done'}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                trackState === 'done'
+                  ? 'bg-green-500/20 text-green-400 border border-green-500/30 cursor-default'
+                  : trackState === 'error'
+                    ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                    : 'bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-60'
+              }`}
+            >
+              {trackState === 'loading' ? <Loader2 size={11} className="animate-spin" />
+                : trackState === 'done' ? <CheckCircle size={11} />
+                : <PlusCircle size={11} />}
+              {trackState === 'done' ? 'Tracked' : trackState === 'error' ? 'Failed' : 'Track Acca'}
+            </button>
           )}
         </div>
       </div>
@@ -575,7 +609,7 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
 
         {/* Acca of the Day — shown once analysis is loaded */}
         {!loading && data?.accumulator && (
-          <AccaTicket acca={data.accumulator} />
+          <AccaTicket acca={data.accumulator} date={date} />
         )}
 
         {/* Acca skeleton while loading */}

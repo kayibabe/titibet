@@ -135,6 +135,34 @@ export async function autoTrackSignal(signal, { bankroll = DEFAULT_FLAT_STAKE } 
   })
 }
 
+/**
+ * Track an AI accumulator as a single TrackedBet row.
+ * Legs are serialised as JSON into the notes field so BetTable can expand them.
+ */
+export async function trackAcca(acca, date) {
+  const legs = acca.legs || []
+  const legSummary = legs.map((l, i) => {
+    const match = l.home_team && l.away_team ? `${l.home_team} vs ${l.away_team}` : l.match_name || '?'
+    return `${i + 1}. ${match} · ${l.market || '?'} @ ${Number(l.odd || 0).toFixed(2)}`
+  }).join('\n')
+
+  return trackPick({
+    fixture_id:        null,
+    bookmaker:         'AI Acca',
+    event_date:        date,
+    match_name:        `AI Acca · ${legs.length} leg${legs.length !== 1 ? 's' : ''}`,
+    league:            null,
+    market_type:       'Accumulator',
+    selection_name:    'Accumulator',
+    odds:              acca.combined_odds || 1.0,
+    stake:             50_000,
+    source_rule_key:   'acca_advisory',
+    source_rule_label: 'AI Acca of the Day',
+    dual_confidence:   acca.confidence || null,
+    notes:             JSON.stringify({ legs, leg_summary: legSummary }),
+  })
+}
+
 /** Bulk-import historical bets from parsed CSV rows. */
 export async function bulkImportBets(rows) {
   const res = await apiFetch(`${BASE}/bets/import`, {

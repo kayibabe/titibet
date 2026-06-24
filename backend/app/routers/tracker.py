@@ -204,6 +204,27 @@ async def track_pick(
         # user-scoped rows should only collide with the same user's rows, while
         # anonymous rows can still be claimed by a logged-in user later.
         existing = None
+
+        # Acca bets have no fixture_id — dedup on (user, event_date, source_rule_key)
+        if payload.source_rule_key == "acca_advisory" and payload.event_date:
+            acca_q = select(TrackedBet).where(
+                TrackedBet.source_rule_key == "acca_advisory",
+                TrackedBet.event_date == payload.event_date,
+            )
+            if uid is None:
+                acca_q = acca_q.where(TrackedBet.user_id.is_(None))
+            else:
+                acca_q = acca_q.where(
+                    or_(TrackedBet.user_id == uid, TrackedBet.user_id.is_(None))
+                )
+            existing = await db.scalar(acca_q)
+            if existing:
+                if uid is not None and existing.user_id is None:
+                    existing.user_id = uid
+                    await db.commit()
+                    await db.refresh(existing)
+                return _bet_out_from_models(existing)
+
         if payload.fixture_id:
             _system_keys = ("system_auto", "system_dual")
             # For system picks, check (fixture_id, market_type) only — bookmaker

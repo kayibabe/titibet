@@ -429,8 +429,119 @@ function DateGroupedBets({ bets, onRefresh }) {
   )
 }
 
+// ── Accumulator row (expandable legs) ────────────────────────────────────────
+function AccaRow({ bet, onRefresh }) {
+  const [expanded, setExpanded] = useState(false)
+  const [editing, setEditing]   = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const status = bet.result_status
+  const pl = actualPL(bet)
+  const isPending = status === 'Pending'
+  const isWon     = status === 'Won'
+  const isVoid    = status === 'Void'
+
+  const badgeBg   = isWon ? 'bg-green-600' : isPending ? 'bg-[var(--code-bg)] border border-[var(--border)]' : isVoid ? 'bg-slate-500' : 'bg-[#6b21a8]'
+  const badgeText = isWon ? 'text-white' : isPending ? 'text-[var(--text)]' : 'text-white'
+
+  // Parse legs from JSON notes
+  let legs = []
+  try {
+    const parsed = JSON.parse(bet.notes || '{}')
+    legs = parsed.legs || []
+  } catch (_) {}
+
+  async function handleDelete() {
+    if (!window.confirm(`Delete this accumulator?\n${bet.match_name}`)) return
+    setDeleting(true)
+    try { await deleteBet(bet.id); onRefresh?.() }
+    catch (e) { alert(e.message) }
+    finally { setDeleting(false) }
+  }
+
+  return (
+    <>
+      {editing && <EditBetModal bet={bet} onClose={() => setEditing(false)} onSaved={() => onRefresh?.()} />}
+      <div>
+        {/* Main row */}
+        <div
+          className="flex items-center justify-between px-4 py-3 bg-[var(--bg)] hover:bg-[var(--code-bg)] transition-colors gap-3 cursor-pointer"
+          onClick={() => legs.length > 0 && setExpanded(v => !v)}
+        >
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Ticket size={13} className="text-[var(--accent)] shrink-0" />
+              <span className="text-sm font-semibold text-[var(--text-h)]">{bet.match_name}</span>
+              <span className="text-sm font-bold text-[var(--accent)]">(@{bet.odds?.toFixed(2)})</span>
+              {legs.length > 0 && (
+                <span className="text-[10px] text-[var(--text)] opacity-60">
+                  {expanded ? '▲ hide legs' : '▼ show legs'}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--text)] opacity-80 flex-wrap">
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/25 text-[10px] font-semibold">
+                <Ticket size={9} /> Acca
+              </span>
+              <span>{formatEventDate(bet.event_date)}</span>
+              <span>·</span>
+              <span>K{Number(bet.stake).toLocaleString()}</span>
+              {bet.dual_confidence && <><span>·</span><span>{bet.dual_confidence} confidence</span></>}
+            </div>
+          </div>
+
+          <div className="shrink-0 flex flex-col gap-1" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setEditing(true)} title="Edit" className="p-1.5 rounded-md text-[var(--text)] opacity-50 hover:opacity-100 hover:bg-[var(--code-bg)] transition-all">
+              <Pencil size={13} />
+            </button>
+            <button onClick={handleDelete} disabled={deleting} title="Delete" className="p-1.5 rounded-md text-[var(--text)] opacity-50 hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 disabled:opacity-30 transition-all">
+              <Trash2 size={13} />
+            </button>
+          </div>
+
+          <div className={`shrink-0 rounded-lg px-4 py-2 text-center min-w-[110px] ${badgeBg}`}>
+            <div className={`text-xs font-semibold ${badgeText}`}>{status}</div>
+            <div className={`text-sm font-bold font-mono ${badgeText}`}>{isPending ? '-' : fmtPLCompact(pl)}</div>
+          </div>
+        </div>
+
+        {/* Expanded legs */}
+        {expanded && legs.length > 0 && (
+          <div className="border-t border-[var(--border)] bg-[var(--code-bg)] px-4 py-3 space-y-2">
+            {legs.map((leg, i) => {
+              const match = leg.home_team && leg.away_team ? `${leg.home_team} vs ${leg.away_team}` : leg.match_name || '?'
+              return (
+                <div key={i} className="flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
+                  <span className="w-5 h-5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-semibold text-[var(--text-h)]">{match}</span>
+                      {leg.market && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-[var(--accent)]/15 text-[var(--accent)] font-semibold">{leg.market}</span>
+                      )}
+                    </div>
+                    {leg.reason && <p className="text-[11px] text-[var(--text)] opacity-70 leading-snug mt-0.5">{leg.reason}</p>}
+                  </div>
+                  {leg.odd != null && <span className="shrink-0 text-xs font-bold text-[var(--text-h)] tabular-nums">{Number(leg.odd).toFixed(2)}</span>}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
 // ── Collapsible source section ────────────────────────────────────────────────
 const SOURCE_META = {
+  acca_advisory: {
+    label: 'Accumulators',
+    icon: Ticket,
+    headerCls: 'bg-[var(--accent)]/10 border-[var(--accent)]/25 text-[var(--accent)]',
+    dotCls:    'bg-[var(--accent)]',
+    countCls:  'text-[var(--accent)]/80',
+  },
   ho05_singles: {
     label: 'Home Over 0.5',
     icon: Ticket,
@@ -454,6 +565,7 @@ function SourceSection({ sourceKey, bets, onRefresh }) {
   const settledHere = bets.filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
   const plHere = settledHere.reduce((s, b) => s + (b.profit_loss ?? 0), 0)
   const plColor = plHere > 0 ? 'text-green-400' : plHere < 0 ? 'text-red-400' : 'text-[var(--text)]'
+  const isAcca = sourceKey === 'acca_advisory'
 
   return (
     <div className="space-y-3">
@@ -466,7 +578,7 @@ function SourceSection({ sourceKey, bets, onRefresh }) {
         <Icon size={13} className="shrink-0" />
         <span className="text-sm font-semibold tracking-wide">{meta.label}</span>
         <span className={`text-xs ml-1 ${meta.countCls}`}>
-          {bets.length} pick{bets.length !== 1 ? 's' : ''}
+          {bets.length} ticket{bets.length !== 1 ? 's' : ''}
           {settledHere.length > 0 && (
             <> · <span className={`font-mono font-semibold ${plColor}`}>{fmtPLCompact(plHere)}</span></>
           )}
@@ -476,7 +588,36 @@ function SourceSection({ sourceKey, bets, onRefresh }) {
         </span>
       </button>
 
-      {open && <DateGroupedBets bets={bets} onRefresh={onRefresh} />}
+      {open && (
+        isAcca ? (
+          /* Accas: date-grouped but use AccaRow instead of BetRow */
+          <div className="space-y-4">
+            {groupByDate(bets).map(([dateKey, groupBets]) => {
+              const groupPL = groupBets.filter(b => b.result_status === 'Won' || b.result_status === 'Lost').reduce((s, b) => s + (b.profit_loss ?? 0), 0)
+              const gColor = groupPL > 0 ? 'text-green-500' : groupPL < 0 ? 'text-red-500' : 'text-[var(--text)]'
+              return (
+                <div key={dateKey}>
+                  <div className="flex items-center justify-between px-4 py-2 mb-2 rounded-lg bg-[var(--accent-bg)] border border-[var(--accent-border)]">
+                    <span className="text-xs font-bold text-[var(--accent)] uppercase tracking-wider">
+                      {formatGroupDate(dateKey === 'unknown' ? null : dateKey)}
+                    </span>
+                    <span className="text-xs text-[var(--text)] opacity-75">
+                      {groupBets.length} ticket{groupBets.length !== 1 ? 's' : ''}
+                      {' · '}
+                      <span className={`font-mono font-semibold ${gColor}`}>{fmtPLCompact(groupPL)}</span>
+                    </span>
+                  </div>
+                  <div className="rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
+                    {groupBets.map(bet => <AccaRow key={bet.id} bet={bet} onRefresh={onRefresh} />)}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <DateGroupedBets bets={bets} onRefresh={onRefresh} />
+        )
+      )}
     </div>
   )
 }
@@ -512,9 +653,11 @@ export default function BetTable({ bets, isPro = true, onUpgrade, onRefresh }) {
   const plColor = netPL > 0 ? 'text-green-500' : netPL < 0 ? 'text-red-500' : 'text-[var(--text-h)]'
   const clvColor = avgCLV == null ? 'text-[var(--text-h)]' : avgCLV >= 0 ? 'text-green-400' : 'text-red-400'
 
-  // ── Segregate bets into 2 sections ───────────────────────────────────────
-  const ho05Singles = bets.filter(b => b.market_type === 'Home Over 0.5')
-  const otherBets   = bets.filter(b => b.market_type !== 'Home Over 0.5')
+  // ── Segregate bets into sections ─────────────────────────────────────────
+  const accaBets    = bets.filter(b => b.source_rule_key === 'acca_advisory')
+  const singleBets  = bets.filter(b => b.source_rule_key !== 'acca_advisory')
+  const ho05Singles = singleBets.filter(b => b.market_type === 'Home Over 0.5')
+  const otherBets   = singleBets.filter(b => b.market_type !== 'Home Over 0.5')
 
   return (
     <div className="space-y-6">
@@ -596,6 +739,9 @@ export default function BetTable({ bets, isPro = true, onUpgrade, onRefresh }) {
       </div>
 
       <div className="space-y-6">
+        {accaBets.length > 0 && (
+          <SourceSection key="acca_advisory" sourceKey="acca_advisory" bets={accaBets} onRefresh={onRefresh} />
+        )}
         {ho05Singles.length > 0 && (
           <SourceSection key="ho05_singles" sourceKey="ho05_singles" bets={ho05Singles} onRefresh={onRefresh} />
         )}
