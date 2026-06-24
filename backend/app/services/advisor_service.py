@@ -42,6 +42,41 @@ GEMINI_URL    = "https://generativelanguage.googleapis.com/v1beta/models/{model}
 # ── Advisor definitions ───────────────────────────────────────────────────────
 # Each advisor lists a model per provider. Providers are tried in chain order.
 
+ACCA_BUILDER: dict = {
+    "id":    "acca_builder",
+    "name":  "Acca Builder",
+    "role":  "Daily accumulator recommendation",
+    "emoji": "🎟️",
+    "models": {
+        "claude":   "claude-sonnet-4-6",
+        "gemini":   "gemini-2.0-flash",
+        "cerebras": "llama3.3-70b",
+        "groq":     "llama-3.3-70b-versatile",
+        "mistral":  "mistral-small-latest",
+    },
+    "system": (
+        "You are a specialist football accumulator analyst. Your role is to select 3-5 legs "
+        "for a daily accumulator from the signals provided. Optimise for: "
+        "(1) High individual probability per leg — target ≥65% implied probability. "
+        "(2) Low correlation — pick legs from different leagues and match types so one bad result "
+        "does not cascade into others. "
+        "(3) Combined decimal odds in the 3.0–20.0 range — enough reward without being a lottery. "
+        "(4) Market diversity where possible — avoid stacking the same market type (e.g. all Over 2.5). "
+        "Avoid: the same team appearing more than once, markets with decimal odds above 3.0, "
+        "and any signal flagged as Contradiction or Caution. "
+        "For each leg, read the signal's bayesian best_odd field from the context — if it is missing "
+        "or unavailable, estimate a reasonable decimal odd based on the probability provided. "
+        "Always respond with valid JSON only — no markdown, no prose outside the JSON."
+    ),
+    "task": (
+        "Select the best 3-5 legs for today's accumulator. "
+        "Return JSON with this EXACT shape — no extra fields:\n"
+        '{"legs":[{"home_team":"...","away_team":"...","market":"...","odd":1.75,"reason":"1-sentence justification"}],'
+        '"rationale":"2-3 sentence explanation of why these legs combine well",'
+        '"confidence":"High"|"Medium"|"Low"}'
+    ),
+}
+
 ADVISORS: list[dict] = [
     {
         "id":    "scout",
@@ -657,15 +692,19 @@ async def get_advisor_insights(
     # AI-3: Build Skeptic-specific divergence extras (market vs model, thin coverage, drift)
     skeptic_extras = _build_skeptic_extras(rows)
 
-    advisor_outputs = await asyncio.gather(
-        *[
-            _call_advisor(
-                adv, context, settings,
-                extra_context=skeptic_extras if adv["id"] == "skeptic" else "",
-            )
-            for adv in ADVISORS
-        ]
-    )
+    all_advisor_coros = [
+        _call_advisor(
+            adv, context, settings,
+            extra_context=skeptic_extras if adv["id"] == "skeptic" else "",
+        )
+        for adv in ADVISORS
+    ]
+    # Run all 4 advisors (3 council + acca builder) concurrently
+    all_advisor_coros.append(_call_advisor(ACCA_BUILDER, context, settings))
+
+    all_outputs = await asyncio.gather(*all_advisor_coros)
+    advisor_outputs = all_outputs[:3]
+    acca_model_label, acca_result = all_outputs[3]
 
     # AI-3: Consensus verdict — aggregate across all three advisors
     _verdict_score = {"Strong": 2, "Mixed": 1, "Caution": 0}
@@ -680,10 +719,24 @@ async def get_advisor_insights(
     else:
         consensus_verdict = "Mixed"
 
+    # Compute combined odds from acca legs (product of individual odds)
+    acca_legs = acca_result.get("legs", []) if isinstance(acca_result, dict) else []
+    combined_odds: float | None = None
+    if acca_legs:
+        try:
+            product = 1.0
+            for leg in acca_legs:
+                odd = float(leg.get("odd") or 0)
+                if odd > 1.0:
+                    product *= odd
+            combined_odds = round(product, 2) if product > 1.0 else None
+        except (TypeError, ValueError):
+            combined_odds = None
+
     return {
-        "configured":       True,
-        "date":             target_date.isoformat(),
-        "matches_analysed": len(rows),
+        "configured":        True,
+        "date":              target_date.isoformat(),
+        "matches_analysed":  len(rows),
         "consensus_verdict": consensus_verdict,
         "advisors": [
             {
@@ -696,4 +749,12 @@ async def get_advisor_insights(
             }
             for adv, (model_label, result) in zip(ADVISORS, advisor_outputs)
         ],
+        "accumulator": {
+            "model":         acca_model_label,
+            "legs":          acca_legs,
+            "combined_odds": combined_odds,
+            "rationale":     acca_result.get("rationale", "") if isinstance(acca_result, dict) else "",
+            "confidence":    acca_result.get("confidence", "Medium") if isinstance(acca_result, dict) else "Medium",
+            "error":         acca_result.get("error") if isinstance(acca_result, dict) else None,
+        },
     }

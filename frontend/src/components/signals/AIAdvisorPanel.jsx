@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Sparkles, AlertTriangle, CheckCircle, MinusCircle, Loader2, RefreshCw, ArrowRight,
-  Download, FileText, Printer,
+  Download, FileText, Printer, Ticket,
 } from 'lucide-react'
 import { fetchAdvisorInsights } from '../../api/advisor'
 import ADVISORS_META from './advisorsMeta'
@@ -48,6 +48,37 @@ function buildReportHtml(data, date) {
         <span style="font-size:12px;color:#92400e;line-height:1.5;">${w}</span>
       </div>`).join('')
   }
+
+  const acca = data.accumulator
+  const accaSection = acca && acca.legs?.length ? `
+    <div style="margin-bottom:28px;border:2px solid #7c3aed;border-radius:10px;overflow:hidden;page-break-inside:avoid;">
+      <div style="padding:12px 18px;background:#ede9fe;border-bottom:1px solid #ddd6fe;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:16px;">🎟️</span>
+          <strong style="font-size:15px;color:#5b21b6;">Acca of the Day</strong>
+          ${acca.confidence ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:#fff;color:#7c3aed;border:1px solid #c4b5fd;">${acca.confidence}</span>` : ''}
+        </div>
+        ${acca.combined_odds ? `<span style="font-size:18px;font-weight:800;color:#7c3aed;">@ ${acca.combined_odds}</span>` : ''}
+      </div>
+      <div style="padding:14px 18px;space-y:8px;">
+        ${(acca.legs || []).map((leg, i) => {
+          const match = leg.home_team && leg.away_team ? `${leg.home_team} vs ${leg.away_team}` : '—'
+          return `<div style="display:flex;align-items:flex-start;gap:10px;margin:8px 0;padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;">
+            <span style="min-width:22px;height:22px;background:#ede9fe;color:#7c3aed;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">${i+1}</span>
+            <div style="flex:1;">
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <strong style="font-size:13px;color:#111827;">${match}</strong>
+                ${leg.market ? `<span style="font-size:11px;padding:2px 7px;background:#ede9fe;color:#7c3aed;border-radius:4px;font-weight:600;">${leg.market}</span>` : ''}
+              </div>
+              ${leg.reason ? `<p style="margin:4px 0 0;font-size:12px;color:#6b7280;line-height:1.5;">${leg.reason}</p>` : ''}
+            </div>
+            ${leg.odd != null ? `<span style="font-weight:700;font-size:13px;color:#111827;flex-shrink:0;">${Number(leg.odd).toFixed(2)}</span>` : ''}
+          </div>`
+        }).join('')}
+        ${acca.combined_odds ? `<div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid #e5e7eb;margin-top:4px;font-size:12px;"><span style="color:#6b7280;">${acca.legs.length} legs combined</span><strong style="color:#7c3aed;">Combined odds: ${acca.combined_odds}</strong></div>` : ''}
+        ${acca.rationale ? `<p style="font-size:12px;color:#6b7280;line-height:1.6;margin-top:8px;padding-top:8px;border-top:1px solid #f3f4f6;">${acca.rationale}</p>` : ''}
+      </div>
+    </div>` : ''
 
   const advisorSections = (data.advisors || []).map(adv => {
     const verdict  = adv.result?.verdict  || 'Mixed'
@@ -120,6 +151,9 @@ function buildReportHtml(data, date) {
       <strong style="font-size:13px;color:${verdictColor[consensus] || '#374151'};">${consensus}</strong>
     </div>` : ''}
   </div>
+
+  <!-- Accumulator ticket -->
+  ${accaSection}
 
   <!-- Advisor sections -->
   ${advisorSections}
@@ -210,6 +244,103 @@ function ExportButton({ data, date }) {
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Accumulator ticket ────────────────────────────────────────────────────────
+function AccaTicket({ acca }) {
+  if (!acca) return null
+  const { legs = [], combined_odds, rationale, confidence, error } = acca
+
+  const confCfg = {
+    High:   { cls: 'text-green-400 border-green-500/40 bg-green-500/10',  dot: 'bg-green-400' },
+    Medium: { cls: 'text-amber-400 border-amber-500/40 bg-amber-500/10',  dot: 'bg-amber-400' },
+    Low:    { cls: 'text-red-400   border-red-500/40   bg-red-500/10',    dot: 'bg-red-400'   },
+  }[confidence] || { cls: 'text-[var(--text)] border-[var(--border)] bg-[var(--code-bg)]', dot: 'bg-[var(--text)]' }
+
+  return (
+    <div className="rounded-xl border border-[var(--accent)]/30 bg-[var(--bg)] overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2 px-4 py-3 bg-[var(--accent)]/8 border-b border-[var(--accent)]/20">
+        <div className="flex items-center gap-2">
+          <Ticket size={14} className="text-[var(--accent)] shrink-0" />
+          <span className="text-sm font-bold text-[var(--text-h)]">Acca of the Day</span>
+          <span className="text-[10px] text-[var(--text)] opacity-60">AI-selected accumulator</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {confidence && (
+            <span className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full border ${confCfg.cls}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${confCfg.dot}`} />
+              {confidence}
+            </span>
+          )}
+          {combined_odds && (
+            <span className="text-sm font-bold text-[var(--accent)] tabular-nums">
+              @{combined_odds}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="px-4 py-3 space-y-3">
+        {error && (
+          <p className="text-xs text-red-400 opacity-80">Acca builder unavailable — {error}</p>
+        )}
+
+        {legs.length > 0 && (
+          <div className="space-y-2">
+            {legs.map((leg, i) => {
+              const match = leg.home_team && leg.away_team
+                ? `${leg.home_team} vs ${leg.away_team}`
+                : leg.match_name || '—'
+              return (
+                <div key={i} className="flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--code-bg)] px-3 py-2.5">
+                  {/* Leg number */}
+                  <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] text-[10px] font-bold flex items-center justify-center mt-0.5">
+                    {i + 1}
+                  </span>
+                  <div className="flex-1 min-w-0 space-y-0.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-semibold text-[var(--text-h)] truncate">{match}</span>
+                      {leg.market && (
+                        <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-md bg-[var(--accent)]/15 text-[var(--accent)] font-semibold">
+                          {leg.market}
+                        </span>
+                      )}
+                    </div>
+                    {leg.reason && (
+                      <p className="text-[11px] text-[var(--text)] opacity-75 leading-snug">{leg.reason}</p>
+                    )}
+                  </div>
+                  {leg.odd != null && (
+                    <span className="shrink-0 text-xs font-bold text-[var(--text-h)] tabular-nums">{Number(leg.odd).toFixed(2)}</span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Combined odds footer */}
+        {legs.length > 0 && combined_odds && (
+          <div className="flex items-center justify-between pt-1 border-t border-[var(--border)] text-xs">
+            <span className="text-[var(--text)] opacity-70">{legs.length} legs combined</span>
+            <span className="font-bold text-[var(--accent)] tabular-nums">Combined odds: {combined_odds}</span>
+          </div>
+        )}
+
+        {rationale && (
+          <p className="text-[11px] text-[var(--text)] opacity-75 leading-relaxed border-t border-[var(--border)] pt-2">
+            {rationale}
+          </p>
+        )}
+
+        {!error && legs.length === 0 && (
+          <p className="text-xs text-[var(--text)] opacity-60 text-center py-2">No accumulator generated for this date.</p>
+        )}
+      </div>
     </div>
   )
 }
@@ -440,6 +571,24 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
 
         {data && isConfigured && !data.advisors?.length && (
           <p className="text-sm text-[var(--text)] opacity-75 text-center py-10">{data.message}</p>
+        )}
+
+        {/* Acca of the Day — shown once analysis is loaded */}
+        {!loading && data?.accumulator && (
+          <AccaTicket acca={data.accumulator} />
+        )}
+
+        {/* Acca skeleton while loading */}
+        {loading && (
+          <div className="rounded-xl border border-[var(--accent)]/20 bg-[var(--bg)] overflow-hidden animate-pulse">
+            <div className="flex items-center gap-2 px-4 py-3 bg-[var(--accent)]/8 border-b border-[var(--accent)]/20">
+              <div className="w-3.5 h-3.5 rounded bg-[var(--border)]" />
+              <div className="h-3 w-32 rounded bg-[var(--border)]" />
+            </div>
+            <div className="px-4 py-3 space-y-2">
+              {[1,2,3].map(i => <div key={i} className="h-10 rounded-lg bg-[var(--border)]" />)}
+            </div>
+          </div>
         )}
 
         {(loading || data?.advisors?.length > 0) && (
