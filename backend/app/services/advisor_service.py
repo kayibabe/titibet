@@ -18,12 +18,12 @@ import asyncio
 import json
 import logging
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import anthropic
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -621,17 +621,17 @@ async def _auto_track_acca(
 
     uid: int | None = getattr(current_user, "id", None) if current_user else None
 
-    # Dedup: one acca_advisory row per (user, event_date)
+    # Advisory is a Pro-only feature; skip tracking for unauthenticated contexts
+    # (e.g. the scheduled cache-warming job).  Logged-in users always get a row.
+    if uid is None:
+        return False
+
+    # Dedup: one acca_advisory row per (user_id, event_date) — check this user only
     dup_q = select(TrackedBet).where(
         TrackedBet.source_rule_key == "acca_advisory",
         TrackedBet.event_date == target_date,
+        TrackedBet.user_id == uid,
     )
-    if uid is None:
-        dup_q = dup_q.where(TrackedBet.user_id.is_(None))
-    else:
-        dup_q = dup_q.where(
-            or_(TrackedBet.user_id == uid, TrackedBet.user_id.is_(None))
-        )
     if await db.scalar(dup_q):
         return False  # already tracked
 
@@ -667,6 +667,38 @@ async def _auto_track_acca(
         return False
 
 
+# ── Advisory cache (system_settings) ─────────────────────────────────────────
+# Stores the AI output once per day so users see instant results.
+# Only the AI-generated content is cached; per-user acca tracking is always
+# evaluated fresh so each subscriber gets their own TrackedBet row.
+
+_ADVISORY_CACHE_PREFIX = "advisory_cache_"
+
+
+async def _get_advisory_cache(db: AsyncSession, target_date: date) -> dict | None:
+    key = f"{_ADVISORY_CACHE_PREFIX}{target_date.isoformat()}"
+    row = await db.execute(
+        text("SELECT value FROM system_settings WHERE key = :k"), {"k": key}
+    )
+    val = row.scalar()
+    if val:
+        try:
+            return json.loads(val)
+        except Exception:
+            return None
+    return None
+
+
+async def _set_advisory_cache(db: AsyncSession, target_date: date, data: dict) -> None:
+    key = f"{_ADVISORY_CACHE_PREFIX}{target_date.isoformat()}"
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    await db.execute(text("""
+        INSERT INTO system_settings (key, value, updated_at) VALUES (:k, :v, :t)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+    """), {"k": key, "v": json.dumps(data), "t": now})
+    await db.commit()
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 async def get_advisor_insights(
@@ -674,6 +706,7 @@ async def get_advisor_insights(
     target_date:  date,
     fixture_ids:  list[int] | None = None,
     current_user: Any | None = None,
+    force:        bool = False,
 ) -> dict:
     """
     Orchestrate the AI advisory council for a given date.
@@ -697,6 +730,22 @@ async def get_advisor_insights(
             }
 
     settings = get_settings()
+
+    # ── Serve from cache when available (skip on force=True or fixture filter) ─
+    if not force and fixture_ids is None:
+        cached = await _get_advisory_cache(db, target_date)
+        if cached and cached.get("matches_analysed", 0) > 0:
+            # Cache hit — still do per-user acca tracking so each subscriber gets
+            # their own TrackedBet row, then return immediately.
+            acca_data = cached.get("accumulator", {})
+            tracked = False
+            if acca_data.get("legs") and not acca_data.get("error"):
+                try:
+                    tracked = await _auto_track_acca(db, acca_data, target_date, current_user)
+                except Exception as exc:
+                    logger.warning("_auto_track_acca (cache hit) failed: %s", exc)
+            cached["accumulator"] = {**acca_data, "tracked": tracked, "from_cache": True}
+            return cached
 
     configured_keys = [
         settings.titibet_claude_key,
@@ -863,7 +912,7 @@ async def get_advisor_insights(
 
     accumulator["tracked"] = tracked
 
-    return {
+    result_payload = {
         "configured":        True,
         "date":              target_date.isoformat(),
         "matches_analysed":  len(rows),
@@ -881,3 +930,16 @@ async def get_advisor_insights(
         ],
         "accumulator": accumulator,
     }
+
+    # Persist AI output to cache (omit the per-user tracked flag)
+    if fixture_ids is None:
+        try:
+            cacheable = {
+                **result_payload,
+                "accumulator": {k: v for k, v in accumulator.items() if k != "tracked"},
+            }
+            await _set_advisory_cache(db, target_date, cacheable)
+        except Exception as exc:
+            logger.warning("Failed to write advisory cache: %s", exc)
+
+    return result_payload

@@ -16,9 +16,10 @@ router = APIRouter(prefix="/api/advisor", tags=["advisor"])
 
 @router.get("")
 async def advisor_insights(
-    date_str:    Optional[str] = Query(None, alias="date"),
-    fixture_ids: Optional[str] = Query(None, description="Comma-separated fixture IDs to limit analysis"),
-    db:          AsyncSession  = Depends(get_db),
+    date_str:    Optional[str]  = Query(None, alias="date"),
+    fixture_ids: Optional[str]  = Query(None, description="Comma-separated fixture IDs to limit analysis"),
+    force:       bool           = Query(False, description="Bypass cache and re-run AI pipeline"),
+    db:          AsyncSession   = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """
@@ -42,4 +43,4 @@ async def advisor_insights(
 
     target_date = date.fromisoformat(date_str) if date_str else date.today()
     ids = [int(i) for i in fixture_ids.split(",") if i.strip().isdigit()] if fixture_ids else None
-    return await get_advisor_insights(db, target_date, fixture_ids=ids, current_user=current_user)
+    return await get_advisor_insights(db, target_date, fixture_ids=ids, current_user=current_user, force=force)

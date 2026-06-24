@@ -355,6 +355,31 @@ async def _kickoff_alert_job() -> None:
             logger.exception("Kickoff alert job failed — continuing normally")
 
 
+async def _advisory_cache_job() -> None:
+    """
+    Pre-warm AI advisory cache — runs 08:30 UTC (10:30 CAT), 30 min after the
+    08:00 sync so today's signals are in the DB.
+
+    Calls the full advisory pipeline once (no user context → no acca tracking)
+    and writes the result to system_settings so every subsequent user request
+    is served instantly from cache instead of waiting 15-45 s for AI calls.
+
+    No-op when no AI provider keys are configured.
+    """
+    from app.services.advisor_service import get_advisor_insights
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await get_advisor_insights(db, date.today(), current_user=None, force=True)
+            n_matches = result.get("matches_analysed", 0)
+            from_cache = result.get("accumulator", {}).get("from_cache", False)
+            logger.info(
+                "Advisory cache job: %d matches analysed, cached=%s",
+                n_matches, not from_cache,
+            )
+        except Exception:
+            logger.exception("Advisory cache job failed — users will fall back to live computation")
+
+
 async def _morning_digest_job() -> None:
     """
     Morning digest — runs 07:30 UTC (09:30 CAT).
@@ -481,6 +506,17 @@ def get_scheduler() -> AsyncIOScheduler:
             _morning_digest_job,
             CronTrigger(hour=7, minute=30),
             id="morning-digest",
+            replace_existing=True,
+            misfire_grace_time=1800,
+        )
+        # AI advisory cache — 08:30 UTC (10:30 CAT). Runs 30 min after the
+        # 08:00 sync so today's signals are available.  Pre-computes the advisory
+        # and writes it to system_settings so every user gets instant results
+        # instead of waiting 15-45 s for the AI pipeline to complete.
+        _scheduler.add_job(
+            _advisory_cache_job,
+            CronTrigger(hour=8, minute=30),
+            id="advisory-cache",
             replace_existing=True,
             misfire_grace_time=1800,
         )

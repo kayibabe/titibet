@@ -62,9 +62,10 @@ export function useTracker() {
     const seq = ++reqSeq.current
     setError(null)
 
-    // 20-second abort so a sleeping Fly.io machine doesn't hang the page forever
+    // 30-second abort — gives the DB busy_timeout (15s) room to clear during
+    // a background sync before we surface an error to the user.
     const controller = new AbortController()
-    const timeoutId  = setTimeout(() => controller.abort(), 20_000)
+    const timeoutId  = setTimeout(() => controller.abort(), 30_000)
 
     try {
       const data = await fetchBets(filters, { signal: controller.signal })
