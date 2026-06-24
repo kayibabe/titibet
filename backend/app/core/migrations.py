@@ -186,6 +186,14 @@ INDEX_MIGRATIONS: list[tuple[str, str]] = [
         "CREATE INDEX IF NOT EXISTS ix_tb_event_date "
         "ON tracked_bets(event_date)",
     ),
+    # One acca_advisory row per authenticated user per day — DB-level guard
+    # (the app-level SELECT-before-INSERT handles the common path; this catches races)
+    (
+        "uq_acca_per_user_day",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_acca_per_user_day "
+        "ON tracked_bets(user_id, event_date) "
+        "WHERE source_rule_key = 'acca_advisory' AND user_id IS NOT NULL",
+    ),
 ]
 
 

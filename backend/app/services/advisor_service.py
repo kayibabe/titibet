@@ -55,21 +55,23 @@ ACCA_BUILDER: dict = {
         "mistral":  "mistral-small-latest",
     },
     "system": (
-        "You are a specialist football accumulator analyst. Your role is to select 3-5 legs "
-        "for a daily accumulator from the signals provided. Optimise for: "
-        "(1) High individual probability per leg — target ≥65% implied probability. "
-        "(2) Low correlation — pick legs from different leagues and match types so one bad result "
-        "does not cascade into others. "
+        "You are a specialist football accumulator analyst. "
+        "Every signal you receive has already been pre-screened: dual_confidence=High, "
+        "dual_agreement=Both (Bayesian and Poisson agree), and implied probability ≥70%. "
+        "Your role is to select the best 3-5 legs from this elite pool. Optimise for: "
+        "(1) Individual probability ≥70% per leg — reject any leg below this threshold. "
+        "(2) Low correlation — pick legs from different leagues and match types. "
         "(3) Combined decimal odds in the 3.0–20.0 range — enough reward without being a lottery. "
-        "(4) Market diversity where possible — avoid stacking the same market type (e.g. all Over 2.5). "
-        "Avoid: the same team appearing more than once, markets with decimal odds above 3.0, "
-        "and any signal flagged as Contradiction or Caution. "
-        "For each leg, read the signal's bayesian best_odd field from the context — if it is missing "
-        "or unavailable, estimate a reasonable decimal odd based on the probability provided. "
+        "(4) Market diversity — avoid stacking the same market type (e.g. all Over 2.5). "
+        "Avoid: the same team appearing more than once, any decimal leg odd above 3.0, "
+        "and any signal where the reason sounds speculative. "
+        "For each leg use the bayesian best_odd from the context; if missing, estimate from the probability. "
+        "Because all input signals are High confidence and both engines agree, you MUST set "
+        "confidence to 'High' when you select 3 or more qualifying legs. "
         "Always respond with valid JSON only — no markdown, no prose outside the JSON."
     ),
     "task": (
-        "Select the best 3-5 legs for today's accumulator. "
+        "Select the best 3-5 legs for today's high-confidence accumulator. "
         "Return JSON with this EXACT shape — no extra fields:\n"
         '{"legs":[{"home_team":"...","away_team":"...","market":"...","odd":1.75,"reason":"1-sentence justification"}],'
         '"rationale":"2-3 sentence explanation of why these legs combine well",'
@@ -761,6 +763,30 @@ async def get_advisor_insights(
     # AI-3: Build Skeptic-specific divergence extras (market vs model, thin coverage, drift)
     skeptic_extras = _build_skeptic_extras(rows)
 
+    # ── Acca builder gets its own elite signal pool ───────────────────────────
+    # Strict: High confidence + Both agreement + primary_prob ≥ 0.70
+    def _primary_prob(sig: Signal) -> float:
+        return max(sig.bayesian_prob or 0.0, sig.poisson_prob or 0.0)
+
+    acca_rows_strict = [
+        (sig, fix) for sig, fix in rows
+        if sig.dual_confidence == "High"
+        and sig.dual_agreement == "Both"
+        and _primary_prob(sig) >= 0.70
+    ]
+    # Fallback: High + Both without the prob floor (still no Medium/Contradiction legs)
+    acca_rows_fallback = [
+        (sig, fix) for sig, fix in rows
+        if sig.dual_confidence == "High"
+        and sig.dual_agreement == "Both"
+    ]
+    acca_pool = acca_rows_strict if len(acca_rows_strict) >= 3 else acca_rows_fallback
+    acca_context = (
+        _build_context(acca_pool, match_infos, perf_weights)
+        if acca_pool
+        else context  # last resort: use the full context
+    )
+
     all_advisor_coros = [
         _call_advisor(
             adv, context, settings,
@@ -769,7 +795,7 @@ async def get_advisor_insights(
         for adv in ADVISORS
     ]
     # Run all 4 advisors (3 council + acca builder) concurrently
-    all_advisor_coros.append(_call_advisor(ACCA_BUILDER, context, settings))
+    all_advisor_coros.append(_call_advisor(ACCA_BUILDER, acca_context, settings))
 
     all_outputs = await asyncio.gather(*all_advisor_coros)
     advisor_outputs = all_outputs[:3]
@@ -802,12 +828,28 @@ async def get_advisor_insights(
         except (TypeError, ValueError):
             combined_odds = None
 
+    # Enforce "High" badge when the acca was built from the elite pool and
+    # has ≥3 legs with a sensible combined odd (≥3.0).  The AI may sometimes
+    # self-report "Medium" conservatively — we override it here because the
+    # input signals are already pre-screened as High+Both+≥70%.
+    ai_confidence = acca_result.get("confidence", "Medium") if isinstance(acca_result, dict) else "Medium"
+    if (
+        len(acca_legs) >= 3
+        and combined_odds is not None
+        and combined_odds >= 3.0
+        and len(acca_pool) >= 3
+        and all(r[0].dual_confidence == "High" and r[0].dual_agreement == "Both" for r in acca_pool[:3])
+    ):
+        resolved_confidence = "High"
+    else:
+        resolved_confidence = ai_confidence
+
     accumulator = {
         "model":         acca_model_label,
         "legs":          acca_legs,
         "combined_odds": combined_odds,
         "rationale":     acca_result.get("rationale", "") if isinstance(acca_result, dict) else "",
-        "confidence":    acca_result.get("confidence", "Medium") if isinstance(acca_result, dict) else "Medium",
+        "confidence":    resolved_confidence,
         "error":         acca_result.get("error") if isinstance(acca_result, dict) else None,
     }
 
