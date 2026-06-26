@@ -1,5 +1,5 @@
 ﻿import { useState } from 'react'
-import { Download, Lock, ChevronDown, ChevronRight, Ticket, StickyNote, Bot, Pencil, Trash2, X } from 'lucide-react'
+import { Download, Lock, Ticket, Bot, Pencil, Trash2, X } from 'lucide-react'
 import { fmtK, fmtPL, fmtPLCompact } from '../../utils/format'
 import { updateBet, deleteBet } from '../../api/tracker'
 
@@ -395,40 +395,6 @@ function BetRow({ bet, onRefresh }) {
   )
 }
 
-// ── Date-grouped list inside a source section ─────────────────────────────────
-function DateGroupedBets({ bets, onRefresh }) {
-  const groups = groupByDate(bets)
-  return (
-    <div className="space-y-4">
-      {groups.map(([dateKey, groupBets]) => {
-        const groupPL = groupBets
-          .filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
-          .reduce((sum, bet) => sum + (bet.profit_loss ?? 0), 0)
-        const gColor = groupPL > 0 ? 'text-green-500' : groupPL < 0 ? 'text-red-500' : 'text-[var(--text)]'
-        return (
-          <div key={dateKey}>
-            <div className="flex items-center justify-between px-4 py-2 mb-2 rounded-lg bg-[var(--accent-bg)] border border-[var(--accent-border)]">
-              <span className="text-xs font-bold text-[var(--accent)] uppercase tracking-wider">
-                {formatGroupDate(dateKey === 'unknown' ? null : dateKey)}
-              </span>
-              <span className="text-xs text-[var(--text)] opacity-75">
-                {groupBets.length} pick{groupBets.length !== 1 ? 's' : ''}
-                {' · '}
-                <span className={`font-mono font-semibold ${gColor}`} title={fmtPL(groupPL)}>
-                  {fmtPLCompact(groupPL)}
-                </span>
-              </span>
-            </div>
-            <div className="rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
-              {groupBets.map(bet => <BetRow key={bet.id} bet={bet} onRefresh={onRefresh} />)}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
 // ── Accumulator row (expandable legs) ────────────────────────────────────────
 function AccaRow({ bet, onRefresh }) {
   const [expanded, setExpanded] = useState(false)
@@ -533,91 +499,41 @@ function AccaRow({ bet, onRefresh }) {
   )
 }
 
-// ── Collapsible source section ────────────────────────────────────────────────
-const SOURCE_META = {
-  acca_advisory: {
-    label: 'Accumulators',
-    icon: Ticket,
-    headerCls: 'bg-[var(--accent)]/10 border-[var(--accent)]/25 text-[var(--accent)]',
-    dotCls:    'bg-[var(--accent)]',
-    countCls:  'text-[var(--accent)]/80',
-  },
-  ho05_singles: {
-    label: 'Home Over 0.5',
-    icon: Ticket,
-    headerCls: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400',
-    dotCls:    'bg-emerald-400',
-    countCls:  'text-emerald-300',
-  },
-  individual: {
-    label: 'Other Markets',
-    icon: StickyNote,
-    headerCls: 'bg-slate-500/10 border-slate-500/20 text-slate-300',
-    dotCls:    'bg-slate-400',
-    countCls:  'text-slate-400',
-  },
-}
-
-function SourceSection({ sourceKey, bets, onRefresh }) {
-  const [open, setOpen] = useState(true)
-  const meta = SOURCE_META[sourceKey] || SOURCE_META.individual
-  const Icon = meta.icon
-  const settledHere = bets.filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
-  const plHere = settledHere.reduce((s, b) => s + (b.profit_loss ?? 0), 0)
-  const plColor = plHere > 0 ? 'text-green-400' : plHere < 0 ? 'text-red-400' : 'text-[var(--text)]'
-  const isAcca = sourceKey === 'acca_advisory'
-
+// ── Unified date-grouped view (accas + singles together per date) ─────────────
+function UnifiedDateGroupedBets({ bets, onRefresh }) {
+  const groups = groupByDate(bets)
   return (
-    <div className="space-y-3">
-      {/* Section header */}
-      <button
-        onClick={() => setOpen(o => !o)}
-        className={`w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl border font-medium transition-colors ${meta.headerCls}`}
-      >
-        <span className={`w-2 h-2 rounded-full shrink-0 ${meta.dotCls}`} />
-        <Icon size={13} className="shrink-0" />
-        <span className="text-sm font-semibold tracking-wide">{meta.label}</span>
-        <span className={`text-xs ml-1 ${meta.countCls}`}>
-          {bets.length} ticket{bets.length !== 1 ? 's' : ''}
-          {settledHere.length > 0 && (
-            <> · <span className={`font-mono font-semibold ${plColor}`}>{fmtPLCompact(plHere)}</span></>
-          )}
-        </span>
-        <span className="ml-auto">
-          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </span>
-      </button>
-
-      {open && (
-        isAcca ? (
-          /* Accas: date-grouped but use AccaRow instead of BetRow */
-          <div className="space-y-4">
-            {groupByDate(bets).map(([dateKey, groupBets]) => {
-              const groupPL = groupBets.filter(b => b.result_status === 'Won' || b.result_status === 'Lost').reduce((s, b) => s + (b.profit_loss ?? 0), 0)
-              const gColor = groupPL > 0 ? 'text-green-500' : groupPL < 0 ? 'text-red-500' : 'text-[var(--text)]'
-              return (
-                <div key={dateKey}>
-                  <div className="flex items-center justify-between px-4 py-2 mb-2 rounded-lg bg-[var(--accent-bg)] border border-[var(--accent-border)]">
-                    <span className="text-xs font-bold text-[var(--accent)] uppercase tracking-wider">
-                      {formatGroupDate(dateKey === 'unknown' ? null : dateKey)}
-                    </span>
-                    <span className="text-xs text-[var(--text)] opacity-75">
-                      {groupBets.length} ticket{groupBets.length !== 1 ? 's' : ''}
-                      {' · '}
-                      <span className={`font-mono font-semibold ${gColor}`}>{fmtPLCompact(groupPL)}</span>
-                    </span>
-                  </div>
-                  <div className="rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
-                    {groupBets.map(bet => <AccaRow key={bet.id} bet={bet} onRefresh={onRefresh} />)}
-                  </div>
-                </div>
-              )
-            })}
+    <div className="space-y-4">
+      {groups.map(([dateKey, groupBets]) => {
+        const groupPL = groupBets
+          .filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
+          .reduce((sum, b) => sum + (b.profit_loss ?? 0), 0)
+        const gColor = groupPL > 0 ? 'text-green-500' : groupPL < 0 ? 'text-red-500' : 'text-[var(--text)]'
+        const pickCount = groupBets.length
+        return (
+          <div key={dateKey}>
+            <div className="flex items-center justify-between px-4 py-2 mb-2 rounded-lg bg-[var(--accent-bg)] border border-[var(--accent-border)]">
+              <span className="text-xs font-bold text-[var(--accent)] uppercase tracking-wider">
+                {formatGroupDate(dateKey === 'unknown' ? null : dateKey)}
+              </span>
+              <span className="text-xs text-[var(--text)] opacity-75">
+                {pickCount} {pickCount !== 1 ? 'picks' : 'pick'}
+                {' · '}
+                <span className={`font-mono font-semibold ${gColor}`} title={fmtPL(groupPL)}>
+                  {fmtPLCompact(groupPL)}
+                </span>
+              </span>
+            </div>
+            <div className="rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
+              {groupBets.map(bet =>
+                bet.source_rule_key === 'acca_advisory'
+                  ? <AccaRow key={bet.id} bet={bet} onRefresh={onRefresh} />
+                  : <BetRow  key={bet.id} bet={bet} onRefresh={onRefresh} />
+              )}
+            </div>
           </div>
-        ) : (
-          <DateGroupedBets bets={bets} onRefresh={onRefresh} />
         )
-      )}
+      })}
     </div>
   )
 }
@@ -652,12 +568,6 @@ export default function BetTable({ bets, isPro = true, onUpgrade, onRefresh }) {
 
   const plColor = netPL > 0 ? 'text-green-500' : netPL < 0 ? 'text-red-500' : 'text-[var(--text-h)]'
   const clvColor = avgCLV == null ? 'text-[var(--text-h)]' : avgCLV >= 0 ? 'text-green-400' : 'text-red-400'
-
-  // ── Segregate bets into sections ─────────────────────────────────────────
-  const accaBets    = bets.filter(b => b.source_rule_key === 'acca_advisory')
-  const singleBets  = bets.filter(b => b.source_rule_key !== 'acca_advisory')
-  const ho05Singles = singleBets.filter(b => b.market_type === 'Home Over 0.5')
-  const otherBets   = singleBets.filter(b => b.market_type !== 'Home Over 0.5')
 
   return (
     <div className="space-y-6">
@@ -738,17 +648,7 @@ export default function BetTable({ bets, isPro = true, onUpgrade, onRefresh }) {
         )}
       </div>
 
-      <div className="space-y-6">
-        {accaBets.length > 0 && (
-          <SourceSection key="acca_advisory" sourceKey="acca_advisory" bets={accaBets} onRefresh={onRefresh} />
-        )}
-        {ho05Singles.length > 0 && (
-          <SourceSection key="ho05_singles" sourceKey="ho05_singles" bets={ho05Singles} onRefresh={onRefresh} />
-        )}
-        {otherBets.length > 0 && (
-          <SourceSection key="individual" sourceKey="individual" bets={otherBets} onRefresh={onRefresh} />
-        )}
-      </div>
+      <UnifiedDateGroupedBets bets={bets} onRefresh={onRefresh} />
     </div>
   )
 }
