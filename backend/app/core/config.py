@@ -158,13 +158,6 @@ CORRECT_SCORE_MARKET_NAMES: frozenset = frozenset({
     "Exact Score",
 })
 
-FIRST_HALF_CS_MARKET_NAMES: frozenset = frozenset({
-    "First Half - Correct Score",
-    "Halftime - Correct Score",
-    "HT Correct Score",
-    "1st Half Correct Score",
-})
-
 GOALS_MARKET_NAMES: frozenset = frozenset({
     "Goals Over/Under",
     "Total Goals",
@@ -276,8 +269,6 @@ MARKETS: dict = {
 # explicit rules exist — see MARKET_TO_POISSON_KEY in signal_engine.py.
 ACTIVE_MARKETS: set = set(MARKETS.keys())
 
-# Deprecated: kept empty so imports stay valid; use ACTIVE_MARKETS only.
-BAYESIAN_EXTRA_MARKETS: set = set()
 
 # Markets permanently disabled from signal generation.
 # Historical analytics/backtest data for these markets is preserved, but the

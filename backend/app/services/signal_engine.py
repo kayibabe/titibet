@@ -21,8 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import (
     CORRECT_SCORE_MARKET_NAMES,
-    FIRST_HALF_CS_MARKET_NAMES, GOALS_MARKET_NAMES,
-    BTTS_MARKET_NAMES, MATCH_WINNER_MARKET_NAMES,
+    GOALS_MARKET_NAMES, MATCH_WINNER_MARKET_NAMES,
     DOUBLE_CHANCE_MARKET_NAMES, POISSON_RULES, get_settings,
     UNDER_GOALS_SUPPRESSED_LEAGUES,
     HOME_GOALS_MARKET_NAMES, AWAY_GOALS_MARKET_NAMES,
@@ -40,7 +39,7 @@ from app.core.config import (
     get_league_tier,
 )
 from app.engines import bayesian as bay_engine
-from app.services.form_service import get_team_form_lambdas, get_team_over25_history
+from app.services.form_service import get_team_form_lambdas
 from app.engines import poisson as poi_engine
 from app.engines import dual_engine
 from app.engines import bos as bos_engine

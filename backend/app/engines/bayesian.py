@@ -18,7 +18,6 @@ from typing import Optional
 from app.core.config import (
     ACTIVE_MARKETS,
     ALLOWED_SCORELINES,
-    BAYESIAN_EXTRA_MARKETS,
     MARKET_MIN_EDGE,
     MARKET_MIN_ODDS,
     MARKET_PROB_BOUNDS,
@@ -489,7 +488,7 @@ def analyse_fixture(
     derived = _derive_markets(probs)
     tier = get_league_tier(league, country)
 
-    markets_to_eval = (ACTIVE_MARKETS | BAYESIAN_EXTRA_MARKETS) if all_markets else ACTIVE_MARKETS
+    markets_to_eval = ACTIVE_MARKETS
 
     results: list[BayesianResult] = []
     for market_name, derived_prob in derived.items():
