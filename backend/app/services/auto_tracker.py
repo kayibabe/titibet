@@ -20,7 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Signal, Fixture, TrackedBet
 from app.models.user import User as _User  # noqa: F401 — registers users table in SA metadata
-from app.core.config import DUAL_HIGH_ODDS_CEILING
+from app.core.config import (
+    DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
+    WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
+)
 
 logger = logging.getLogger("titibet.auto_tracker")
 
@@ -106,6 +109,26 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
             and signal.dual_confidence == "High"
             and signal.dual_agreement == "Both"
             and odds >= ceiling
+        ):
+            continue
+
+        # Skip women's league over-goals picks — models calibrated on men's
+        # football systematically overestimate scoring in women's fixtures.
+        if (
+            signal.market in WOMEN_OVER_SUPPRESSED_MARKETS
+            and any(kw in (fixture.league or "").lower() for kw in WOMEN_LEAGUE_KEYWORDS)
+        ):
+            continue
+
+        # Skip Both+High Home Over 0.5 from data-poor countries at Tier 3.
+        # Both engines can agree with high confidence on insufficient historical
+        # data — the agreement reflects noise, not genuine edge.
+        if (
+            signal.market == "Home Over 0.5"
+            and signal.dual_confidence == "High"
+            and signal.dual_agreement == "Both"
+            and (fixture.league_tier or 3) >= 3
+            and (fixture.country or "").lower() in HO05_DATA_POOR_COUNTRIES
         ):
             continue
 

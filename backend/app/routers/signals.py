@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_optional, get_current_user
 from app.core.database import get_db
 from sqlalchemy import func
-from app.core.config import get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES, MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING
+from app.core.config import (
+    get_settings, DISABLED_MARKETS, DISABLED_LEAGUES,
+    OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
+    MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING,
+    WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
+)
 from app.models import Signal, Fixture, TrackedBet
 from app.models.odds import MarketSnapshot
 from app.models.user import User
@@ -358,6 +363,33 @@ async def list_signals(
             )
         ]
 
+    # Women's league over-goals suppression.
+    # Models are calibrated on men's football; women's leagues have structurally
+    # lower scoring rates and weaker home advantage — systematic overestimation.
+    if WOMEN_OVER_SUPPRESSED_MARKETS:
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.market in WOMEN_OVER_SUPPRESSED_MARKETS
+                and any(kw in (fix.league or "").lower() for kw in WOMEN_LEAGUE_KEYWORDS)
+            )
+        ]
+
+    # Data-poor Both+High Home Over 0.5 gate.
+    # In these countries at Tier 3, both engines agree confidently but on
+    # insufficient historical data — agreement reflects noise, not genuine edge.
+    if HO05_DATA_POOR_COUNTRIES:
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.market == "Home Over 0.5"
+                and sig.dual_confidence == "High"
+                and sig.dual_agreement == "Both"
+                and (fix.league_tier or 3) >= 3
+                and (fix.country or "").lower() in HO05_DATA_POOR_COUNTRIES
+            )
+        ]
+
     # CLV market ranks: one DB query, used for all signals in this response.
     # Only computed for the default "system" sort where the ranking matters most.
     clv_ranks: dict[str, int] = {}
@@ -485,6 +517,29 @@ async def stat_driven_picks(
             if not (
                 sig.market in DUAL_HIGH_ODDS_CEILING
                 and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
+            )
+        ]
+
+    # Women's league suppression — mirrors main endpoint.
+    if WOMEN_OVER_SUPPRESSED_MARKETS:
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.market in WOMEN_OVER_SUPPRESSED_MARKETS
+                and any(kw in (fix.league or "").lower() for kw in WOMEN_LEAGUE_KEYWORDS)
+            )
+        ]
+
+    # Data-poor Both+High Tier 3 gate — mirrors main endpoint.
+    if HO05_DATA_POOR_COUNTRIES:
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.market == "Home Over 0.5"
+                and sig.dual_confidence == "High"
+                and sig.dual_agreement == "Both"
+                and (fix.league_tier or 3) >= 3
+                and (fix.country or "").lower() in HO05_DATA_POOR_COUNTRIES
             )
         ]
 

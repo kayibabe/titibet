@@ -605,6 +605,25 @@ OVER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
     "regionalliga - west",  # 50% hit rate but borderline — preemptive suppression to avoid further losses
 })
 
+# Markets suppressed in women's leagues.
+# Women's football has structurally lower scoring rates and weaker home advantage
+# than men's. Both engines are calibrated on men's data and systematically
+# overestimate home scoring in women's fixtures.
+# Matched by checking fixture.league against WOMEN_LEAGUE_KEYWORDS at serving time.
+WOMEN_OVER_SUPPRESSED_MARKETS: frozenset[str] = frozenset({
+    "Home Over 0.5", "Away Over 0.5", "Over 1.5", "Over 2.5",
+})
+
+# Countries where Both+High Home Over 0.5 signals are blocked at Tier 3.
+# In data-sparse markets both engines can agree confidently but on insufficient
+# historical data — overconfidence from noise, not genuine edge.
+# Applied only to Both+High; Poisson Only / Medium continues to qualify.
+# Derived from June 2026 loss analysis: Ethiopia, Iraq, Mali, Uzbekistan all
+# produced Both+High HO0.5 losses at 0% hit rate (0/4 in those countries).
+HO05_DATA_POOR_COUNTRIES: frozenset[str] = frozenset({
+    "ethiopia", "iraq", "mali", "uzbekistan",
+})
+
 # Leagues where away-scoring signals (Away Over 0.5/1.5) are surgically suppressed.
 # These competitions show unreliable away-goal patterns that the Poisson/Bayesian
 # models overestimate — typically low-tier Argentine/South American leagues with
