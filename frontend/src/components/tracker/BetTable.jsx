@@ -1,7 +1,38 @@
 ﻿import { useState } from 'react'
-import { Download, Lock, Ticket, Bot, Pencil, Trash2, X } from 'lucide-react'
+import { Download, Lock, Ticket, Bot, Pencil, Trash2, X, Clock, CheckCircle, AlertTriangle, MinusCircle } from 'lucide-react'
 import { fmtK, fmtPL, fmtPLCompact } from '../../utils/format'
 import { updateBet, deleteBet } from '../../api/tracker'
+
+function fmtLegKickoff(isoStr) {
+  if (!isoStr) return null
+  const utc = isoStr.endsWith('Z') || isoStr.includes('+') ? isoStr : `${isoStr}Z`
+  const d = new Date(utc)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toLocaleString(undefined, {
+    weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true,
+  })
+}
+
+const LEG_RESULT_CFG = {
+  won:     { icon: CheckCircle,   cls: 'text-green-400',  label: 'Won'  },
+  lost:    { icon: AlertTriangle, cls: 'text-red-400',    label: 'Lost' },
+  void:    { icon: MinusCircle,   cls: 'text-[var(--text)] opacity-60', label: 'Void' },
+  pending: { icon: Clock,         cls: 'text-[var(--text)] opacity-50', label: null },
+}
+
+function LegResultBadge({ result, score }) {
+  const cfg = LEG_RESULT_CFG[result] || LEG_RESULT_CFG.pending
+  const Icon = cfg.icon
+  if (result === 'pending' || !result) {
+    return score ? <span className={`text-[10px] font-mono ${cfg.cls}`}>{score}</span> : null
+  }
+  return (
+    <span className={`flex items-center gap-1 text-[10px] font-bold ${cfg.cls}`}>
+      <Icon size={11} />
+      {cfg.label}{score ? ` ${score}` : ''}
+    </span>
+  )
+}
 
 function escapeCsv(val) {
   if (val == null) return ''
@@ -476,6 +507,7 @@ function AccaRow({ bet, onRefresh }) {
           <div className="border-t border-[var(--border)] bg-[var(--code-bg)] px-4 py-3 space-y-2">
             {legs.map((leg, i) => {
               const match = leg.home_team && leg.away_team ? `${leg.home_team} vs ${leg.away_team}` : leg.match_name || '?'
+              const ko = fmtLegKickoff(leg.kickoff_at)
               return (
                 <div key={i} className="flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
                   <span className="w-5 h-5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
@@ -486,9 +518,18 @@ function AccaRow({ bet, onRefresh }) {
                         <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-[var(--accent)]/15 text-[var(--accent)] font-semibold">{leg.market}</span>
                       )}
                     </div>
+                    {ko && (
+                      <p className="text-[10px] text-[var(--text)] opacity-60 flex items-center gap-1 mt-0.5">
+                        <Clock size={9} />
+                        {ko}
+                      </p>
+                    )}
                     {leg.reason && <p className="text-[11px] text-[var(--text)] opacity-70 leading-snug mt-0.5">{leg.reason}</p>}
                   </div>
-                  {leg.odd != null && <span className="shrink-0 text-xs font-bold text-[var(--text-h)] tabular-nums">{Number(leg.odd).toFixed(2)}</span>}
+                  <div className="shrink-0 flex flex-col items-end gap-1">
+                    {leg.odd != null && <span className="text-xs font-bold text-[var(--text-h)] tabular-nums">{Number(leg.odd).toFixed(2)}</span>}
+                    <LegResultBadge result={leg.result} score={leg.score} />
+                  </div>
                 </div>
               )
             })}

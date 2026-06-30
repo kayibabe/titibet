@@ -197,6 +197,11 @@ async def settle_acca_bets(db: AsyncSession) -> dict:
       odds = product of non-void leg odds; P/L = stake × (adjusted_odds − 1)
     - All legs Void → ticket Void; P/L = 0
     - Any fixture not yet final → ticket stays Pending
+
+    Per-leg result ("won"/"lost"/"void"/"pending") and score are written back
+    into notes.legs on every pass — even while the ticket as a whole is still
+    Pending — so the Tracker page can show each leg's outcome as matches
+    finish, not just once the entire ticket settles.
     """
     import json as _json
 
@@ -208,6 +213,7 @@ async def settle_acca_bets(db: AsyncSession) -> dict:
     acca_bets: list[TrackedBet] = list(result.scalars().all())
 
     settled = 0
+    notes_updated = 0
 
     for bet in acca_bets:
         try:
@@ -219,8 +225,8 @@ async def settle_acca_bets(db: AsyncSession) -> dict:
         if not legs or bet.event_date is None:
             continue
 
-        leg_outcomes: list[tuple[str, float]] = []  # ("won"|"lost"|"void", odd)
-        all_decided = True
+        leg_outcomes: list[tuple[str, float] | None] = []  # ("won"|"lost"|"void", odd) or None if pending
+        notes_changed = False
 
         for leg in legs:
             home_team = (leg.get("home_team") or "").strip()
@@ -228,53 +234,58 @@ async def settle_acca_bets(db: AsyncSession) -> dict:
             market    = (leg.get("market") or "").strip()
             odd       = float(leg.get("odd") or 1.0)
 
-            if not home_team or not away_team or not market:
-                leg_outcomes.append(("void", odd))
-                continue
-
-            # Locate the fixture by team names + date
-            fix_q = (
-                select(Fixture)
-                .where(
-                    Fixture.event_date == bet.event_date,
-                    Fixture.home_team  == home_team,
-                    Fixture.away_team  == away_team,
+            fixture: Fixture | None = None
+            if leg.get("fixture_id"):
+                fixture = await db.get(Fixture, leg["fixture_id"])
+            if fixture is None and home_team and away_team:
+                fixture = await db.scalar(
+                    select(Fixture).where(
+                        Fixture.event_date == bet.event_date,
+                        Fixture.home_team  == home_team,
+                        Fixture.away_team  == away_team,
+                    )
                 )
+
+            if fixture is None or not market:
+                outcome = ("void", odd)
+            else:
+                fx_status = (fixture.status or "").strip().upper()
+                if fx_status in VOID_STATUSES:
+                    outcome = ("void", odd)
+                elif not _fixture_is_final(fixture) or fixture.home_score is None or fixture.away_score is None:
+                    outcome = None
+                else:
+                    condition = _score_condition(market)
+                    if condition is None:
+                        outcome = ("void", odd)
+                    else:
+                        won = condition(fixture.home_score, fixture.away_score)
+                        outcome = ("won" if won else "lost", odd)
+
+            leg_outcomes.append(outcome)
+
+            new_result = outcome[0] if outcome else "pending"
+            new_score = (
+                f"{fixture.home_score}-{fixture.away_score}"
+                if fixture and fixture.home_score is not None and new_result != "void"
+                else None
             )
-            fixture = await db.scalar(fix_q)
+            if leg.get("result") != new_result or leg.get("score") != new_score:
+                leg["result"] = new_result
+                leg["score"] = new_score
+                notes_changed = True
 
-            if fixture is None:
-                # No fixture in DB — void this leg
-                leg_outcomes.append(("void", odd))
-                continue
+        if notes_changed:
+            notes_data["legs"] = legs
+            bet.notes = _json.dumps(notes_data)
+            notes_updated += 1
 
-            fx_status = (fixture.status or "").strip().upper()
-            if fx_status in VOID_STATUSES:
-                leg_outcomes.append(("void", odd))
-                continue
+        if any(outcome is None for outcome in leg_outcomes):
+            continue  # one or more fixtures still pending — ticket stays Pending
 
-            if not _fixture_is_final(fixture):
-                all_decided = False
-                break
-
-            if fixture.home_score is None or fixture.away_score is None:
-                all_decided = False
-                break
-
-            condition = _score_condition(market)
-            if condition is None:
-                # Unknown market — void the leg rather than blocking settlement
-                leg_outcomes.append(("void", odd))
-                continue
-
-            won = condition(fixture.home_score, fixture.away_score)
-            leg_outcomes.append(("won" if won else "lost", odd))
-
-        if not all_decided or len(leg_outcomes) != len(legs):
-            continue  # one or more fixtures still pending
-
-        has_lost = any(outcome == "lost" for outcome, _ in leg_outcomes)
-        all_void = all(outcome == "void" for outcome, _ in leg_outcomes)
+        decided = [outcome for outcome in leg_outcomes if outcome is not None]
+        has_lost = any(outcome == "lost" for outcome, _ in decided)
+        all_void = all(outcome == "void" for outcome, _ in decided)
 
         if has_lost:
             bet.result_status = "Lost"
@@ -285,7 +296,7 @@ async def settle_acca_bets(db: AsyncSession) -> dict:
         else:
             # Won — multiply odds of non-void legs only
             adjusted_odds = 1.0
-            for outcome, odd in leg_outcomes:
+            for outcome, odd in decided:
                 if outcome == "won":
                     adjusted_odds *= odd
             bet.result_status = "Won"
@@ -298,10 +309,13 @@ async def settle_acca_bets(db: AsyncSession) -> dict:
             bet.id, bet.result_status, bet.profit_loss,
         )
 
-    if settled:
+    if settled or notes_updated:
         await db.commit()
 
-    logger.info("settle_acca_bets: settled %d acca bet(s)", settled)
+    logger.info(
+        "settle_acca_bets: settled %d acca bet(s), %d leg-result update(s)",
+        settled, notes_updated,
+    )
     return {"acca_settled": settled}
 
 

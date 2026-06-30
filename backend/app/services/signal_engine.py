@@ -834,10 +834,10 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                     fraction=0.25,
                     cap=POISSON_ONLY_KELLY_CAP,
                 )
-            elif is_bayesian_signal and not is_dual_signal and b is not None and b.derived_prob and b.best_actual_odd:
+            elif is_bayesian_signal and not is_dual_signal and b is not None and b.derived_prob and b.exec_odd:
                 adjusted_stake_pct = kelly_stake_pct(
                     prob=b.derived_prob,
-                    odds=b.best_actual_odd,
+                    odds=b.exec_odd,
                     fraction=0.25,
                     cap=POISSON_ONLY_KELLY_CAP,
                 )
@@ -961,8 +961,11 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             # Poisson signal odds dict so the router can display and rank them.
             # Candidates for Over 1.5/2.5 use _cand_best_odd as final fallback
             # because _poi_best_odd's key ("over25") differs from poi_signal_odds ("over2_5").
+            # Use exec_odd (not the raw display price) — exec_odd is already
+            # haircut-adjusted toward what local bookmakers (betPawa/Betway)
+            # actually offer, vs. the William Hill proxy price which runs higher.
             _effective_best_odd = (
-                (b.best_actual_odd if b else None)
+                (b.exec_odd if b else None)
                 or (_poi_best_odd if _poi_best_odd > 1.0 else None)
                 or (_cand_best_odd if (is_candidate and _cand_best_odd and _cand_best_odd > 1.0) else None)
             )
@@ -1071,7 +1074,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 fixture_id=fixture.id, market=market,
                 bayesian_prob=bay.derived_prob if bay else None,
                 bayesian_edge=bay.edge if bay else None,
-                bayesian_best_odd=bay.best_actual_odd if bay else None,
+                bayesian_best_odd=bay.exec_odd if bay else None,
                 bayesian_bookmaker=bay.best_bookmaker if bay else None,
                 bayesian_overround=bay.overround if bay else None,
                 bayesian_coverage=bay.coverage if bay else None,
