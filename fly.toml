@@ -17,6 +17,10 @@ primary_region = 'jnb'
   APP_URL = 'https://titibet.fly.dev'
   # Persist the API-Football response cache on the volume so redeploys don't wipe it.
   API_CACHE_DIR = '/data/.cache/api_football'
+  # Persist fitted ZINB/Glicko-2 models on the volume so redeploys/restarts don't
+  # force a full refit (5+ min, CPU-bound, was blocking the event loop and timing
+  # out unrelated API requests during every deploy).
+  MODEL_CACHE_DIR = '/data/.cache/advanced_models'
   # Odds pages per sync. The free API-Football plan HARD-CAPS this at 3 (page>=4
   # returns an error), so ~30 fixtures/day is the ceiling until a paid plan.
   # Configurable here only so it can be raised after upgrading the API plan.
@@ -49,7 +53,7 @@ primary_region = 'jnb'
     path = '/health'
 
 [[vm]]
-  memory = '2gb'
+  memory = '4gb'
   cpu_kind = 'shared'
   cpus = 2
-  memory_mb = 2048
+  memory_mb = 4096

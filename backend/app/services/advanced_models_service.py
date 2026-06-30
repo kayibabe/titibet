@@ -15,7 +15,10 @@ Public API used by signal_engine.py:
 from __future__ import annotations
 
 import logging
+import os
+import pickle
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import text
@@ -28,22 +31,96 @@ _MIN_FIXTURES_FOR_ZINB: int = 20
 # How far back (days) to pull historical fixtures for model fitting.
 _LOOKBACK_DAYS: int = 365
 
-# Process-level cache — ZINB + Glicko-2 fitting takes ~5 min; reuse across
+# Process-level cache — ZINB + Glicko-2 fitting takes 5+ min; reuse across
 # all Recompute calls within the same day. Keyed by reference_date.
 _cache: dict[date, "AdvancedModelsService"] = {}
 
+# Disk-persisted cache so fitted models survive process restarts (deploys,
+# crashes, Fly maintenance). Without this, every restart re-fits ZINB/Glicko
+# for every league from scratch even though the underlying fixture history
+# usually hasn't changed since the last fit that same day — the CPU-bound
+# refit then blocks the event loop long enough to fail health checks and
+# time out unrelated API requests (e.g. /api/tracker/bets) for several minutes.
+# Point MODEL_CACHE_DIR at the persistent /data volume in production —
+# otherwise every redeploy wipes the cache and forces a full refit.
+_MODEL_CACHE_DIR = Path(
+    os.getenv("MODEL_CACHE_DIR") or str(Path(__file__).resolve().parents[2] / ".cache" / "advanced_models")
+)
+
+
+async def _fixture_fingerprint(db: AsyncSession, reference_date: date) -> str:
+    """
+    Cheap proxy for "has the underlying fixture history changed since the last
+    fit" — count + max id of completed fixtures in the lookback window. A single
+    indexed COUNT/MAX query, orders of magnitude cheaper than the full fit.
+    """
+    cutoff = reference_date - timedelta(days=_LOOKBACK_DAYS)
+    row = (await db.execute(text("""
+        SELECT COUNT(*), COALESCE(MAX(id), 0) FROM fixtures
+        WHERE home_score IS NOT NULL AND away_score IS NOT NULL AND event_date >= :cutoff
+    """), {"cutoff": cutoff.isoformat()})).first()
+    count, max_id = (row[0], row[1]) if row else (0, 0)
+    return f"{count}-{max_id}"
+
+
+def _disk_cache_path(reference_date: date, fingerprint: str) -> Path:
+    return _MODEL_CACHE_DIR / f"{reference_date.isoformat()}_{fingerprint}.pkl"
+
 
 async def get_or_load(db: "AsyncSession", reference_date: date) -> "AdvancedModelsService":
-    """Return a fully-loaded AdvancedModelsService, reusing the cached instance
-    for the same reference_date so models are only fitted once per day per process."""
-    if reference_date not in _cache:
+    """
+    Return a fully-loaded AdvancedModelsService, reusing the cached instance
+    for the same reference_date so models are only fitted once per day per process.
+
+    Falls back to a disk-persisted cache (keyed by reference_date + a fixture-data
+    fingerprint) when the in-memory cache is empty — i.e. right after a process
+    restart — so a deploy doesn't force a full refit if nothing has changed.
+    """
+    if reference_date in _cache:
+        return _cache[reference_date]
+
+    fingerprint = await _fixture_fingerprint(db, reference_date)
+    disk_path = _disk_cache_path(reference_date, fingerprint)
+
+    svc: Optional["AdvancedModelsService"] = None
+    if disk_path.is_file():
+        try:
+            with disk_path.open("rb") as f:
+                svc = pickle.load(f)
+            svc._db = db
+            logger.info("AdvancedModelsService: restored from disk cache (%s)", disk_path.name)
+        except Exception as exc:
+            logger.warning("AdvancedModelsService: disk cache load failed (%s) — refitting", exc)
+            svc = None
+
+    if svc is None:
         svc = AdvancedModelsService(db)
         await svc.load(reference_date=reference_date)
-        _cache[reference_date] = svc
-        # Evict any entries for other dates — keep memory bounded.
-        for old_date in [d for d in list(_cache) if d != reference_date]:
-            del _cache[old_date]
-    return _cache[reference_date]
+        _persist_to_disk(svc, disk_path)
+
+    _cache[reference_date] = svc
+    # Evict any entries for other dates — keep memory bounded.
+    for old_date in [d for d in list(_cache) if d != reference_date]:
+        del _cache[old_date]
+    return svc
+
+
+def _persist_to_disk(svc: "AdvancedModelsService", disk_path: Path) -> None:
+    """Write the fitted service to disk, excluding the live (unpicklable) DB session."""
+    try:
+        _MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        db_ref, svc._db = svc._db, None
+        try:
+            with disk_path.open("wb") as f:
+                pickle.dump(svc, f)
+        finally:
+            svc._db = db_ref
+        # Bound the cache to one file — older fingerprints/dates are stale.
+        for stale in _MODEL_CACHE_DIR.glob("*.pkl"):
+            if stale != disk_path:
+                stale.unlink(missing_ok=True)
+    except Exception as exc:
+        logger.warning("AdvancedModelsService: failed to write disk cache: %s", exc)
 
 
 class AdvancedModelsService:
