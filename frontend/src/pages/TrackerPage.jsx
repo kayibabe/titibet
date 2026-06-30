@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { RefreshCw, CheckCircle, TrendingUp, Lock, Upload, MoreHorizontal, Bot, User, Layers } from 'lucide-react'
 import { useTracker } from '../store/useTracker'
 import { syncData, computeCLV, deduplicateBets, normalizeStakes } from '../api/tracker'
+import { fetchAnalytics } from '../api/analytics'
 import { triggerAdminSettle } from '../api/admin'
 import BetTable from '../components/tracker/BetTable'
 import PLChart from '../components/tracker/PLChart'
@@ -61,23 +62,24 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     return bets.filter(b => !isSystemPick(b))
   }, [bets, sourceFilter])
 
-  // System performance stats (all-time, shown in system-pick mode)
-  const systemStats = useMemo(() => {
-    const sys = bets.filter(isSystemPick)
-    if (!sys.length) return null
-    const won     = sys.filter(b => b.result_status === 'Won').length
-    const lost    = sys.filter(b => b.result_status === 'Lost').length
-    const settled = won + lost
-    const totalStake  = sys.reduce((s, b) => s + (b.stake ?? 0), 0)
-    const totalPL     = sys.filter(b => b.result_status !== 'Pending').reduce((s, b) => s + (b.profit_loss ?? 0), 0)
-    return {
-      total: sys.length,
-      won, lost,
-      settled,
-      pending: sys.filter(b => b.result_status === 'Pending').length,
-      hitRate: settled > 0 ? Math.round(won / settled * 100) : null,
-      roi: totalStake > 0 ? Math.round(totalPL / totalStake * 1000) / 10 : null,
-    }
+  // Analytics summary for the currently filtered view — same backend
+  // build_analytics() implementation the Analytics page uses, scoped with
+  // the same date/status/source filters as the bet list, so the stats bar
+  // never drifts from a separately-implemented client-side formula.
+  const [analyticsSummary, setAnalyticsSummary] = useState(null)
+  useEffect(() => {
+    fetchAnalytics({
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
+      result_status: statusFilter || undefined,
+      source: sourceFilter || undefined,
+    }).then(setAnalyticsSummary).catch(() => setAnalyticsSummary(null))
+  }, [dateFrom, dateTo, statusFilter, sourceFilter, bets])
+
+  // System performance stats — all-time, ignores the page's date/status filters.
+  const [systemSummary, setSystemSummary] = useState(null)
+  useEffect(() => {
+    fetchAnalytics({ source: 'system' }).then(setSystemSummary).catch(() => setSystemSummary(null))
   }, [bets])
 
   useEffect(() => {
@@ -302,37 +304,37 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
       </div>
 
       {/* System performance card — visible when source=system or system bets exist */}
-      {systemStats && (sourceFilter === 'system' || sourceFilter === '') && (
+      {systemSummary && systemSummary.total_bets > 0 && (sourceFilter === 'system' || sourceFilter === '') && (
         <div className="rounded-xl border border-violet-500/25 bg-violet-500/6 px-4 py-3 space-y-2">
           <div className="flex items-center gap-2">
             <Bot size={13} className="text-violet-400 shrink-0" />
             <span className="text-xs font-semibold text-violet-300">System Performance</span>
-            <span className="ml-auto text-xs text-[var(--text)] opacity-60">{systemStats.total} auto-tracked picks</span>
+            <span className="ml-auto text-xs text-[var(--text)] opacity-60">{systemSummary.total_bets} auto-tracked picks</span>
           </div>
           <div className="flex items-center gap-5 flex-wrap text-xs">
             <div className="flex flex-col items-center">
               <span className="text-lg font-bold text-[var(--text-h)] tabular-nums">
-                {systemStats.hitRate !== null ? `${systemStats.hitRate}%` : '—'}
+                {systemSummary.settled_bets > 0 ? `${Math.round(systemSummary.win_rate)}%` : '—'}
               </span>
               <span className="text-[var(--text)] opacity-60">Hit Rate</span>
             </div>
             <div className="flex flex-col items-center">
-              <span className={`text-lg font-bold tabular-nums ${systemStats.roi === null ? 'text-[var(--text-h)]' : systemStats.roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {systemStats.roi !== null ? `${systemStats.roi >= 0 ? '+' : ''}${systemStats.roi}%` : '—'}
+              <span className={`text-lg font-bold tabular-nums ${systemSummary.settled_bets === 0 ? 'text-[var(--text-h)]' : systemSummary.roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {systemSummary.settled_bets > 0 ? `${systemSummary.roi >= 0 ? '+' : ''}${systemSummary.roi}%` : '—'}
               </span>
               <span className="text-[var(--text)] opacity-60">ROI</span>
             </div>
             <div className="flex flex-col items-center">
-              <span className="text-lg font-bold text-green-400 tabular-nums">{systemStats.won}</span>
+              <span className="text-lg font-bold text-green-400 tabular-nums">{systemSummary.wins}</span>
               <span className="text-[var(--text)] opacity-60">Won</span>
             </div>
             <div className="flex flex-col items-center">
-              <span className="text-lg font-bold text-red-400 tabular-nums">{systemStats.lost}</span>
+              <span className="text-lg font-bold text-red-400 tabular-nums">{systemSummary.losses}</span>
               <span className="text-[var(--text)] opacity-60">Lost</span>
             </div>
-            {systemStats.pending > 0 && (
+            {systemSummary.pending_bets > 0 && (
               <div className="flex flex-col items-center">
-                <span className="text-lg font-bold text-[var(--text-h)] tabular-nums">{systemStats.pending}</span>
+                <span className="text-lg font-bold text-[var(--text-h)] tabular-nums">{systemSummary.pending_bets}</span>
                 <span className="text-[var(--text)] opacity-60">Pending</span>
               </div>
             )}
@@ -376,7 +378,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
       {/* P&L chart + stats bar */}
       {!loading && filteredBets.some(b => b.result_status !== 'Pending') && (
         <>
-          <BetStatsBar bets={filteredBets} />
+          <BetStatsBar summary={analyticsSummary} />
           <PLChart bets={filteredBets} />
         </>
       )}

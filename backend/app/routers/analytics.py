@@ -285,13 +285,17 @@ async def full(
     date_to: Optional[str] = Query(None),
     market_type: Optional[str] = Query(None),
     league: Optional[str] = Query(None),
+    result_status: Optional[str] = Query(None),
+    source: Optional[str] = Query(None, description="'system' or 'manual' — filters by source_rule_key bucket"),
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """
     Single endpoint that returns the complete analytics payload in one DB query.
     Replaces the pattern of calling /summary + /by-market + /by-league + /trend separately.
-    The frontend AnalyticsPage should use this exclusively.
+    The frontend AnalyticsPage AND TrackerPage should use this exclusively — TrackerPage's
+    stats bar passes through its own filters (date range, result_status, source) so both
+    pages always compute win rate / ROI / streaks from this single implementation.
     """
     q = _base_query(current_user)
     if date_from:
@@ -302,6 +306,17 @@ async def full(
         q = q.where(TrackedBet.market_type == market_type)
     if league:
         q = q.where(TrackedBet.league.ilike(f"%{league}%"))
+    if result_status:
+        q = q.where(TrackedBet.result_status == result_status)
+    if source == "system":
+        q = q.where(TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]))
+    elif source == "manual":
+        q = q.where(
+            or_(
+                TrackedBet.source_rule_key.is_(None),
+                TrackedBet.source_rule_key.notin_(["system_auto", "system_dual"]),
+            )
+        )
     rows = await db.execute(q)
     bets = list(rows.scalars().all())
     return build_analytics(bets)

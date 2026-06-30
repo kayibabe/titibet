@@ -8,6 +8,8 @@ function buildParams(filters) {
   if (filters.date_to) params.set('date_to', filters.date_to)
   if (filters.market_type) params.set('market_type', filters.market_type)
   if (filters.league) params.set('league', filters.league)
+  if (filters.result_status) params.set('result_status', filters.result_status)
+  if (filters.source) params.set('source', filters.source)
   return params.toString() ? `?${params}` : ''
 }
 

@@ -667,6 +667,78 @@ async def _auto_track_acca(
         return False
 
 
+# ── Acca leg results (computed live from current Fixture rows) ───────────────
+# Not persisted into the cache — recomputed on every call so results always
+# reflect the latest fixture score/status rather than a stale snapshot.
+
+async def _attach_leg_results(db: AsyncSession, legs: list[dict], target_date: date) -> None:
+    """
+    Mutate each leg in place, adding `result` ("won" | "lost" | "void" | "pending"),
+    `score` (e.g. "2-1", or None while pending/void), and backfilling `kickoff_at`
+    when missing. Looks up the fixture by `fixture_id` (new legs); falls back to a
+    team-name + date match for legacy legs generated before fixture_id was attached.
+
+    Runs on every call (cache hit or live) — `kickoff_at` is only set once at
+    generation time in the live path, so a cached acca served on a later request
+    would otherwise never get it. Backfilling here covers both paths uniformly.
+    """
+    from app.services.settlement import (
+        FINAL_STATUSES, VOID_STATUSES, _score_condition,
+    )
+
+    if not legs:
+        return
+
+    fixture_ids = [leg["fixture_id"] for leg in legs if leg.get("fixture_id")]
+    fixtures_by_id: dict[int, Fixture] = {}
+    if fixture_ids:
+        rows = (await db.execute(select(Fixture).where(Fixture.id.in_(fixture_ids)))).scalars().all()
+        fixtures_by_id = {f.id: f for f in rows}
+
+    for leg in legs:
+        fixture = fixtures_by_id.get(leg.get("fixture_id"))
+        if fixture is None:
+            home = (leg.get("home_team") or "").strip()
+            away = (leg.get("away_team") or "").strip()
+            if home and away:
+                fixture = await db.scalar(
+                    select(Fixture).where(
+                        Fixture.event_date == target_date,
+                        Fixture.home_team == home,
+                        Fixture.away_team == away,
+                    )
+                )
+
+        if fixture is None:
+            leg["result"] = "pending"
+            leg["score"] = None
+            continue
+
+        if not leg.get("kickoff_at"):
+            leg["kickoff_at"] = fixture.kickoff_at.isoformat() if fixture.kickoff_at else None
+        leg.setdefault("fixture_id", fixture.id)
+
+        status = (fixture.status or "").strip().upper()
+        if status in VOID_STATUSES:
+            leg["result"] = "void"
+            leg["score"] = None
+            continue
+
+        if status not in FINAL_STATUSES or fixture.home_score is None or fixture.away_score is None:
+            leg["result"] = "pending"
+            leg["score"] = None
+            continue
+
+        score = f"{fixture.home_score}-{fixture.away_score}"
+        condition = _score_condition(leg.get("market"))
+        if condition is None:
+            leg["result"] = "void"
+            leg["score"] = score
+        else:
+            leg["result"] = "won" if condition(fixture.home_score, fixture.away_score) else "lost"
+            leg["score"] = score
+
+
 # ── Advisory cache (system_settings) ─────────────────────────────────────────
 # Stores the AI output once per day so users see instant results.
 # Only the AI-generated content is cached; per-user acca tracking is always
@@ -744,6 +816,10 @@ async def get_advisor_insights(
                     tracked = await _auto_track_acca(db, acca_data, target_date, current_user)
                 except Exception as exc:
                     logger.warning("_auto_track_acca (cache hit) failed: %s", exc)
+                try:
+                    await _attach_leg_results(db, acca_data["legs"], target_date)
+                except Exception as exc:
+                    logger.warning("_attach_leg_results (cache hit) failed: %s", exc)
             cached["accumulator"] = {**acca_data, "tracked": tracked, "from_cache": True}
             return cached
 
@@ -865,6 +941,22 @@ async def get_advisor_insights(
 
     # Compute combined odds from acca legs (product of individual odds)
     acca_legs = acca_result.get("legs", []) if isinstance(acca_result, dict) else []
+
+    # Enrich each leg with fixture_id + kickoff_at by matching against the acca
+    # pool (the same (sig, fix) rows the AI was given). This lets the frontend
+    # show kickoff time per leg, and lets settlement/result-lookup key off
+    # fixture_id directly instead of a fragile team-name match.
+    _pool_by_names = {
+        ((fix.home_team or "").strip().lower(), (fix.away_team or "").strip().lower()): fix
+        for _sig, fix in acca_pool
+    }
+    for leg in acca_legs:
+        key = ((leg.get("home_team") or "").strip().lower(), (leg.get("away_team") or "").strip().lower())
+        fix = _pool_by_names.get(key)
+        if fix:
+            leg["fixture_id"] = fix.id
+            leg["kickoff_at"] = fix.kickoff_at.isoformat() if fix.kickoff_at else None
+
     combined_odds: float | None = None
     if acca_legs:
         try:
@@ -909,6 +1001,10 @@ async def get_advisor_insights(
             tracked = await _auto_track_acca(db, accumulator, target_date, current_user)
         except Exception as exc:
             logger.warning("_auto_track_acca failed: %s", exc)
+        try:
+            await _attach_leg_results(db, acca_legs, target_date)
+        except Exception as exc:
+            logger.warning("_attach_leg_results failed: %s", exc)
 
     accumulator["tracked"] = tracked
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Sparkles, AlertTriangle, CheckCircle, MinusCircle, Loader2, RefreshCw, ArrowRight,
-  Download, FileText, Printer, Ticket, Zap,
+  Download, FileText, Printer, Ticket, Zap, Clock,
 } from 'lucide-react'
 import { fetchAdvisorInsights } from '../../api/advisor'
 import ADVISORS_META from './advisorsMeta'
@@ -63,6 +63,12 @@ function buildReportHtml(data, date) {
       <div style="padding:14px 18px;space-y:8px;">
         ${(acca.legs || []).map((leg, i) => {
           const match = leg.home_team && leg.away_team ? `${leg.home_team} vs ${leg.away_team}` : '—'
+          const ko = fmtLegKickoff(leg.kickoff_at)
+          const resultColor = { won: '#16a34a', lost: '#dc2626', void: '#6b7280' }[leg.result] || '#9ca3af'
+          const resultLabel = { won: 'Won', lost: 'Lost', void: 'Void' }[leg.result] || ''
+          const resultLine = resultLabel
+            ? `<span style="font-size:11px;font-weight:700;color:${resultColor};">${resultLabel}${leg.score ? ` ${leg.score}` : ''}</span>`
+            : (leg.score ? `<span style="font-size:11px;color:#9ca3af;">${leg.score}</span>` : '')
           return `<div style="display:flex;align-items:flex-start;gap:10px;margin:8px 0;padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;">
             <span style="min-width:22px;height:22px;background:#ede9fe;color:#7c3aed;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">${i+1}</span>
             <div style="flex:1;">
@@ -70,9 +76,13 @@ function buildReportHtml(data, date) {
                 <strong style="font-size:13px;color:#111827;">${match}</strong>
                 ${leg.market ? `<span style="font-size:11px;padding:2px 7px;background:#ede9fe;color:#7c3aed;border-radius:4px;font-weight:600;">${leg.market}</span>` : ''}
               </div>
+              ${ko ? `<p style="margin:3px 0 0;font-size:11px;color:#9ca3af;">${ko}</p>` : ''}
               ${leg.reason ? `<p style="margin:4px 0 0;font-size:12px;color:#6b7280;line-height:1.5;">${leg.reason}</p>` : ''}
             </div>
-            ${leg.odd != null ? `<span style="font-weight:700;font-size:13px;color:#111827;flex-shrink:0;">${Number(leg.odd).toFixed(2)}</span>` : ''}
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;">
+              ${leg.odd != null ? `<span style="font-weight:700;font-size:13px;color:#111827;">${Number(leg.odd).toFixed(2)}</span>` : ''}
+              ${resultLine}
+            </div>
           </div>`
         }).join('')}
         ${acca.combined_odds ? `<div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid #e5e7eb;margin-top:4px;font-size:12px;"><span style="color:#6b7280;">${acca.legs.length} legs combined</span><strong style="color:#7c3aed;">Combined odds: ${acca.combined_odds}</strong></div>` : ''}
@@ -249,9 +259,60 @@ function ExportButton({ data, date }) {
 }
 
 // ── Accumulator ticket ────────────────────────────────────────────────────────
+
+function fmtLegKickoff(iso) {
+  if (!iso) return null
+  const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z')
+  if (Number.isNaN(d.getTime())) return null
+  return d.toLocaleString('en-GB', {
+    weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+  })
+}
+
+const LEG_RESULT_CFG = {
+  won:     { icon: CheckCircle,   cls: 'text-green-400',  label: 'Won'  },
+  lost:    { icon: AlertTriangle, cls: 'text-red-400',    label: 'Lost' },
+  void:    { icon: MinusCircle,   cls: 'text-[var(--text)] opacity-60', label: 'Void' },
+  pending: { icon: Clock,         cls: 'text-[var(--text)] opacity-50', label: null },
+}
+
+function LegResultBadge({ result, score }) {
+  const cfg = LEG_RESULT_CFG[result] || LEG_RESULT_CFG.pending
+  const Icon = cfg.icon
+  if (result === 'pending' || !result) {
+    return score ? <span className={`text-[10px] font-mono ${cfg.cls}`}>{score}</span> : null
+  }
+  return (
+    <span className={`flex items-center gap-1 text-[10px] font-bold ${cfg.cls}`}>
+      <Icon size={11} />
+      {cfg.label}{score ? ` ${score}` : ''}
+    </span>
+  )
+}
+
+// Overall ticket status derived from leg results — mirrors settle_acca_bets:
+// any leg lost → Lost; all decided and none lost → Won/Void; else still Pending.
+function accaTicketStatus(legs) {
+  if (!legs.length) return null
+  const results = legs.map(l => l.result || 'pending')
+  if (results.some(r => r === 'lost')) return 'lost'
+  if (results.every(r => r === 'pending')) return null
+  if (results.some(r => r === 'pending')) return 'pending'
+  if (results.every(r => r === 'void')) return 'void'
+  return 'won'
+}
+
+const TICKET_STATUS_CFG = {
+  won:     { cls: 'text-green-400 border-green-500/40 bg-green-500/10',  label: '✅ Won'  },
+  lost:    { cls: 'text-red-400   border-red-500/40   bg-red-500/10',    label: '❌ Lost' },
+  void:    { cls: 'text-[var(--text)] border-[var(--border)] bg-[var(--code-bg)]', label: '⚪ Void' },
+  pending: { cls: 'text-amber-400 border-amber-500/40 bg-amber-500/10',  label: '⏳ Live'  },
+}
+
 function AccaTicket({ acca }) {
   if (!acca) return null
   const { legs = [], combined_odds, rationale, confidence, error, tracked } = acca
+  const ticketStatus = accaTicketStatus(legs)
 
   const confCfg = {
     High:   { cls: 'text-green-400 border-green-500/40 bg-green-500/10',  dot: 'bg-green-400' },
@@ -269,6 +330,11 @@ function AccaTicket({ acca }) {
           <span className="text-[10px] text-[var(--text)] opacity-60">AI-selected accumulator</span>
         </div>
         <div className="flex items-center gap-2">
+          {ticketStatus && (
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${TICKET_STATUS_CFG[ticketStatus].cls}`}>
+              {TICKET_STATUS_CFG[ticketStatus].label}
+            </span>
+          )}
           {confidence && (
             <span className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full border ${confCfg.cls}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${confCfg.dot}`} />
@@ -301,6 +367,7 @@ function AccaTicket({ acca }) {
               const match = leg.home_team && leg.away_team
                 ? `${leg.home_team} vs ${leg.away_team}`
                 : leg.match_name || '—'
+              const ko = fmtLegKickoff(leg.kickoff_at)
               return (
                 <div key={i} className="flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--code-bg)] px-3 py-2.5">
                   {/* Leg number */}
@@ -316,13 +383,22 @@ function AccaTicket({ acca }) {
                         </span>
                       )}
                     </div>
+                    {ko && (
+                      <p className="text-[10px] text-[var(--text)] opacity-60 flex items-center gap-1">
+                        <Clock size={9} />
+                        {ko}
+                      </p>
+                    )}
                     {leg.reason && (
                       <p className="text-[11px] text-[var(--text)] opacity-75 leading-snug">{leg.reason}</p>
                     )}
                   </div>
-                  {leg.odd != null && (
-                    <span className="shrink-0 text-xs font-bold text-[var(--text-h)] tabular-nums">{Number(leg.odd).toFixed(2)}</span>
-                  )}
+                  <div className="shrink-0 flex flex-col items-end gap-1">
+                    {leg.odd != null && (
+                      <span className="text-xs font-bold text-[var(--text-h)] tabular-nums">{Number(leg.odd).toFixed(2)}</span>
+                    )}
+                    <LegResultBadge result={leg.result} score={leg.score} />
+                  </div>
                 </div>
               )
             })}

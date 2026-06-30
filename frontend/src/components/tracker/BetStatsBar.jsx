@@ -1,65 +1,34 @@
-﻿/**
+/**
  * BetStatsBar — compact stats row above the bets table.
  *
  * Shows: win rate, current streak, ROI, best/worst market, P&L.
- * All computed client-side from the bets array — no extra API call.
+ * Sourced from the backend analytics summary (build_analytics(), same
+ * implementation the Analytics page uses) — TrackerPage fetches it with the
+ * same filters as the bet list so the two pages never compute these numbers
+ * via separate code paths.
  */
-import { useMemo } from 'react'
 import { fmtK } from '../../utils/format'
 
-function computeStats(bets) {
-  const settled = bets.filter(b => b.result_status !== 'Pending')
-  if (settled.length === 0) return null
+function deriveStats(summary) {
+  if (!summary || (summary.wins ?? 0) + (summary.losses ?? 0) === 0) return null
 
-  const wins   = settled.filter(b => b.result_status === 'Won').length
-  const losses = settled.filter(b => b.result_status === 'Lost').length
-  const voids  = settled.filter(b => b.result_status === 'Void').length
-  const totalPL = settled.reduce((sum, b) => sum + (b.profit_loss ?? 0), 0)
-  const totalStake = settled.reduce((sum, b) => sum + (b.stake ?? 0), 0)
-  const roi  = totalStake > 0 ? (totalPL / totalStake) * 100 : 0
-  const wr   = settled.length > 0 ? (wins / (wins + losses || 1)) * 100 : 0
+  const wins   = summary.wins ?? 0
+  const losses = summary.losses ?? 0
+  const voids  = Math.max(0, (summary.total_bets ?? 0) - (summary.settled_bets ?? 0) - (summary.pending_bets ?? 0))
 
-  // Current streak — walk from most-recent settled bet backwards
-  const sorted = [...settled].sort((a, b) => {
-    const ka = a.event_date || (a.settled_at ? String(a.settled_at).slice(0, 10) : '0000')
-    const kb = b.event_date || (b.settled_at ? String(b.settled_at).slice(0, 10) : '0000')
-    return ka < kb ? 1 : ka > kb ? -1 : 0
-  })
-
-  let streak = 0
-  let streakType = null
-  for (const b of sorted) {
-    if (b.result_status === 'Void') continue // skip voids in streak
-    if (streakType === null) {
-      streakType = b.result_status   // 'Won' or 'Lost'
-      streak = 1
-    } else if (b.result_status === streakType) {
-      streak++
-    } else {
-      break
-    }
-  }
-
-  // Per-market P&L (top winner and top loser)
-  const byMarket = {}
-  for (const b of settled) {
-    const m = b.market_type || 'Unknown'
-    if (!byMarket[m]) byMarket[m] = { pl: 0, count: 0 }
-    byMarket[m].pl += b.profit_loss ?? 0
-    byMarket[m].count++
-  }
-  const marketEntries = Object.entries(byMarket).filter(([, v]) => v.count >= 2)
-  const bestMarket  = marketEntries.sort(([, a], [, b]) => b.pl - a.pl)[0]
-  const worstMarket = marketEntries.sort(([, a], [, b]) => a.pl - b.pl)[0]
+  const eligible = (summary.by_market || []).filter(m => m.bets >= 2)
+  const bestMarket  = eligible.length ? eligible.reduce((a, b) => (b.profit_loss > a.profit_loss ? b : a)) : null
+  const worstMarket = eligible.length ? eligible.reduce((a, b) => (b.profit_loss < a.profit_loss ? b : a)) : null
 
   return {
     wins, losses, voids,
-    totalPL: Math.round(totalPL * 100) / 100,
-    roi: Math.round(roi * 10) / 10,
-    wr: Math.round(wr * 1) / 1,
-    streak, streakType,
-    bestMarket:  bestMarket  ? { name: bestMarket[0],  pl: bestMarket[1].pl }  : null,
-    worstMarket: worstMarket ? { name: worstMarket[0], pl: worstMarket[1].pl } : null,
+    totalPL: summary.total_profit_loss ?? 0,
+    roi: summary.roi ?? 0,
+    wr: summary.win_rate ?? 0,
+    streak: summary.current_streak_len ?? 0,
+    streakType: summary.current_streak_type ?? null,
+    bestMarket:  bestMarket  ? { name: bestMarket.market,  pl: bestMarket.profit_loss }  : null,
+    worstMarket: worstMarket ? { name: worstMarket.market, pl: worstMarket.profit_loss } : null,
   }
 }
 
@@ -73,8 +42,8 @@ function StatCell({ label, value, sub, color }) {
   )
 }
 
-export default function BetStatsBar({ bets }) {
-  const stats = useMemo(() => computeStats(bets), [bets])
+export default function BetStatsBar({ summary }) {
+  const stats = deriveStats(summary)
   if (!stats) return null
 
   const plColor   = stats.totalPL >= 0 ? 'text-green-400' : 'text-red-400'
