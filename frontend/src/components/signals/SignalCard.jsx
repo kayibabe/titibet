@@ -509,19 +509,12 @@ const SAVED_KEY = 'titibet_saved_signals_v1'
 const getSaved = () => { try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]') } catch { return [] } }
 
 // ── Main card ─────────────────────────────────────────────────────────────────
-// Apply the user's odds-adjustment setting uniformly wherever odds are displayed,
-// so the same selection shows the same price on the board and in Value Bets.
-function applyOddsAdj(raw, pct) {
-  if (raw == null || !pct) return raw
-  return Math.max(1.01, raw * (1 - Math.abs(pct) / 100))
-}
-
 // Persist engine-breakdown open/closed across cards for the session, so power
 // users who want the math don't have to re-open it on every card.
 const ENGINE_OPEN_KEY = 'titibet_engine_breakdown_open_v1'
 const getEngineOpen = () => { try { return sessionStorage.getItem(ENGINE_OPEN_KEY) === '1' } catch { return false } }
 
-export default function SignalCard({ signal, rank, isPro = true, isTracked = false, isAutoTracked = false, onTrackPick, onDeepDive, oddsAdjPct = 0 }) {
+export default function SignalCard({ signal, rank, isPro = true, isTracked = false, isAutoTracked = false, onTrackPick, onDeepDive }) {
   const [expanded, setExpanded]       = useState(getEngineOpen)
   const [showDetails, setShowDetails] = useState(false)
   const [showExplain, setShowExplain] = useState(false)
@@ -557,15 +550,9 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
 
   const isContradiction = signal.dual_agreement === 'Contradiction'
   const isBayesianOnly = signal.dual_agreement === 'Bayesian Only' || (signal.dual_agreement === 'Both' && signal.dual_confidence !== 'High')
-  // Odds shown everywhere on the card respect the user's odds-adjustment setting.
-  const displayBestOdd = applyOddsAdj(signal.bayesian?.best_odd, oddsAdjPct)
-  // When odds are adjusted, recompute EV from the adjusted price (matches Value Bets);
-  // otherwise fall back to the pre-computed model EV.
-  const adjEvPct = (oddsAdjPct && signal.bayesian?.prob != null && displayBestOdd != null)
-    ? (signal.bayesian.prob * displayBestOdd - 1) * 100
-    : null
-  const evPct = adjEvPct != null ? adjEvPct : (signal.bayesian?.ev_pct ?? null)
-  const evScore = adjEvPct != null ? null : (signal.advanced?.ev_score ?? null)   // pre-computed, preferred
+  const displayBestOdd = signal.bayesian?.best_odd ?? null
+  const evPct = signal.bayesian?.ev_pct ?? null
+  const evScore = signal.advanced?.ev_score ?? null   // pre-computed, preferred
   const primaryProb = Math.max(signal.bayesian?.prob ?? 0, signal.poisson?.prob ?? 0)
   const isMediumConfidence = signal.dual_confidence === 'Medium'
   const isHighProbabilityOutcome = primaryProb >= 0.7 && !isMediumConfidence
@@ -673,9 +660,6 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
                 <span className="font-mono text-[var(--accent)] font-semibold">
                   {Number(displayBestOdd).toFixed(2)}
                 </span>
-                {oddsAdjPct ? (
-                  <span className="opacity-50" title="Odds shaved by your odds-adjustment setting">· adj −{Math.abs(oddsAdjPct)}%</span>
-                ) : null}
                 {signal.bayesian?.bookmaker_count != null && (
                   <span className="opacity-50">
                     · {signal.bayesian.bookmaker_count} {signal.bayesian.bookmaker_count === 1 ? 'book' : 'books'}

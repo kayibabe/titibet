@@ -1,6 +1,6 @@
 ﻿"""
 scheduler.py — APScheduler jobs for automatic fixture + odds sync.
-Runs sync_and_compute() at configured times (default: 06:00, 10:00, 14:00, 18:00, 23:30 UTC).
+Runs sync_and_compute() at configured times (default: 06:00, 14:00, 18:00, 23:30 UTC).
 
 Startup behaviour
 -----------------
@@ -41,6 +41,7 @@ from app.services.telegram import (
     check_and_push_pending_results,
     push_signal_digest,
     push_morning_digest,
+    push_tomorrow_digest,
 )
 
 logger = logging.getLogger("titibet.scheduler")
@@ -397,12 +398,69 @@ async def _morning_digest_job() -> None:
             logger.exception("Morning digest push failed")
 
 
+async def _tomorrow_presync_job() -> None:
+    """
+    Tomorrow pre-sync — runs 18:00 UTC (20:00 CAT / 8pm Malawi local).
+
+    Pulls fixtures + odds for tomorrow and computes signals so the user can
+    review and manually place bets tonight for all of tomorrow's matches,
+    well ahead of kickoff. Also pre-warms the AI advisory cache for tomorrow
+    so Scout/Strategist/Skeptic and the Acca Builder are instant when checked
+    tonight instead of paying the 15-45s live-pipeline cost on first request,
+    then pushes tomorrow's full single-match slate + the AI Acca-of-the-Day to
+    both TiTiBet Telegram channels — Pro sees everything in clear, Free sees a
+    couple of randomly revealed matches with the rest spoiler-blurred.
+
+    Deliberately does NOT auto-track system picks here — auto_track_date
+    dedups on (fixture_id, market_type), so whatever gets tracked first would
+    freeze the model's 8pm view even after odds/signals are recomputed closer
+    to kickoff. Auto-tracking stays on the normal sync cycle (06:00 etc.) so
+    stakes commit off the model's most current, closest-to-kickoff read —
+    consistent with the CLV/drift-rank logic the rest of the system relies on.
+
+    Best-effort: failures are logged; the 18:30 UTC nightly digest job re-runs
+    the same pre-sync as a fallback (sync_date's cooldown guard makes the
+    second call a no-op if this one already succeeded).
+    """
+    tomorrow = date.today() + timedelta(days=1)
+    async with AsyncSessionLocal() as db:
+        try:
+            run = await ingestion.sync_date(db, tomorrow)
+            if run.status == "success":
+                n_sig = await compute_signals_for_date(db, tomorrow)
+                await db.commit()
+                logger.info(
+                    "Tomorrow pre-sync (8pm local): %s — %d fixtures, %d signals",
+                    tomorrow, run.fixtures_pulled, n_sig,
+                )
+            else:
+                logger.warning("Tomorrow pre-sync: %s sync status=%s", tomorrow, run.status)
+        except Exception:
+            logger.exception("Tomorrow pre-sync failed — nightly digest job will retry")
+            return
+        try:
+            from app.services.advisor_service import get_advisor_insights
+            result = await get_advisor_insights(db, tomorrow, current_user=None, force=True)
+            n_matches = result.get("matches_analysed", 0)
+            logger.info("Tomorrow advisory cache: %d matches analysed for %s", n_matches, tomorrow)
+        except Exception:
+            logger.exception("Tomorrow advisory pre-cache failed — users will fall back to live computation")
+        try:
+            n_sent = await push_tomorrow_digest(db, tomorrow)
+            if n_sent:
+                logger.info("Tomorrow digest: pushed to %d channel(s) for %s", n_sent, tomorrow)
+        except Exception:
+            logger.exception("Tomorrow digest push failed")
+
+
 async def _nightly_digest_job() -> None:
     """
     Evening digest — runs 18:30 UTC (20:30 CAT).
 
     1. Pre-sync TOMORROW (UTC) so matches that kick off after midnight Malawi time
        — which fall on the next UTC date — have computed signals available.
+       (Cheap fallback: _tomorrow_presync_job already did this at 18:00 UTC;
+       the cooldown guard in sync_date makes this a no-op when it succeeded.)
     2. Broadcast the 'tonight + overnight' digest to all configured Telegram
        channels so subscribers can bet on after-midnight fixtures before bed.
 
@@ -520,9 +578,19 @@ def get_scheduler() -> AsyncIOScheduler:
             replace_existing=True,
             misfire_grace_time=1800,
         )
+        # Tomorrow pre-sync — 18:00 UTC (20:00 CAT / 8pm Malawi local). Pulls
+        # tomorrow's fixtures + odds and computes signals so the user can place
+        # bets tonight for all of tomorrow's matches well ahead of kickoff.
+        _scheduler.add_job(
+            _tomorrow_presync_job,
+            CronTrigger(hour=18, minute=0),
+            id="tomorrow-presync",
+            replace_existing=True,
+            misfire_grace_time=1800,
+        )
         # Evening digest — 18:30 UTC (20:30 CAT). Pre-syncs tomorrow so
         # after-midnight (CAT) matches have signals, then broadcasts the
-        # 'tonight + overnight' digest to General/Free/Pro channels.
+        # 'tonight + overnight' digest to the Free/Pro channels.
         _scheduler.add_job(
             _nightly_digest_job,
             CronTrigger(hour=18, minute=30),

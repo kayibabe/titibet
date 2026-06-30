@@ -64,6 +64,7 @@ def _system_rank(
 ) -> tuple:
     """
     Rank signals by evidence-backed priority order:
+      0. poisson_medium_flag   — Poisson Only + Medium confidence ranks above all else
       1. confidence_rank       — High=3 > Medium=2 > Low=1
       2. agreement_rank        — Both=3 > Bayesian Only=2 > Poisson Only=1
       3. high_probability_flag — primary_prob ≥ 0.70
@@ -100,6 +101,10 @@ def _system_rank(
         "Contradiction": 0,
     }.get(sig.dual_agreement or "", 0)
 
+    # Poisson + Medium takes top priority over everything else, including
+    # confidence/agreement combos that would otherwise outrank it.
+    poisson_medium_flag = 1 if (sig.dual_agreement == "Poisson Only" and sig.dual_confidence == "Medium") else 0
+
     high_probability_flag = 1 if primary_prob >= 0.70 else 0
     dual_model_probability_flag = 1 if bayes_prob >= 0.65 and poisson_prob >= 0.65 else 0
     bookmaker_support_rank = 2 if books >= 3 else 1 if books == 2 else 0
@@ -122,6 +127,7 @@ def _system_rank(
         glicko_certainty = min(abs(sig.glicko_r_diff) / 400.0, 1.0)
 
     return (
+        poisson_medium_flag,
         confidence_rank,
         agreement_rank,
         high_probability_flag,

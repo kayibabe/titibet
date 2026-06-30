@@ -10,7 +10,6 @@ const DEFAULTS = {
   minQuality: 0.0,            // min dual_quality_score (0 = off, 0.40+ = Both engines)
   hideContradictions: true,   // client-side filter
   theme: 'system',
-  oddsAdjustmentPct: 0,       // % to discount Pinnacle odds for local bookmaker parity (0 = none, 20 = African regional)
 }
 
 function applyTheme(theme) {

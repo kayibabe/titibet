@@ -172,7 +172,9 @@ Analyses ALL settled bets (wins + losses). Broader strategic rule changes.
 
 ## Scheduler schedule
 
-Default sync times (UTC): `06:00, 10:00, 14:00, 18:00, 23:30`
+Default sync times (UTC): `06:00, 14:00, 18:00, 23:30`
+
+A dedicated `tomorrow-presync` job also runs at 18:00 UTC (8pm Malawi local) — pulls tomorrow's fixtures/odds, computes signals, and pre-warms the AI Advisory cache for tomorrow. It deliberately does NOT auto-track system picks (that stays on the normal cycle below) so stakes commit off the freshest pre-kickoff data, not last night's odds.
 
 Override with `SYNC_TIMES=HH:MM,HH:MM` in `backend/.env`.
 
@@ -208,7 +210,7 @@ API_FOOTBALL_KEY=<key>
 API_KEY=                    # empty = no API key guard (local dev)
 CORS_ORIGINS=http://localhost:5173
 SKIP_STARTUP_SYNC=true      # set during dev
-SYNC_TIMES=06:00,10:00,14:00,18:00,23:30
+SYNC_TIMES=06:00,14:00,18:00,23:30
 ANTHROPIC_API_KEY=<key>     # for loss analysis pipeline
 ```
 

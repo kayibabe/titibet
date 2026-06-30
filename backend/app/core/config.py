@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     # Scheduler sync times (HH:MM UTC, comma-separated)
-    sync_times: str = "06:00,10:00,14:00,18:00,23:30"
+    sync_times: str = "06:00,14:00,18:00,23:30"
 
     # Bayesian engine thresholds
     min_value_edge: float = 0.05
@@ -101,12 +101,10 @@ class Settings(BaseSettings):
     # Telegram Bot — @titibet_alerts (shared across all channels)
     telegram_bot_token: str = ""   # from @BotFather
 
-    # ── Named ticket channels (new) ────────────────────────────────────────
-    # TiTiBet General  — all signal matches for the day
-    telegram_general_chat_id: str = ""
-    # TiTiBet Free     — 3 randomly selected picks
+    # ── Named ticket channels ───────────────────────────────────────────────
+    # TiTiBet Free     — limited/blurred teaser of the day's picks
     telegram_free_chat_id: str = ""
-    # TiTiBet Pro      — top-ranked signals
+    # TiTiBet Pro      — top-ranked signals, full detail
     telegram_pro_chat_id: str = ""
 
 

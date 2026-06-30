@@ -1,5 +1,5 @@
 ﻿import { useState } from 'react'
-import { Save, Monitor, Sun, Moon, Shield, Target, Zap, Globe } from 'lucide-react'
+import { Save, Monitor, Sun, Moon, Shield, Target, Zap } from 'lucide-react'
 
 const RISK_PRESETS = [
   {
@@ -280,55 +280,6 @@ export default function SettingsPage({ settings, onUpdate }) {
               })}
             </div>
           </Field>
-        </Section>
-
-        {/* ── Bookmaker Odds Adjustment ───────────────────────── */}
-        <Section
-          title="Bookmaker Odds Adjustment"
-          hint="The system now displays William Hill odds (~10% margin) as the closest available proxy. Betpawa, 888bets, Premier Bet MW and Moors Bet are not in the data source. Apply a further discount to approximate what those books actually offer vs William Hill."
-        >
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {[
-              { label: 'No discount',      pct: 0,  desc: 'Show William Hill odds as-is' },
-              { label: 'Betpawa / 888bets',pct: 10, desc: 'African books ~10% more margin' },
-              { label: 'Premier Bet MW',   pct: 15, desc: 'Higher margin regional book' },
-              { label: 'Custom',           pct: null },
-            ].map(opt => {
-              const isCustom = opt.pct === null
-              const active = isCustom
-                ? ![0, 10, 20].includes(settings.oddsAdjustmentPct)
-                : settings.oddsAdjustmentPct === opt.pct
-              return (
-                <button
-                  key={opt.label}
-                  type="button"
-                  onClick={() => !isCustom && onUpdate('oddsAdjustmentPct', opt.pct)}
-                  className={`flex flex-col items-start gap-0.5 p-3 rounded-lg border text-left transition-colors ${
-                    active
-                      ? 'border-[var(--accent)] bg-[var(--accent-bg,rgba(99,102,241,0.08))]'
-                      : 'border-[var(--border)] hover:border-[var(--accent)]/40 hover:bg-[var(--code-bg)]'
-                  } ${isCustom ? 'cursor-default' : ''}`}
-                >
-                  <Globe size={12} className={active ? 'text-[var(--accent)]' : 'text-[var(--text)] opacity-65'} />
-                  <span className={`text-xs font-semibold mt-0.5 ${active ? 'text-[var(--accent)]' : 'text-[var(--text-h)]'}`}>{opt.label}</span>
-                  {opt.desc && <span className="text-[10px] text-[var(--text)] opacity-70">{opt.desc}</span>}
-                  {isCustom && active && (
-                    <span className="text-[10px] text-[var(--accent)] font-semibold">−{settings.oddsAdjustmentPct}%</span>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-          <RangeField
-            label="Discount"
-            hint="Odds shown and EV calculations will use: adjusted_odd = raw_odd × (1 − discount%)"
-            min={0}
-            max={35}
-            step={1}
-            value={settings.oddsAdjustmentPct}
-            onChange={v => onUpdate('oddsAdjustmentPct', v)}
-            display={settings.oddsAdjustmentPct === 0 ? 'None (Pinnacle)' : `−${settings.oddsAdjustmentPct}%`}
-          />
         </Section>
 
         {/* ── Bankroll & Staking ──────────────────────────────── */}

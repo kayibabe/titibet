@@ -1,11 +1,6 @@
 // Shared Value Bets primitives — the single source of truth for the value-bet
-// card, odds tiers, and odds-adjustment math. Previously duplicated verbatim
-// between ValueBetsPage and the Value Bets tab inside SignalsPage.
-
-export function adjustOdd(raw, pct) {
-  if (raw == null || !pct) return raw
-  return Math.max(1.01, raw * (1 - Math.abs(pct) / 100))
-}
+// card and odds tiers. Previously duplicated verbatim between ValueBetsPage
+// and the Value Bets tab inside SignalsPage.
 
 export const ODDS_TIERS = [
   { min: 1.5, label: '1.5+', desc: 'Conservative' },
@@ -24,15 +19,12 @@ function fmtKickoff(iso) {
 
 const FINAL = new Set(['FT', 'AET', 'PEN'])
 
-export default function ValueBetCard({ signal, rank, oddsAdjPct = 0 }) {
+export default function ValueBetCard({ signal, rank }) {
   const b = signal.bayesian || {}
-  const adjOdd      = adjustOdd(b.best_odd, oddsAdjPct)
-  const impliedProb = adjOdd ? Math.round((1 / adjOdd) * 100) : null
+  const impliedProb = b.best_odd ? Math.round((1 / b.best_odd) * 100) : null
   const modelProb   = b.prob ? Math.round(b.prob * 100) : null
   const edge        = modelProb && impliedProb ? modelProb - impliedProb : null
-  const evPct = oddsAdjPct && b.prob != null && adjOdd != null
-    ? (b.prob * adjOdd - 1) * 100
-    : b.ev_pct ?? null
+  const evPct       = b.ev_pct ?? null
 
   const isFinal = FINAL.has(signal.status)
 
@@ -63,10 +55,10 @@ export default function ValueBetCard({ signal, rank, oddsAdjPct = 0 }) {
           <div className="shrink-0 text-center">
             <div className="rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/25 px-3 py-1.5">
               <p className="text-lg font-black text-[var(--accent)] tabular-nums leading-none">
-                {adjOdd?.toFixed(2) ?? '—'}
+                {b.best_odd?.toFixed(2) ?? '—'}
               </p>
               <p className="text-[9px] text-[var(--text)] opacity-70 mt-0.5">
-                {oddsAdjPct ? `adj. −${oddsAdjPct}%` : (b.bookmaker || 'Pinnacle')}
+                {b.bookmaker || 'Pinnacle'}
               </p>
             </div>
           </div>

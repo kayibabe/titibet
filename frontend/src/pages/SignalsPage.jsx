@@ -4,13 +4,12 @@ import { useSignals } from '../store/useSignals'
 import { computeSignals, fetchSignals } from '../api/signals'
 import { syncData, fetchBets, autoTrackSignal } from '../api/tracker'
 import SignalCard from '../components/signals/SignalCard'
-import ValueBetCard, { adjustOdd, ODDS_TIERS } from '../components/signals/ValueBetCard'
+import ValueBetCard, { ODDS_TIERS } from '../components/signals/ValueBetCard'
 import TrackModal from '../components/tracker/TrackModal'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import AIAdvisorPanel from '../components/signals/AIAdvisorPanel'
 import UpgradePrompt from '../components/shared/UpgradePrompt'
 import useTier from '../hooks/useTier'
-import { useSettings } from '../store/useSettings'
 import { useAuth } from '../context/AuthContext'
 import { useOnboarding } from '../hooks/useOnboarding'
 import OnboardingModal from '../components/shared/OnboardingModal'
@@ -138,7 +137,7 @@ const TABS = [
 
 const VB_FREE_LIMIT = 5
 
-function ValueBetsTab({ date, isPro, onUpgrade, oddsAdjPct = 0 }) {
+function ValueBetsTab({ date, isPro, onUpgrade }) {
   const [minOdds, setMinOdds] = useState(1.5)
   const [allSignals, setAllSignals] = useState([])
   const [loading, setLoading] = useState(true)
@@ -155,25 +154,14 @@ function ValueBetsTab({ date, isPro, onUpgrade, oddsAdjPct = 0 }) {
 
   const valueBets = useMemo(() => {
     return allSignals
-      .filter(s => {
-        const adj = adjustOdd(s.bayesian?.best_odd, oddsAdjPct)
-        return s.bayesian?.is_value && (adj ?? 0) >= minOdds
-      })
-      .sort((a, b) => {
-        const evA = oddsAdjPct && a.bayesian?.prob != null ? (a.bayesian.prob * (adjustOdd(a.bayesian.best_odd, oddsAdjPct) ?? 0) - 1) * 100 : (a.bayesian?.ev_pct ?? 0)
-        const evB = oddsAdjPct && b.bayesian?.prob != null ? (b.bayesian.prob * (adjustOdd(b.bayesian.best_odd, oddsAdjPct) ?? 0) - 1) * 100 : (b.bayesian?.ev_pct ?? 0)
-        return evB - evA
-      })
-  }, [allSignals, minOdds, oddsAdjPct])
+      .filter(s => s.bayesian?.is_value && (s.bayesian?.best_odd ?? 0) >= minOdds)
+      .sort((a, b) => (b.bayesian?.ev_pct ?? 0) - (a.bayesian?.ev_pct ?? 0))
+  }, [allSignals, minOdds])
 
   const displayed   = isPro ? valueBets : valueBets.slice(0, VB_FREE_LIMIT)
   const lockedCount = valueBets.length - displayed.length
   const avgEv = valueBets.length
-    ? (valueBets.reduce((s, x) => {
-        const adj = adjustOdd(x.bayesian?.best_odd, oddsAdjPct)
-        const ev = oddsAdjPct && x.bayesian?.prob != null && adj != null ? (x.bayesian.prob * adj - 1) * 100 : (x.bayesian?.ev_pct ?? 0)
-        return s + ev
-      }, 0) / valueBets.length).toFixed(1)
+    ? (valueBets.reduce((s, x) => s + (x.bayesian?.ev_pct ?? 0), 0) / valueBets.length).toFixed(1)
     : null
 
   return (
@@ -187,10 +175,7 @@ function ValueBetsTab({ date, isPro, onUpgrade, oddsAdjPct = 0 }) {
         <span className="text-xs text-[var(--text)] opacity-80 shrink-0">Min odds:</span>
         {ODDS_TIERS.map(tier => {
           const selected = minOdds === tier.min
-          const count = allSignals.filter(s => {
-            const adj = adjustOdd(s.bayesian?.best_odd, oddsAdjPct)
-            return s.bayesian?.is_value && (adj ?? 0) >= tier.min
-          }).length
+          const count = allSignals.filter(s => s.bayesian?.is_value && (s.bayesian?.best_odd ?? 0) >= tier.min).length
           return (
             <button key={tier.min} onClick={() => setMinOdds(tier.min)} title={tier.desc}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${selected ? 'border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--accent)]' : 'border-[var(--border)] text-[var(--text)] hover:border-[var(--accent)]/50 hover:text-[var(--text-h)] hover:bg-[var(--code-bg)]'}`}>
@@ -228,12 +213,12 @@ function ValueBetsTab({ date, isPro, onUpgrade, oddsAdjPct = 0 }) {
       {!loading && displayed.length > 0 && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {displayed.map((signal, i) => <ValueBetCard key={signal.id} signal={signal} rank={i + 1} oddsAdjPct={oddsAdjPct} />)}
+            {displayed.map((signal, i) => <ValueBetCard key={signal.id} signal={signal} rank={i + 1} />)}
           </div>
           {lockedCount > 0 && (
             <div className="relative">
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 opacity-30 pointer-events-none select-none">
-                {valueBets.slice(VB_FREE_LIMIT, VB_FREE_LIMIT + 3).map(signal => <ValueBetCard key={signal.id} signal={signal} oddsAdjPct={oddsAdjPct} />)}
+                {valueBets.slice(VB_FREE_LIMIT, VB_FREE_LIMIT + 3).map(signal => <ValueBetCard key={signal.id} signal={signal} />)}
               </div>
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="rounded-xl bg-[var(--bg)] border border-[var(--border)] shadow-lg px-6 py-4 text-center space-y-2">
@@ -254,10 +239,15 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
   const { isPro } = useTier()
   const { user } = useAuth()
   const { showOnboarding, completeOnboarding } = useOnboarding(user)
-  const { settings: storeSettings } = useSettings()
-  const oddsAdjPct = settings?.oddsAdjustmentPct ?? storeSettings?.oddsAdjustmentPct ?? 0
   const today = (() => {
     const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+  })()
+  // Tomorrow's fixtures are pre-synced every evening (8pm local) so picks can
+  // be reviewed and placed the night before — the date picker allows it.
+  const maxDate = (() => {
+    const d = new Date()
+    d.setDate(d.getDate() + 1)
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
   })()
 
@@ -354,8 +344,9 @@ const params = {
   useEffect(() => { load(params) }, [date, confidence, agreement, market, sortBy, settings?.minQuality, bestPerFixture]) // eslint-disable-line
 const reload = () => load(params)
 
-  const isToday = date === today
-  const isBusy  = syncing || computing
+  const isToday    = date === today
+  const isTomorrow = date === maxDate
+  const isBusy     = syncing || computing
 
   // Auto-track ref: prevents re-issuing calls for the same signal in one session
   const autoTrackedRef = useRef(new Set())
@@ -513,13 +504,13 @@ const reload = () => load(params)
         >
           <Calendar size={13} className="text-[var(--accent)] shrink-0" />
           <span className="text-sm font-medium text-[var(--text-h)] group-hover:text-[var(--accent)] transition-colors select-none">
-            {fmtDate(date)}{isToday ? ' · Today' : ''}
+            {fmtDate(date)}{isToday ? ' · Today' : isTomorrow ? ' · Tomorrow' : ''}
           </span>
           <input
             ref={dateInputRef}
             type="date"
             value={date}
-            max={today}
+            max={maxDate}
             onChange={e => e.target.value && setDate(e.target.value)}
             disabled={isBusy}
             style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', width: 0, height: 0, bottom: 0, left: 0 }}
@@ -931,7 +922,6 @@ const reload = () => load(params)
                   isAutoTracked={autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
                   onTrackPick={sig => setTrackingSignal({ ...sig, tracking_source_family: trackingSourceFamily() })}
                   onDeepDive={onDeepDive}
-                  oddsAdjPct={settings?.oddsAdjustmentPct ?? 0}
                 />
               ))}
 
@@ -959,7 +949,6 @@ const reload = () => load(params)
                       isAutoTracked={autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
                       onTrackPick={sig => setTrackingSignal({ ...sig, tracking_source_family: trackingSourceFamily() })}
                       onDeepDive={onDeepDive}
-                      oddsAdjPct={settings?.oddsAdjustmentPct ?? 0}
                     />
                   ))}
                 </>
@@ -1003,7 +992,6 @@ const reload = () => load(params)
           date={date}
           isPro={isPro}
           onUpgrade={onUpgrade}
-          oddsAdjPct={oddsAdjPct}
         />
       )}
 

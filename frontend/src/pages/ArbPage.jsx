@@ -7,6 +7,14 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+// Tomorrow's fixtures are pre-synced every evening (8pm local), so arb
+// opportunities can be checked a day ahead too.
+function tomorrowStr() {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function fmtDate(iso) {
   if (!iso) return ''
   const d = new Date(iso + 'T00:00:00')
@@ -98,6 +106,7 @@ function ArbCard({ opp, bankroll = 1000 }) {
 
 export default function ArbPage() {
   const today = todayStr()
+  const maxDate = tomorrowStr()
   const [date, setDate] = useState(today)
   const [opps, setOpps] = useState([])
   const [loading, setLoading] = useState(true)
@@ -145,13 +154,13 @@ export default function ArbPage() {
         >
           <Calendar size={13} className="text-[var(--accent)] shrink-0" />
           <span className="text-sm font-medium text-[var(--text-h)]">
-            {fmtDate(date)}{date === today ? ' · Today' : ''}
+            {fmtDate(date)}{date === today ? ' · Today' : date === maxDate ? ' · Tomorrow' : ''}
           </span>
           <input
             id="arb-date-input"
             type="date"
             value={date}
-            max={today}
+            max={maxDate}
             onChange={e => e.target.value && setDate(e.target.value)}
             style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', width: 0, height: 0 }}
           />

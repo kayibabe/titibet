@@ -192,11 +192,10 @@ async def deactivate_user(
 
 @router.get("/telegram/status")
 async def telegram_status(_admin: User = Depends(_require_admin)):
-    """Show Telegram config for the three named TiTiBet channels."""
+    """Show Telegram config for the two named TiTiBet channels."""
     cfg = get_settings()
     return {
         "bot_token_set":   bool(cfg.telegram_bot_token),
-        "general_chat_id": cfg.telegram_general_chat_id or None,
         "free_chat_id":    cfg.telegram_free_chat_id or None,
         "pro_chat_id":     cfg.telegram_pro_chat_id or None,
     }
@@ -205,7 +204,7 @@ async def telegram_status(_admin: User = Depends(_require_admin)):
 @router.post("/telegram/test")
 async def telegram_test(_admin: User = Depends(_require_admin)):
     """
-    Send a test message to all three TiTiBet Telegram channels.
+    Send a test message to both TiTiBet Telegram channels.
     Returns per-channel success/failure.
     """
     cfg = get_settings()
@@ -214,7 +213,6 @@ async def telegram_test(_admin: User = Depends(_require_admin)):
         raise HTTPException(400, "TELEGRAM_BOT_TOKEN is not set in .env")
 
     channels = [
-        ("TiTiBet General", cfg.telegram_general_chat_id),
         ("TiTiBet Free",    cfg.telegram_free_chat_id),
         ("TiTiBet Pro",     cfg.telegram_pro_chat_id),
     ]
@@ -252,8 +250,6 @@ async def telegram_preview(
     cfg = get_settings()
 
     channels_config: list[tuple[str, str]] = []
-    if cfg.telegram_general_chat_id:
-        channels_config.append(("general", cfg.telegram_general_chat_id))
     if cfg.telegram_free_chat_id:
         channels_config.append(("free", cfg.telegram_free_chat_id))
     if cfg.telegram_pro_chat_id:
@@ -263,11 +259,11 @@ async def telegram_preview(
         return {"date": today.isoformat(), "channels": []}
 
     all_rows = await _query_all_rows(db, today)
-    general_rows = _best_per_fixture(all_rows)
-    general_rows.sort(key=lambda r: _system_rank(r[0], r[1]), reverse=True)
+    ranked_rows = _best_per_fixture(all_rows)
+    ranked_rows.sort(key=lambda r: _system_rank(r[0], r[1]), reverse=True)
 
     all_picks: list[dict] = []
-    for sig, fix in general_rows:
+    for sig, fix in ranked_rows:
         primary = max(
             (v for v in [sig.bayesian_prob, sig.poisson_prob] if v is not None),
             default=None,

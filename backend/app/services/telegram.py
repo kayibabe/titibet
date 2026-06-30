@@ -1,11 +1,10 @@
 """
 telegram.py — Telegram Bot integration for TiTiBet signal alerts.
 
-Pushes signal digests to three named channels after every sync:
+Pushes signal digests to two named channels after every sync:
 
-  TiTiBet General  — all signal matches for the day
-  TiTiBet Free     — 3 deterministic daily picks
-  TiTiBet Pro      — top-ranked signals (same digest as General)
+  TiTiBet Free     — limited/blurred teaser of the day's picks
+  TiTiBet Pro      — top-ranked signals, full detail
 
 Setup
 -----
@@ -14,13 +13,13 @@ Setup
 3. Set in backend/.env:
 
    TELEGRAM_BOT_TOKEN=...
-   TELEGRAM_GENERAL_CHAT_ID=<chat id>
    TELEGRAM_FREE_CHAT_ID=<chat id>
    TELEGRAM_PRO_CHAT_ID=<chat id>
 """
 from __future__ import annotations
 
 import logging
+import random
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -66,7 +65,11 @@ def _system_rank(sig: Signal, fixture: Fixture | None = None) -> tuple:
         "Both": 3, "Bayesian Only": 2, "Poisson Only": 1, "Contradiction": 0,
     }.get(sig.dual_agreement or "", 0)
 
+    # Poisson + Medium takes top priority — mirrors app.routers.signals._system_rank.
+    poisson_medium_flag = 1 if (sig.dual_agreement == "Poisson Only" and sig.dual_confidence == "Medium") else 0
+
     return (
+        poisson_medium_flag,
         confidence_rank,
         agreement_rank,
         round(quality, 6),
@@ -414,46 +417,13 @@ async def _query_all_rows(db: AsyncSession, run_date: date) -> list[tuple[Signal
 
 
 def _configured_titibet_channels() -> list[tuple[str, str]]:
-    """Return (chat_id, channel_type) pairs for the three named TiTiBet channels."""
+    """Return (chat_id, channel_type) pairs for the two named TiTiBet channels."""
     channels: list[tuple[str, str]] = []
-    if settings.telegram_general_chat_id:
-        channels.append((settings.telegram_general_chat_id, "general"))
     if settings.telegram_free_chat_id:
         channels.append((settings.telegram_free_chat_id, "free"))
     if settings.telegram_pro_chat_id:
         channels.append((settings.telegram_pro_chat_id, "pro"))
     return channels
-
-
-def build_general_message(signals: list[tuple], run_date: date) -> str:
-    """Full signal digest for the TiTiBet General channel — all matches today."""
-    date_label = run_date.strftime("%a %d %b %Y")
-    parts = [
-        f"📋 <b>TiTiBet General — {date_label}</b>",
-        f"<i>All signal matches for today · {len(signals)} picks</i>",
-    ]
-    buckets: dict[str, list] = {"High": [], "Medium": [], "Low": []}
-    for sig, fix in signals:
-        bucket = sig.dual_confidence if sig.dual_confidence in buckets else "Low"
-        buckets[bucket].append((sig, fix))
-    idx = 1
-    for conf in ("High", "Medium", "Low"):
-        if not buckets[conf]:
-            continue
-        parts.append("")
-        parts.append(_conf_header(conf))
-        for sig, fix in buckets[conf]:
-            primary = max((v for v in [sig.bayesian_prob, sig.poisson_prob] if v), default=None)
-            ko = _kickoff_str(fix.kickoff_at)
-            league_line = f"{_esc(fix.country)} · {_esc(fix.league)}" if fix.country else _esc(fix.league or "")
-            parts.append(
-                f"\n<b>{idx}. {_esc(fix.home_team)} vs {_esc(fix.away_team)}</b>\n"
-                f"   🏆 {league_line}{(' · ' + ko) if ko else ''}\n"
-                f"   📌 {_esc(_verbose_market(sig.market))} · {_pct(primary)}"
-            )
-            idx += 1
-    parts.append(f"\n<a href=\"{settings.app_url}\">{settings.app_url}</a>")
-    return "\n".join(parts)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -514,58 +484,95 @@ def _kickoff_label_cat(kickoff_at: Any, now_utc: datetime) -> str:
     return prefix + ko_cat.strftime("%H:%M ") + _CAT_LABEL
 
 
+# Number of matches randomly revealed in clear text on the Free channel;
+# everything else (and the whole Acca ticket) is spoiler-blurred. Kept as a
+# module-level default so every Free push uses the same count unless overridden.
+FREE_REVEAL_COUNT = 2
+
+# Shown at the end of every Free-channel message — sells the upgrade on
+# speed/convenience (no tapping, no randomness) rather than "you can't see this",
+# since a tg-spoiler is one tap away from fully unblurred anyway.
+FREE_UPGRADE_CTA = (
+    "\n<i>👀 Tap any blurred match to peek — or skip the tapping entirely: "
+    "upgrade to Pro for every pick shown in clear, instantly, no randomness.</i>"
+)
+
+
+def _spoiler(text_: str) -> str:
+    """Wrap text in a Telegram spoiler entity — rendered blurred until tapped."""
+    return f"<tg-spoiler>{text_}</tg-spoiler>"
+
+
+def _pick_reveal_fixture_ids(rows: list[tuple[Signal, Fixture]], count: int) -> set[int]:
+    """
+    Choose `count` fixtures to reveal in clear text on the Free channel.
+
+    Biased away from the strongest picks (High confidence) so the free preview
+    never accidentally hands out the best pick by chance — the reveal pool
+    prefers Medium/Low confidence signals, falling back to the full set only
+    when there aren't enough non-High signals to fill the quota.
+    """
+    if count <= 0 or not rows:
+        return set()
+    pool = [r for r in rows if r[0].dual_confidence != "High"]
+    if len(pool) < count:
+        pool = list(rows)
+    count = min(count, len(pool))
+    return {fix.id for _sig, fix in random.sample(pool, count)}
+
+
 def build_signal_digest(
     rows: list[tuple[Signal, Fixture]],
-    channel_type: str = "general",
-    limit: int | None = None,
-    total: int | None = None,
+    channel_type: str = "pro",
     now: datetime | None = None,
+    reveal_fixture_ids: set[int] | None = None,
 ) -> str:
     """
     Build a 'tonight + overnight' digest. `rows` is already deduped and ordered
-    by the caller (chronological for general/pro, top-ranked for free). `total`
-    is the full count before any `limit` was applied (for the "+N more" teaser).
-    `now` is used to label each kickoff Today/Tomorrow in CAT.
+    by the caller (chronological). `now` is used to label each kickoff
+    Today/Tomorrow in CAT.
+
+    channel_type="pro"  — every match shown in clear text.
+    channel_type="free" — identical content and full list, but only fixtures
+    in `reveal_fixture_ids` show real team names; the rest have their team
+    names spoiler-blurred (market/odds/confidence/league stay visible either way).
     """
+    is_free = channel_type == "free"
+    reveal_fixture_ids = reveal_fixture_ids or set()
     now = now or datetime.now(tz=timezone.utc)
-    shown = rows[:limit] if limit else rows
-    total = total if total is not None else len(rows)
-    title = {
-        "free": "TiTiBet Free — Tonight's Top Picks",
-        "pro":  "TiTiBet Pro — Tonight &amp; Overnight",
-        "general": "TiTiBet — Tonight &amp; Overnight",
-    }.get(channel_type, "TiTiBet — Tonight &amp; Overnight")
+    title = "TiTiBet Free — Tonight &amp; Overnight" if is_free else "TiTiBet Pro — Tonight &amp; Overnight"
 
     parts = [
         f"🌙 <b>{title}</b>",
-        f"<i>Tonight &amp; after-midnight kickoffs · {len(shown)} picks · times in CAT</i>",
+        f"<i>Tonight &amp; after-midnight kickoffs · {len(rows)} picks · times in CAT</i>",
     ]
-    for i, (sig, fix) in enumerate(shown, 1):
+    for i, (sig, fix) in enumerate(rows, 1):
         primary = max((v for v in [sig.bayesian_prob, sig.poisson_prob] if v), default=None)
         ko = _kickoff_label_cat(fix.kickoff_at, now)
         league_line = f"{_esc(fix.country)} · {_esc(fix.league)}" if fix.country else _esc(fix.league or "")
         conf_tag = {"High": "🔥", "Medium": "📊", "Low": "📉"}.get(sig.dual_confidence or "", "•")
+        match_name = f"{_esc(fix.home_team)} vs {_esc(fix.away_team)}"
+        if is_free and fix.id not in reveal_fixture_ids:
+            match_name = _spoiler(match_name)
         parts.append(
-            f"\n<b>{i}. {_esc(fix.home_team)} vs {_esc(fix.away_team)}</b>{(' · ' + ko) if ko else ''}\n"
+            f"\n<b>{i}. {match_name}</b>{(' · ' + ko) if ko else ''}\n"
             f"   🏆 {league_line}\n"
             f"   📌 {_esc(_verbose_market(sig.market))} · {_pct(primary)} {conf_tag}"
         )
-    if limit and total > limit:
-        extra = total - limit
-        parts.append(
-            f"\n<i>➕ {extra} more pick{'s' if extra != 1 else ''} on the app — "
-            f"upgrade for the full list.</i>"
-        )
+    if is_free:
+        parts.append(FREE_UPGRADE_CTA)
     parts.append(f"\n<a href=\"{settings.app_url}\">{settings.app_url}</a>")
     return "\n".join(parts)
 
 
-async def push_signal_digest(db: AsyncSession, free_limit: int = 3) -> int:
+async def push_signal_digest(db: AsyncSession, free_reveal_count: int = FREE_REVEAL_COUNT) -> int:
     """
     Broadcast the 'tonight + overnight' digest to all configured channels.
-    General/Pro get every upcoming match (chronological); Free gets the top
-    `free_limit` by model rank. Spans today + tomorrow (UTC) so after-midnight
-    (CAT) matches are included. Returns the number of channels sent to.
+    Both channels get the full upcoming match list (chronological); Free
+    spoiler-blurs all but `free_reveal_count` randomly-revealed matches
+    (biased away from High confidence — see `_pick_reveal_fixture_ids`).
+    Spans today + tomorrow (UTC) so after-midnight (CAT) matches are included.
+    Returns the number of channels sent to.
     No-op when Telegram is not configured or there are no upcoming matches.
     """
     if not settings.telegram_bot_token:
@@ -596,14 +603,14 @@ async def push_signal_digest(db: AsyncSession, free_limit: int = 3) -> int:
         return 0
 
     chronological = sorted(upcoming, key=lambda r: _ko_aware(r[1].kickoff_at))
-    by_rank = sorted(upcoming, key=lambda r: _system_rank(r[0], r[1]), reverse=True)
+    reveal_fixture_ids = _pick_reveal_fixture_ids(upcoming, free_reveal_count)
 
     sent = 0
     for chat_id, channel_type in targets:
         if channel_type == "free":
-            text = build_signal_digest(by_rank, channel_type="free", limit=free_limit, total=len(upcoming), now=now)
+            text = build_signal_digest(chronological, channel_type="free", now=now, reveal_fixture_ids=reveal_fixture_ids)
         else:
-            text = build_signal_digest(chronological, channel_type=channel_type, total=len(upcoming), now=now)
+            text = build_signal_digest(chronological, channel_type=channel_type, now=now)
         ok = False
         for chunk in _split_message(text):
             ok = await _send_to(chat_id, chunk)
@@ -614,6 +621,175 @@ async def push_signal_digest(db: AsyncSession, free_limit: int = 3) -> int:
         logger.info(
             "Signal digest sent to %d channel(s) — %d upcoming match(es) tonight + overnight",
             sent, len(upcoming),
+        )
+    return sent
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tomorrow digest — singles + AI Advisory accumulator ticket
+#
+# Sent at 18:00 UTC (8pm Malawi local) right after the tomorrow pre-sync, so
+# subscribers get tomorrow's full single-match slate AND the AI Advisory's
+# Acca-of-the-Day in one message — early enough to place bets tonight.
+#
+# Pro gets everything in clear text. Free gets identical content, but only
+# `FREE_REVEAL_COUNT` randomly chosen matches (biased away from High
+# confidence — see `_pick_reveal_fixture_ids`) are shown in clear — the rest
+# have their team names wrapped in a Telegram spoiler (tap-to-reveal blur),
+# and every leg of the Acca ticket is spoiler-blurred regardless, since the
+# accumulator is the headline Pro perk.
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _check_push_sent(db: AsyncSession, push_date: date, channel_type: str, push_type: str) -> bool:
+    """Return True if a message of this push_type has already been sent for this date+channel."""
+    row = await db.execute(
+        text(
+            "SELECT 1 FROM telegram_push_log "
+            "WHERE push_date = :d AND channel_type = :ct AND push_type = :pt "
+            "LIMIT 1"
+        ),
+        {"d": push_date.isoformat(), "ct": channel_type, "pt": push_type},
+    )
+    return row.scalar() is not None
+
+
+async def _log_push_sent(db: AsyncSession, push_date: date, channel_type: str, push_type: str) -> None:
+    """Record that a message was sent. Safe to call multiple times (INSERT OR IGNORE)."""
+    await db.execute(
+        text(
+            "INSERT OR IGNORE INTO telegram_push_log (push_date, channel_type, push_type) "
+            "VALUES (:d, :ct, :pt)"
+        ),
+        {"d": push_date.isoformat(), "ct": channel_type, "pt": push_type},
+    )
+    await db.commit()
+
+
+def build_tomorrow_message(
+    rows: list[tuple[Signal, Fixture]],
+    run_date: date,
+    acca: dict | None,
+    channel_type: str = "pro",
+    reveal_fixture_ids: set[int] | None = None,
+) -> str:
+    """
+    Build the 'tomorrow' message: full single-match slate (chronological)
+    followed by the AI Advisory's Acca-of-the-Day ticket.
+
+    channel_type="pro"  — every match and every acca leg shown in clear text.
+    channel_type="free" — only fixtures in `reveal_fixture_ids` show real team
+    names; everything else (market, odds, confidence, league) stays visible,
+    just the team names are spoiler-blurred. Acca legs are always blurred.
+    """
+    is_free = channel_type == "free"
+    reveal_fixture_ids = reveal_fixture_ids or set()
+    title = "TiTiBet Free" if is_free else "TiTiBet Pro"
+    date_label = run_date.strftime("%a %d %b %Y")
+    parts = [
+        f"🌅 <b>{title} — Tomorrow, {date_label}</b>",
+        f"<i>Full slate for tomorrow · {len(rows)} pick{'s' if len(rows) != 1 else ''} · place your bets tonight</i>",
+    ]
+    for i, (sig, fix) in enumerate(rows, 1):
+        primary = max((v for v in [sig.bayesian_prob, sig.poisson_prob] if v), default=None)
+        ko = _kickoff_str_cat(fix.kickoff_at)
+        league_line = f"{_esc(fix.country)} · {_esc(fix.league)}" if fix.country else _esc(fix.league or "")
+        conf_tag = {"High": "🔥", "Medium": "📊", "Low": "📉"}.get(sig.dual_confidence or "", "•")
+        match_name = f"{_esc(fix.home_team)} vs {_esc(fix.away_team)}"
+        if is_free and fix.id not in reveal_fixture_ids:
+            match_name = _spoiler(match_name)
+        parts.append(
+            f"\n<b>{i}. {match_name}</b>{(' · ' + ko) if ko else ''}\n"
+            f"   🏆 {league_line}\n"
+            f"   📌 {_esc(_verbose_market(sig.market))} · {_pct(primary)} {conf_tag}"
+        )
+
+    legs = (acca or {}).get("legs") or []
+    combined_odds = (acca or {}).get("combined_odds")
+    if legs and combined_odds:
+        parts.append("\n" + "─" * 24)
+        parts.append(f"\n🎟️ <b>AI Acca of the Day</b> — combined @ {combined_odds}")
+        for i, leg in enumerate(legs, 1):
+            match = (
+                f"{_esc(leg.get('home_team'))} vs {_esc(leg.get('away_team'))}"
+                if leg.get("home_team") and leg.get("away_team") else "—"
+            )
+            if is_free:
+                match = _spoiler(match)
+            odd = leg.get("odd")
+            odd_str = f"{float(odd):.2f}" if odd is not None else "?"
+            parts.append(
+                f"\n   {i}. <b>{match}</b> — {_esc(leg.get('market'))} @ {odd_str}"
+            )
+        rationale = (acca or {}).get("rationale")
+        if rationale:
+            parts.append(f"\n<i>{_esc(rationale)}</i>")
+
+    if is_free:
+        parts.append(FREE_UPGRADE_CTA)
+    parts.append(f"\n<a href=\"{settings.app_url}\">{settings.app_url}</a>")
+    return "\n".join(parts)
+
+
+async def push_tomorrow_digest(db: AsyncSession, run_date: date | None = None) -> int:
+    """
+    Broadcast tomorrow's full single-match slate plus the AI Advisory's Acca-of-
+    the-Day to TiTiBet Free and Pro. Pro sees everything in clear; Free sees
+    `FREE_REVEAL_COUNT` randomly chosen matches revealed and the rest (plus the
+    whole Acca ticket) spoiler-blurred. Called by the 18:00 UTC tomorrow
+    pre-sync job, after fixtures/odds/signals are synced and the advisory cache
+    is warmed for tomorrow. Idempotent per date+channel via telegram_push_log.
+    Returns the number of channels sent to.
+    """
+    if not settings.telegram_bot_token:
+        return 0
+    targets = [(cid, ct) for cid, ct in _configured_titibet_channels() if ct in ("free", "pro")]
+    if not targets:
+        return 0
+
+    run_date = run_date or (date.today() + timedelta(days=1))
+
+    rows = await _query_all_rows(db, run_date)
+    deduped = _best_per_fixture(rows)
+    if not deduped:
+        logger.info("Tomorrow digest: no signals for %s — nothing to send", run_date)
+        return 0
+
+    chronological = sorted(deduped, key=lambda r: _ko_aware(r[1].kickoff_at) or datetime.max.replace(tzinfo=timezone.utc))
+
+    acca = None
+    try:
+        from app.services.advisor_service import get_advisor_insights
+        insights = await get_advisor_insights(db, run_date, current_user=None, force=False)
+        acca = insights.get("accumulator")
+    except Exception:
+        logger.exception("Tomorrow digest: failed to fetch AI Advisory acca — sending singles only")
+
+    reveal_fixture_ids = _pick_reveal_fixture_ids(chronological, FREE_REVEAL_COUNT)
+
+    sent = 0
+    for chat_id, channel_type in targets:
+        if await _check_push_sent(db, run_date, channel_type, "tomorrow"):
+            logger.info("Tomorrow digest: already sent for %s/%s — skipping", run_date, channel_type)
+            continue
+
+        text_msg = build_tomorrow_message(
+            chronological, run_date, acca,
+            channel_type=channel_type,
+            reveal_fixture_ids=reveal_fixture_ids if channel_type == "free" else None,
+        )
+
+        ok = False
+        for chunk in _split_message(text_msg):
+            ok = await _send_to(chat_id, chunk)
+
+        if ok:
+            await _log_push_sent(db, run_date, channel_type, "tomorrow")
+            sent += 1
+
+    if sent:
+        logger.info(
+            "Tomorrow digest sent to %d channel(s) — %d single(s), acca=%s",
+            sent, len(deduped), "yes" if acca and acca.get("legs") else "no",
         )
     return sent
 
@@ -729,11 +905,11 @@ async def _log_results_sent(db: AsyncSession, push_date: date, channel_type: str
 
 # ── Results message builders ──────────────────────────────────────────────────
 
-def build_general_results_message(
+def build_results_message(
     signals: list[tuple[Signal, Fixture]],
     run_date: date,
 ) -> str:
-    """Results digest for the General channel — all picks with outcomes and a summary."""
+    """Results digest shared by all channels — every pick with outcome and a summary."""
     date_label = run_date.strftime("%a %d %b %Y")
 
     rows_with_result: list[tuple[Signal, Fixture, str]] = []
@@ -748,7 +924,7 @@ def build_general_results_message(
     hit_rate = round(won / (won + lost) * 100) if (won + lost) > 0 else 0
 
     parts = [
-        f"📊 <b>TiTiBet General — Results</b>",
+        f"📊 <b>TiTiBet — Results</b>",
         f"<i>{date_label} · {total} picks · Hit rate: {hit_rate}%</i>",
     ]
 
@@ -851,7 +1027,7 @@ async def push_results_report(
                 )
                 continue
 
-        msg = build_general_results_message(signal_rows, run_date)
+        msg = build_results_message(signal_rows, run_date)
 
         chunks = _split_message(msg)
         ok = False
@@ -880,10 +1056,13 @@ async def push_results_report(
     return any_sent
 
 
-async def push_morning_digest(db: AsyncSession, free_limit: int = 3) -> int:
+async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_REVEAL_COUNT) -> int:
     """
     Broadcast today's full signal list as a morning digest (all-day picks).
     Called after the 06:00 UTC sync so subscribers see the day's picks at wake-up.
+    Both channels get the full list (rank order); Free spoiler-blurs all but
+    `free_reveal_count` randomly-revealed matches (biased away from High
+    confidence — see `_pick_reveal_fixture_ids`).
     Returns the number of channels sent to.
     """
     if not settings.telegram_bot_token:
@@ -901,15 +1080,16 @@ async def push_morning_digest(db: AsyncSession, free_limit: int = 3) -> int:
         logger.info("Morning digest: no signals for %s — skipping", today)
         return 0
 
+    # Rank order (best first) so subscribers see top picks immediately.
     by_rank = sorted(deduped, key=lambda r: _system_rank(r[0], r[1]), reverse=True)
+    reveal_fixture_ids = _pick_reveal_fixture_ids(by_rank, free_reveal_count)
 
     sent = 0
     for chat_id, channel_type in targets:
         if channel_type == "free":
-            text = build_signal_digest(by_rank, channel_type="free", limit=free_limit, total=len(deduped), now=now)
+            text = build_signal_digest(by_rank, channel_type="free", now=now, reveal_fixture_ids=reveal_fixture_ids)
         else:
-            # Morning digest: rank order (best first) so subscribers see top picks immediately
-            text = build_signal_digest(by_rank, channel_type=channel_type, total=len(deduped), now=now)
+            text = build_signal_digest(by_rank, channel_type=channel_type, now=now)
         # Override title line to say "Today's Picks" instead of "Tonight & Overnight"
         text = text.replace("Tonight &amp; Overnight", "Today's Picks")
         text = text.replace("Tonight &amp; after-midnight kickoffs", "Today's signal picks")
