@@ -338,49 +338,61 @@ async def list_bets(
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     from app.models import Fixture as FixtureModel
-    from sqlalchemy.orm import outerjoin
 
-    query = (
+    def _apply_filters(q):
+        if date_from:
+            q = q.where(TrackedBet.event_date >= date.fromisoformat(date_from))
+        if date_to:
+            # Include bets where event_date is NULL (manual picks with no fixture)
+            q = q.where(or_(
+                TrackedBet.event_date.is_(None),
+                TrackedBet.event_date <= date.fromisoformat(date_to),
+            ))
+        if market_type:
+            q = q.where(TrackedBet.market_type == market_type)
+        if result_status:
+            q = q.where(TrackedBet.result_status == result_status)
+        if league:
+            q = q.where(TrackedBet.league.ilike(f"%{league}%"))
+        return q
+
+    # Split user bets and system bets into separate queries so each can use its
+    # own index (ix_tb_user_created, ix_tb_source_created) for the ORDER BY scan
+    # instead of doing a full OR-union table scan that SQLite can't index-sort.
+    base = (
         select(TrackedBet, FixtureModel)
         .outerjoin(FixtureModel, TrackedBet.fixture_id == FixtureModel.id)
         .order_by(TrackedBet.created_at.desc())
         .limit(limit)
     )
-    if current_user:
-        query = query.where(
-            or_(
-                TrackedBet.user_id == current_user.id,
-                and_(
-                    TrackedBet.user_id.is_(None),
-                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
-                ),
-            )
-        )
-    else:
-        query = query.where(TrackedBet.user_id.is_(None))
-    if date_from:
-        query = query.where(
-            TrackedBet.event_date >= date.fromisoformat(date_from)
-        )
-    if date_to:
-        # Include bets where event_date is NULL (manual picks with no fixture) so
-        # they are never silently excluded by an upper-bound date filter.
-        query = query.where(
-            or_(
-                TrackedBet.event_date.is_(None),
-                TrackedBet.event_date <= date.fromisoformat(date_to),
-            )
-        )
-    if market_type:
-        query = query.where(TrackedBet.market_type == market_type)
-    if result_status:
-        query = query.where(TrackedBet.result_status == result_status)
-    if league:
-        query = query.where(TrackedBet.league.ilike(f"%{league}%"))
 
-    rows = await db.execute(query)
+    sub_queries = []
+    if current_user:
+        sub_queries.append(_apply_filters(
+            base.where(TrackedBet.user_id == current_user.id)
+        ))
+        sub_queries.append(_apply_filters(
+            base.where(
+                TrackedBet.user_id.is_(None),
+                TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+            )
+        ))
+    else:
+        sub_queries.append(_apply_filters(
+            base.where(TrackedBet.user_id.is_(None))
+        ))
+
+    all_rows = []
+    for q in sub_queries:
+        result = await db.execute(q)
+        all_rows.extend(result.all())
+
+    # Merge-sort both result sets and apply the global limit.
+    all_rows.sort(key=lambda r: r[0].created_at or datetime.min, reverse=True)
+    all_rows = all_rows[:limit]
+
     out = []
-    for bet, fixture in rows.all():
+    for bet, fixture in all_rows:
         home = fixture.home_team if fixture else None
         away = fixture.away_team if fixture else None
         # Rebuild match_name from fixture if the stored value looks corrupt (" vs ")
