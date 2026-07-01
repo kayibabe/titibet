@@ -588,25 +588,40 @@ async def deduplicate_bets(
     )
     bets = list(result.scalars().all())
 
-    seen: dict[tuple, int] = {}
-    to_delete: list[int] = []
+    seen: dict[tuple, int] = {}   # key → winning bet id
+    user_to_delete: list[int] = []   # user-owned duplicates
+    system_to_delete: list[int] = [] # orphan system (user_id=None) duplicates
     for bet in bets:
         key = (bet.fixture_id, bet.market_type)
         if key not in seen:
             seen[key] = bet.id
         else:
-            to_delete.append(bet.id)
+            if bet.user_id is None:
+                system_to_delete.append(bet.id)
+            else:
+                user_to_delete.append(bet.id)
 
-    if to_delete:
-        await db.execute(
+    removed = 0
+    if user_to_delete:
+        r = await db.execute(
             delete(TrackedBet).where(
-                TrackedBet.id.in_(to_delete),
+                TrackedBet.id.in_(user_to_delete),
                 TrackedBet.user_id == current_user.id,
             )
         )
+        removed += r.rowcount
+    if system_to_delete:
+        r = await db.execute(
+            delete(TrackedBet).where(
+                TrackedBet.id.in_(system_to_delete),
+                TrackedBet.user_id.is_(None),
+            )
+        )
+        removed += r.rowcount
+    if removed:
         await db.commit()
 
-    return {"removed": len(to_delete)}
+    return {"removed": removed}
 
 
 @router.delete("/bets/pending")

@@ -2,7 +2,7 @@
 import { RefreshCw, Download, Calendar, Sparkles, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle } from 'lucide-react'
 import { useSignals } from '../store/useSignals'
 import { computeSignals, fetchSignals } from '../api/signals'
-import { syncData, fetchBets, autoTrackSignal } from '../api/tracker'
+import { syncData, fetchBets } from '../api/tracker'
 import SignalCard from '../components/signals/SignalCard'
 import ValueBetCard, { ODDS_TIERS } from '../components/signals/ValueBetCard'
 import TrackModal from '../components/tracker/TrackModal'
@@ -274,6 +274,8 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
   const [analyticsFilter, setAnalyticsFilter] = useState(null) // { label, fields } | null
   // Set of "fixture_id:market" keys for picks already in the tracker
   const [trackedKeys, setTrackedKeys] = useState(new Set())
+  // Subset of trackedKeys that are backend-auto-tracked system picks
+  const [systemTrackedKeys, setSystemTrackedKeys] = useState(new Set())
 
   // Load today's bets once so we can badge already-tracked signals and show system stats
   const [systemStats, setSystemStats] = useState(null) // { total, won, lost, pending }
@@ -282,6 +284,7 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
       .then(bets => {
         setTrackedKeys(new Set(bets.map(b => `${b.fixture_id}:${b.market_type}`)))
         const sys = bets.filter(b => b.source_rule_key === 'system_auto' || b.source_rule_key === 'system_dual')
+        setSystemTrackedKeys(new Set(sys.map(b => `${b.fixture_id}:${b.market_type}`)))
         if (sys.length > 0) {
           const won     = sys.filter(b => b.result_status === 'Won').length
           const lost    = sys.filter(b => b.result_status === 'Lost').length
@@ -347,25 +350,6 @@ const reload = () => load(params)
   const isToday    = date === today
   const isTomorrow = date === maxDate
   const isBusy     = syncing || computing
-
-  // Auto-track ref: prevents re-issuing calls for the same signal in one session
-  const autoTrackedRef = useRef(new Set())
-  const [autoTrackedKeys, setAutoTrackedKeys] = useState(new Set())
-
-  // When today's signals load, auto-track each one as a system pick (fire-and-forget)
-  useEffect(() => {
-    if (!isToday || loading || error || !signals.length) return
-    const bankroll = settings?.bankroll || 1000
-    const newKeys = []
-    signals.forEach(signal => {
-      const key = `${signal.fixture_id}:${signal.market}`
-      if (autoTrackedRef.current.has(key)) return
-      autoTrackedRef.current.add(key)
-      newKeys.push(key)
-      autoTrackSignal(signal, { bankroll }).catch(() => {})
-    })
-    if (newKeys.length) setAutoTrackedKeys(prev => new Set([...prev, ...newKeys]))
-  }, [signals, isToday, loading, error]) // eslint-disable-line
 
   // ── Client-side sort + EV filter ────────────────────────────────────────
   const displayedSignals = useMemo(() => {
@@ -572,8 +556,8 @@ const reload = () => load(params)
       <div className={activeTab === 'signals' ? 'space-y-4' : 'hidden'}>
 
         {/* ── System performance bar ────────────────────────────────────── */}
-        {isToday && (systemStats || autoTrackedKeys.size > 0) && (() => {
-          const tracked = systemStats?.total ?? autoTrackedKeys.size
+        {isToday && (systemStats || systemTrackedKeys.size > 0) && (() => {
+          const tracked = systemStats?.total ?? systemTrackedKeys.size
           const won     = systemStats?.won ?? 0
           const lost    = systemStats?.lost ?? 0
           const settled = won + lost
@@ -918,8 +902,8 @@ const reload = () => load(params)
                   signal={signal}
                   rank={idx + 1}
                   isPro={isPro}
-                  isTracked={trackedKeys.has(`${signal.fixture_id}:${signal.market}`) || autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
-                  isAutoTracked={autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
+                  isTracked={trackedKeys.has(`${signal.fixture_id}:${signal.market}`) || systemTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
+                  isAutoTracked={systemTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
                   onTrackPick={sig => setTrackingSignal({ ...sig, tracking_source_family: trackingSourceFamily() })}
                   onDeepDive={onDeepDive}
                 />
@@ -945,8 +929,8 @@ const reload = () => load(params)
                       signal={signal}
                       rank={visiblePrimary.length + idx + 1}
                       isPro={isPro}
-                      isTracked={trackedKeys.has(`${signal.fixture_id}:${signal.market}`) || autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
-                      isAutoTracked={autoTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
+                      isTracked={trackedKeys.has(`${signal.fixture_id}:${signal.market}`) || systemTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
+                      isAutoTracked={systemTrackedKeys.has(`${signal.fixture_id}:${signal.market}`)}
                       onTrackPick={sig => setTrackingSignal({ ...sig, tracking_source_family: trackingSourceFamily() })}
                       onDeepDive={onDeepDive}
                     />
