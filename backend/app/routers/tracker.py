@@ -356,11 +356,44 @@ async def list_bets(
             q = q.where(TrackedBet.league.ilike(f"%{league}%"))
         return q
 
-    # Split user bets and system bets into separate queries so each can use its
-    # own index (ix_tb_user_created, ix_tb_source_created) for the ORDER BY scan
-    # instead of doing a full OR-union table scan that SQLite can't index-sort.
+    # Select individual columns (not whole ORM entities) so SQLAlchemy returns
+    # lightweight Row namedtuples instead of instrumented ORM objects.
+    # Selecting ORM entities triggers identity-map registration + back_populates
+    # sync for every row via the TrackedBet.fixture relationship — ~17ms/row at
+    # 204 rows was causing the 5+ second steady-state latency.
     base = (
-        select(TrackedBet, FixtureModel)
+        select(
+            TrackedBet.id,
+            TrackedBet.fixture_id,
+            TrackedBet.bookmaker,
+            TrackedBet.event_date,
+            TrackedBet.match_name,
+            TrackedBet.league,
+            TrackedBet.market_type,
+            TrackedBet.selection_name,
+            TrackedBet.odds,
+            TrackedBet.stake,
+            TrackedBet.recommended_stake_pct,
+            TrackedBet.source_rule_key,
+            TrackedBet.source_rule_label,
+            TrackedBet.signal_grade,
+            TrackedBet.dual_confidence,
+            TrackedBet.dual_agreement,
+            TrackedBet.result_status,
+            TrackedBet.profit_loss,
+            TrackedBet.notes,
+            TrackedBet.created_at,
+            TrackedBet.settled_at,
+            TrackedBet.closing_odds,
+            TrackedBet.clv_pct,
+            FixtureModel.home_team,
+            FixtureModel.away_team,
+            FixtureModel.home_score,
+            FixtureModel.away_score,
+            FixtureModel.status.label("fixture_status"),
+            FixtureModel.kickoff_at,
+        )
+        .select_from(TrackedBet)
         .outerjoin(FixtureModel, TrackedBet.fixture_id == FixtureModel.id)
         .order_by(TrackedBet.created_at.desc())
         .limit(limit)
@@ -385,38 +418,37 @@ async def list_bets(
     all_rows = []
     for q in sub_queries:
         result = await db.execute(q)
-        all_rows.extend(result.all())
+        all_rows.extend(result.mappings().all())
 
-    # Merge-sort both result sets and apply the global limit.
-    all_rows.sort(key=lambda r: r[0].created_at or datetime.min, reverse=True)
+    all_rows.sort(key=lambda r: r["created_at"] or datetime.min, reverse=True)
     all_rows = all_rows[:limit]
 
     out = []
-    for bet, fixture in all_rows:
-        home = fixture.home_team if fixture else None
-        away = fixture.away_team if fixture else None
-        # Rebuild match_name from fixture if the stored value looks corrupt (" vs ")
-        name = bet.match_name
+    for row in all_rows:
+        home = row["home_team"]
+        away = row["away_team"]
+        name = row["match_name"]
         if home and away and (not name or name.strip() == "vs"):
             name = f"{home} vs {away}"
         out.append(BetOut(
-            id=bet.id, fixture_id=bet.fixture_id,
-            bookmaker=bet.bookmaker, event_date=bet.event_date,
+            id=row["id"], fixture_id=row["fixture_id"],
+            bookmaker=row["bookmaker"], event_date=row["event_date"],
             match_name=name, home_team=home, away_team=away,
-            league=bet.league, market_type=bet.market_type,
-            selection_name=bet.selection_name, odds=bet.odds, stake=bet.stake,
-            recommended_stake_pct=bet.recommended_stake_pct,
-            source_rule_key=bet.source_rule_key, source_rule_label=bet.source_rule_label,
-            signal_grade=bet.signal_grade, dual_confidence=bet.dual_confidence,
-            dual_agreement=bet.dual_agreement,
-            result_status=bet.result_status, profit_loss=bet.profit_loss,
-            notes=bet.notes, created_at=bet.created_at, settled_at=bet.settled_at,
-            closing_odds=bet.closing_odds, clv_pct=bet.clv_pct,
-            # Match result — None until the fixture finishes and ingestion populates scores
-            home_score=fixture.home_score if fixture else None,
-            away_score=fixture.away_score if fixture else None,
-            fixture_status=fixture.status if fixture else None,
-            kickoff_at=fixture.kickoff_at if fixture else None,
+            league=row["league"], market_type=row["market_type"],
+            selection_name=row["selection_name"], odds=row["odds"], stake=row["stake"],
+            recommended_stake_pct=row["recommended_stake_pct"],
+            source_rule_key=row["source_rule_key"],
+            source_rule_label=row["source_rule_label"],
+            signal_grade=row["signal_grade"],
+            dual_confidence=row["dual_confidence"],
+            dual_agreement=row["dual_agreement"],
+            result_status=row["result_status"], profit_loss=row["profit_loss"],
+            notes=row["notes"], created_at=row["created_at"],
+            settled_at=row["settled_at"],
+            closing_odds=row["closing_odds"], clv_pct=row["clv_pct"],
+            home_score=row["home_score"], away_score=row["away_score"],
+            fixture_status=row["fixture_status"],
+            kickoff_at=row["kickoff_at"],
         ))
     return out
 
