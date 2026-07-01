@@ -14,6 +14,8 @@ Public API used by signal_engine.py:
 """
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures as _cf
 import logging
 import os
 import pickle
@@ -47,18 +49,44 @@ _MODEL_CACHE_DIR = Path(
     os.getenv("MODEL_CACHE_DIR") or str(Path(__file__).resolve().parents[2] / ".cache" / "advanced_models")
 )
 
+# Process pool for ZINB fitting. Separate processes don't share the GIL with
+# the asyncio event loop, so ZINB's scipy Nelder-Mead callbacks can't starve
+# incoming HTTP requests (bets, signals, health). max_workers=2 matches the
+# Fly machine's 2 vCPUs; main process still gets OS-scheduled CPU time.
+_ZINB_PROCESS_POOL: _cf.ProcessPoolExecutor | None = None
+
+
+def _get_process_pool() -> _cf.ProcessPoolExecutor:
+    global _ZINB_PROCESS_POOL
+    if _ZINB_PROCESS_POOL is None:
+        _ZINB_PROCESS_POOL = _cf.ProcessPoolExecutor(max_workers=2)
+    return _ZINB_PROCESS_POOL
+
+
+def _fit_zinb_worker(matches: list[dict]) -> object:
+    """Top-level function run in a worker process for picklability."""
+    from app.engines.zinb import ZINBGoalModel
+    m = ZINBGoalModel()
+    m.fit(matches)
+    return m
+
 
 async def _fixture_fingerprint(db: AsyncSession, reference_date: date) -> str:
     """
     Cheap proxy for "has the underlying fixture history changed since the last
     fit" — count + max id of completed fixtures in the lookback window. A single
     indexed COUNT/MAX query, orders of magnitude cheaper than the full fit.
+
+    Excludes reference_date itself so intraday settlements (which add scores to
+    today's fixtures) don't change the fingerprint mid-day. ZINB is trained on
+    historical fixtures only, so today's settlement doesn't affect the model.
     """
     cutoff = reference_date - timedelta(days=_LOOKBACK_DAYS)
     row = (await db.execute(text("""
         SELECT COUNT(*), COALESCE(MAX(id), 0) FROM fixtures
-        WHERE home_score IS NOT NULL AND away_score IS NOT NULL AND event_date >= :cutoff
-    """), {"cutoff": cutoff.isoformat()})).first()
+        WHERE home_score IS NOT NULL AND away_score IS NOT NULL
+          AND event_date >= :cutoff AND event_date < :today
+    """), {"cutoff": cutoff.isoformat(), "today": reference_date.isoformat()})).first()
     count, max_id = (row[0], row[1]) if row else (0, 0)
     return f"{count}-{max_id}"
 
@@ -223,19 +251,13 @@ class AdvancedModelsService:
             logger.warning("Glicko-2 fitting failed: %s", exc)
 
     async def _fit_zinb_leagues_async(self, records: list[dict]) -> None:
-        """Fit one ZINB model per league, each in its own thread.
+        """Fit one ZINB model per league in parallel worker processes.
 
-        Running each league as a separate asyncio.to_thread() call means the
-        event loop gets a turn between leagues. Previously all leagues were
-        batched into one thread; the largest league (90+ teams, 3000-iteration
-        Nelder-Mead per team) held the GIL long enough to fail Fly health checks.
+        ProcessPoolExecutor instead of asyncio.to_thread: separate processes
+        don't share the GIL with the asyncio event loop, so scipy Nelder-Mead
+        callbacks can't starve HTTP requests. All eligible leagues are submitted
+        at once and capped at 2 concurrent workers (matches Fly machine CPUs).
         """
-        import asyncio
-        try:
-            from app.engines.zinb import ZINBGoalModel
-        except ImportError:
-            return
-
         from collections import defaultdict
         by_league: dict[str, list[dict]] = defaultdict(list)
         for r in records:
@@ -248,16 +270,27 @@ class AdvancedModelsService:
                 "match_date": str(r["event_date"]),
             })
 
-        for league, matches in by_league.items():
-            if len(matches) < _MIN_FIXTURES_FOR_ZINB:
-                continue
-            try:
-                m = ZINBGoalModel()
-                await asyncio.to_thread(m.fit, matches)
-                if m.fitted:
-                    self._zinb_models[league] = m
-            except Exception as exc:
-                logger.debug("ZINB fit failed for %r: %s", league, exc)
+        eligible = [
+            (league, matches)
+            for league, matches in by_league.items()
+            if len(matches) >= _MIN_FIXTURES_FOR_ZINB
+        ]
+        if not eligible:
+            return
+
+        loop = asyncio.get_running_loop()
+        pool = _get_process_pool()
+
+        futures = [
+            loop.run_in_executor(pool, _fit_zinb_worker, matches)
+            for _, matches in eligible
+        ]
+        results = await asyncio.gather(*futures, return_exceptions=True)
+        for (league, _), result in zip(eligible, results):
+            if isinstance(result, Exception):
+                logger.debug("ZINB fit failed for %r: %s", league, result)
+            elif getattr(result, "fitted", False):
+                self._zinb_models[league] = result
 
     def _compute_ht_proxies(self, records: list[dict]) -> None:
         """
