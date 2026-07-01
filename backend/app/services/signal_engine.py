@@ -1163,9 +1163,13 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             for s in stakeable:
                 s.dual_recommended_stake_pct = round(s.dual_recommended_stake_pct * scale, 4)
 
-    # Write all signals in a single batch commit.
-    for sig in pending_signals:
-        db.add(sig)
-    await db.commit()
+    # Write signals in small batches so the write lock is released between
+    # commits, letting other requests (bets, health checks) slip through.
+    _WRITE_BATCH = 50
+    for i in range(0, len(pending_signals), _WRITE_BATCH):
+        for sig in pending_signals[i : i + _WRITE_BATCH]:
+            db.add(sig)
+        await db.commit()
+        await asyncio.sleep(0)   # yield between batches
 
     return count
