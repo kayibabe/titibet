@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     sync_times: str = "06:00,14:00,18:00,23:30"
 
     # Bayesian engine thresholds
-    min_value_edge: float = 0.05
+    # (min_value_edge removed 2026-07-02 — EV/edge gating retired from pipeline)
     min_derived_prob: float = 0.50
     min_coverage_threshold: float = 0.65
     min_bookmakers: int = 2
@@ -49,13 +49,11 @@ class Settings(BaseSettings):
     # The price we display/score against (William Hill proxy, or the sharp book on
     # fallback) is LONGER than what the user actually gets at betPawa / 888bets /
     # Betway, whose overround runs 15–30%+. We haircut that proxy down to a
-    # realistic execution price before computing EV / Kelly / is_value, so the
-    # feed reflects bets that are profitable at the price the user can truly take.
+    # realistic execution price. Since 2026-07-02 the exec price is diagnostic
+    # only (EV gating retired); the haircut still informs displayed exec odds.
     #   - exec_odds_haircut: global fraction the real book is shorter than the proxy.
-    #   - min_exec_ev_pct:   minimum EV (%) at the EXEC price required to be "value".
     # Set EXEC_ODDS_HAIRCUT=0 in .env to disable (restores pre-Fix-1 behaviour).
     exec_odds_haircut: float = 0.08
-    min_exec_ev_pct: float = 0.0
 
     # Staking
     kelly_fraction: float = 0.25
@@ -190,9 +188,13 @@ GOALS_MARKET_NAMES: frozenset = frozenset({
 BTTS_MARKET_NAMES: frozenset = frozenset({
     "Both Teams Score",
     "Both Teams To Score",
-    "Results/Both Teams Score",   # Bet365/10Bet naming — has pure Yes/No selections
+    # "Results/Both Teams Score" removed 2026-07-02: DB audit shows its selections
+    # are combo outcomes only ("Home/Yes", "Draw/No", ...), never pure Yes/No —
+    # a Result+BTTS double, not the BTTS market.
     "GG/NG",
     "BTTS",
+    # Half-scoped variants ("Both Teams Score - First Half", "Both Teams To Score
+    # - Second Half") must NOT be listed — see HOME_GOALS_MARKET_NAMES note.
 })
 
 MATCH_WINNER_MARKET_NAMES: frozenset = frozenset({
@@ -221,16 +223,27 @@ AWAY_GOALS_MARKET_NAMES: frozenset = frozenset({
     "Away Team Total Goals",
 })
 
+# Win to Nil pricing (audited against market_snapshots 2026-07-02):
+# The only Win-to-Nil market API-Football actually delivers is "Win To Nil"
+# with selections "Home" / "Away". The per-side "Win to Nil - Home/Away" names
+# have never appeared in the data but are kept in case a bookmaker adds them
+# (their selections are Yes/No). "Clean Sheet - Home/Away" was REMOVED: a clean
+# sheet does not require winning, so its Yes price belongs to a different bet
+# and must never price a Win-to-Nil selection.
 WIN_TO_NIL_HOME_MARKET_NAMES: frozenset = frozenset({
     "Win to Nil - Home",
     "Win To Nil - Home",
-    "Clean Sheet - Home",
 })
 
 WIN_TO_NIL_AWAY_MARKET_NAMES: frozenset = frozenset({
     "Win to Nil - Away",
     "Win To Nil - Away",
-    "Clean Sheet - Away",
+})
+
+# Combined two-selection form: market "Win To Nil", selections "Home"/"Away".
+WIN_TO_NIL_COMBINED_MARKET_NAMES: frozenset = frozenset({
+    "Win To Nil",
+    "Win to Nil",
 })
 
 EXACT_GOALS_MARKET_NAMES: frozenset = frozenset({
@@ -367,17 +380,8 @@ MARKET_PROB_BOUNDS: dict = {
     "Away Win to Nil": (0.02, 0.42),
 }
 
-# Per-market minimum edge thresholds (overrides global min_value_edge = 5%).
-# High-probability / low-variance markets are profitable at lower edge floors;
-# high-variance markets (Away Win, exact goals) need a larger cushion to beat variance.
-MARKET_MIN_EDGE: dict[str, float] = {
-    "Over 1.5":        0.03,
-    "Over 2.5":        0.04,
-    "Under 2.5":       0.05,
-    "Home Over 0.5":   0.03,
-    "Home Win to Nil": 0.07,
-    "Away Win to Nil": 0.08,
-}
+# MARKET_MIN_EDGE removed 2026-07-02: EV/edge gating retired from the signal
+# pipeline. Signals are accepted on probability, confidence, and agreement only.
 
 # Per-market execution-odds haircut overrides (fraction the user's real book is
 # shorter than the displayed proxy price). Soft books shade favourites / overs
@@ -752,7 +756,6 @@ POISSON_RULES = {
     "over25_min_00": 11.0,  # was 15.0 — 0-0 ≥ 11 implies P(0-0) < 6.3%, λ_total > 2.75
     # Overround correction for CS markets (tier-averaged global default).
     "cs_overround_factor": 1.45,
-    "min_edge_pct": 3.0,
     # Rolling form lambda settings
     "rolling_form_games": 6,
     # form_lambda_weight lowered 0.50->0.35: CS odds lead, form adjusts.
@@ -765,10 +768,12 @@ POISSON_RULES = {
     "form_max_lookback_days": 90,
     # Under 2.5 guard: odds > 2.20 imply < 45% prob of <=2 goals.
     "under25_max_odds": 2.20,
-    # Marginal Poisson (team overs / match overs): stricter edge floor (%).
-    "team_over_min_edge_pct": 4.0,
-    # Away side needs a higher edge cushion — away teams score less reliably,
-    # especially in Tier 3 and end-of-season contexts.
-    "away_team_over_min_edge_pct": 5.5,
-    "match_total_over_min_edge_pct": 3.0,
+    # Marginal Poisson (team overs): probability floors, replacing the retired
+    # edge-vs-market floors (2026-07-02). rule_pass requires the model itself to
+    # see the outcome as likely; rule_strong marks high-conviction picks that
+    # qualify for the Poisson-only signal tier. 0.60/0.72 sit between what the
+    # old 4% edge floor implied at the odds floor (1.30 → prob ≥ 0.81) and the
+    # odds ceiling (2.49 → prob ≥ 0.44).
+    "team_over_min_prob": 0.60,
+    "team_over_strong_prob": 0.72,
 }

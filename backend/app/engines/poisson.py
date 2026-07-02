@@ -242,14 +242,12 @@ class PoissonFixtureResult:
 
 # ── Rule evaluators (ported from rules.js) ────────────────────────────────────
 
-def _grade(rule_pass: bool, rule_strong: bool, has_edge: bool) -> str:
+def _grade(rule_pass: bool, rule_strong: bool) -> str:
+    # Edge-vs-market no longer participates in grading (retired 2026-07-02):
+    # A = rule passed with strong conviction, B = rule passed, N = no signal.
     if not rule_pass:
         return "N"
-    if rule_strong and has_edge:
-        return "A"
-    if rule_pass and has_edge:
-        return "B"
-    return "C"
+    return "A" if rule_strong else "B"
 
 
 def _marginal_team_over_result(
@@ -281,12 +279,6 @@ def _marginal_team_over_result(
     lh = _blend_lam(lh0, form_lambdas.get("lambda_h") if form_lambdas else None, fw)
     la = _blend_lam(la0, form_lambdas.get("lambda_a") if form_lambdas else None, fw)
     lam_side = lh if side == "h" else la
-    # Away side requires a higher edge cushion: away teams score less reliably,
-    # especially in Tier 3 and end-of-season contexts.
-    if side == "a":
-        min_e = float(R.get("away_team_over_min_edge_pct", R.get("team_over_min_edge_pct", 4.0)))
-    else:
-        min_e = float(R.get("team_over_min_edge_pct", 4.0))
     mo = signal_odds.get(odds_key)
     min_odd = MARKET_MIN_ODDS.get(market)
     if mo is not None and min_odd is not None and mo < min_odd:
@@ -298,16 +290,21 @@ def _marginal_team_over_result(
             grade="N", lambda_h=lh, lambda_a=la, lambda_total=d["lambda_total"],
             form_blended=bool(form_lambdas),
         )
-    er = compute_team_over_edge(lam_side, line, mo, min_e, odds_key)
-    has_edge = bool(er.get("has_edge"))
+    # edge_pct is still computed for diagnostics/display, but acceptance is
+    # probability-based: the model itself must see the outcome as likely.
+    er = compute_team_over_edge(lam_side, line, mo, 0.0, odds_key)
+    p = er.get("poisson_prob")
     edge_pct_v = er.get("edge_pct")
-    strong = bool(has_edge and edge_pct_v is not None and edge_pct_v >= 2 * min_e)
+    min_p = float(R.get("team_over_min_prob", 0.60))
+    strong_p = float(R.get("team_over_strong_prob", 0.72))
+    rule_pass = bool(er.get("has_price")) and p is not None and p >= min_p
+    strong = rule_pass and p >= strong_p
     return PoissonResult(
         rule_key=rule_key, market=market,
-        rule_pass=has_edge, rule_strong=strong,
-        poisson_prob=er.get("poisson_prob"),
-        edge_pct=edge_pct_v, has_edge=has_edge,
-        grade=_grade(has_edge, strong, has_edge),
+        rule_pass=rule_pass, rule_strong=strong,
+        poisson_prob=p,
+        edge_pct=edge_pct_v, has_edge=bool(edge_pct_v is not None and edge_pct_v > 0),
+        grade=_grade(rule_pass, strong),
         lambda_h=lh, lambda_a=la, lambda_total=d["lambda_total"],
         form_blended=bool(form_lambdas),
     )
@@ -345,7 +342,8 @@ def _evaluate_cs_cascade(odds: dict, signal_odds: dict, form_lambdas: Optional[d
             if market_odds is None or market_odds < MARKET_MIN_ODDS[market]:
                 pass_ = False
 
-        edge_result = compute_edge(bet_key, lam, signal_odds.get(bet_key), min_edge_pct=R["min_edge_pct"])
+        # edge_pct retained for diagnostics only — no longer gates or grades.
+        edge_result = compute_edge(bet_key, lam, signal_odds.get(bet_key), min_edge_pct=0.0)
         has_edge = edge_result.get("has_edge", False)
 
         results.append(PoissonResult(
@@ -353,7 +351,7 @@ def _evaluate_cs_cascade(odds: dict, signal_odds: dict, form_lambdas: Optional[d
             rule_pass=pass_, rule_strong=False,
             poisson_prob=edge_result.get("poisson_prob"),
             edge_pct=edge_result.get("edge_pct"), has_edge=has_edge,
-            grade=_grade(pass_, False, has_edge),
+            grade=_grade(pass_, False),
             lambda_h=None, lambda_a=None, lambda_total=lam,
             form_blended=bool(form_lambdas),
         ))
@@ -374,14 +372,14 @@ def _evaluate_over15_signal(odds: dict, signal_odds: dict) -> PoissonResult:
     ]
     pass_ = base_ok and any(supports)
     lam = lambda_from_cs00(s00, R["cs_overround_factor"])
-    edge_result = compute_edge("over1_5", lam, signal_odds.get("over1_5"), min_edge_pct=R["min_edge_pct"])
+    edge_result = compute_edge("over1_5", lam, signal_odds.get("over1_5"), min_edge_pct=0.0)
     rule_strong15 = pass_ and sum(supports) >= 2
     has_edge15 = edge_result.get("has_edge", False)
     return PoissonResult(
         rule_key="over15", market="Over 1.5", rule_pass=pass_, rule_strong=rule_strong15,
         poisson_prob=edge_result.get("poisson_prob"),
         edge_pct=edge_result.get("edge_pct"), has_edge=has_edge15,
-        grade=_grade(pass_, rule_strong15, has_edge15),
+        grade=_grade(pass_, rule_strong15),
         lambda_h=None, lambda_a=None, lambda_total=lam,
     )
 
@@ -399,13 +397,13 @@ def _evaluate_over25_signal(odds: dict, signal_odds: dict) -> PoissonResult:
                   (s12 is not None and s12 <= R["over25_support_max_12"]))
     pass_ = core_ok and support_ok
     lam = lambda_from_cs00(s00, R["cs_overround_factor"])
-    edge_result = compute_edge("over2_5", lam, signal_odds.get("over2_5"), min_edge_pct=R["min_edge_pct"])
+    edge_result = compute_edge("over2_5", lam, signal_odds.get("over2_5"), min_edge_pct=0.0)
     has_edge25 = edge_result.get("has_edge", False)
     return PoissonResult(
         rule_key="over25", market="Over 2.5", rule_pass=pass_, rule_strong=pass_,
         poisson_prob=edge_result.get("poisson_prob"),
         edge_pct=edge_result.get("edge_pct"), has_edge=has_edge25,
-        grade=_grade(pass_, pass_, has_edge25),
+        grade=_grade(pass_, pass_),
         lambda_h=None, lambda_a=None, lambda_total=lam,
     )
 

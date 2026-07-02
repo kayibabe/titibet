@@ -18,7 +18,6 @@ from typing import Optional
 from app.core.config import (
     ACTIVE_MARKETS,
     ALLOWED_SCORELINES,
-    MARKET_MIN_EDGE,
     MARKET_MIN_ODDS,
     MARKET_PROB_BOUNDS,
     MARKETS,
@@ -152,33 +151,34 @@ def _derive_markets(probs: list[ScorelineProb]) -> dict[str, float]:
     return results
 
 
-# ── Value calculation ─────────────────────────────────────────────────────────
+# ── Signal grading (probability-based; EV/edge gating retired 2026-07-02) ─────
 
-def _kelly(prob: float, odds: float, fraction: float, cap: float) -> float:
-    b = odds - 1.0
-    if b <= 0:
+def _prob_stake_pct(prob: float, cap: float) -> float:
+    """Probability-scaled flat stake: cap × model probability.
+    Replaces fractional Kelly, which self-zeroes without a model-vs-market edge."""
+    if not (0.0 < prob < 1.0):
         return 0.0
-    full = (b * prob - (1.0 - prob)) / b
-    return min(max(0.0, full * fraction), cap)
+    return round(cap * prob, 4)
 
 
-def _confidence(edge: float, prob: float) -> str:
-    if edge >= 0.07 and prob >= 0.60:
+def _confidence(prob: float) -> str:
+    # Thresholds carried over from the probability half of the old formula
+    # (0.70 matches the high_probability_flag used in ranking; 0.55 was the
+    # old Medium prob branch). Edge no longer participates.
+    if prob >= 0.70:
         return "High"
-    elif edge >= 0.05 or prob >= 0.55:
+    elif prob >= 0.55:
         return "Medium"
     else:
         return "Low"
 
 
-def _quality_score(ev_pct: float, prob: float, tier: int, n_bookies: int, confidence: str) -> float:
-    # ev_pct is a percentage (e.g. 15.0 for 15% edge) — convert to fraction before
-    # multiplying so quality_score stays in [0, 1] range.
-    ev = ev_pct / 100.0
+def _quality_score(prob: float, tier: int, n_bookies: int, confidence: str) -> float:
+    # Probability replaces the old EV factor; remaining factors unchanged.
     tf = {1: 1.0, 2: 0.85, 3: 0.70}.get(tier, 0.70)
     bf = min(n_bookies / 2.0, 1.0)  # 2 bookies = full score (Bet365 + 1xBet)
     cf = {"High": 1.0, "Medium": 0.85, "Low": 0.70}.get(confidence, 0.70)
-    return round(ev * prob * tf * bf * cf, 4)
+    return round(prob * tf * bf * cf, 4)
 
 
 # ── Reference pricing ────────────────────────────────────────────────────────
@@ -536,7 +536,6 @@ def analyse_fixture(
         )
         edge = derived_prob - no_vig
         implied_prob = no_vig   # vig-free reference probability
-        market_edge_floor = MARKET_MIN_EDGE.get(market_name, settings.min_value_edge)
 
         # ── Execution price (Fix 1) ───────────────────────────────────────────
         # The haircut converts a soft-book proxy (William Hill) into the price the
@@ -549,34 +548,18 @@ def analyse_fixture(
             exec_odd = exec_odd_from(effective_odd, market_name)
         else:
             exec_odd = max(1.01, round(effective_odd, 4))
-        # Proxy-price EV kept only for diagnostics (the "looks good on screen" number).
+        # EV numbers are DIAGNOSTIC ONLY since 2026-07-02 — stored and displayed,
+        # never used to accept/reject or grade a signal.
         ev_pct_ref = round((derived_prob * effective_odd - 1.0) * 100, 2)
-        # Decision EV — computed at the price the user can actually take.
         ev_pct = round((derived_prob * exec_odd - 1.0) * 100, 2) if exec_odd > 1.0 else -100.0
 
-        # Value now requires BOTH: the model beats the no-vig market (edge gate)
-        # AND the bet is profitable at the real execution price (exec-EV gate).
-        # A signal that is +edge vs the sharp line but -EV at betPawa now fails.
-        is_value = (
-            edge >= market_edge_floor
-            and derived_prob >= settings.min_derived_prob
-            and ev_pct >= settings.min_exec_ev_pct
-        )
-        # Stake on the exec price. _kelly self-zeroes when the exec-price edge is
-        # non-positive, so a too-short book correctly yields zero stake.
-        ks = _kelly(derived_prob, exec_odd, settings.kelly_fraction, settings.max_kelly_pct) if exec_odd > 1.0 else 0.0
-        conf = _confidence(edge, derived_prob) if is_value else "Low"
-        # Continuous quality: sub-threshold signals get a proportional fraction (max 0.5×)
-        # so borderline picks still appear in ranked results at reduced weight.
-        # is_value still gates staking and confidence — this only affects quality_score.
-        # ev_pct here is the exec-price EV, so quality already reflects real edge.
-        if is_value:
-            edge_scale = 1.0
-        elif edge > 0 and ev_pct > 0:
-            edge_scale = min(0.5, edge / market_edge_floor * 0.5)
-        else:
-            edge_scale = 0.0
-        qs = round(_quality_score(ev_pct, derived_prob, tier, n_bookies, conf) * edge_scale, 4)
+        # Value = the model considers the outcome likely enough (probability floor).
+        # Edge-vs-market and exec-price EV gates retired 2026-07-02.
+        is_value = derived_prob >= settings.min_derived_prob
+        # Probability-scaled flat stake (replaces Kelly, which needs an edge).
+        ks = _prob_stake_pct(derived_prob, settings.max_kelly_pct) if exec_odd > 1.0 else 0.0
+        conf = _confidence(derived_prob) if is_value else "Low"
+        qs = _quality_score(derived_prob, tier, n_bookies, conf)
 
         results.append(BayesianResult(
             market=market_name, derived_prob=derived_prob,

@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import (
     BTTS_MARKET_NAMES, GOALS_MARKET_NAMES,
     HOME_GOALS_MARKET_NAMES, AWAY_GOALS_MARKET_NAMES,
-    WIN_TO_NIL_HOME_MARKET_NAMES, WIN_TO_NIL_AWAY_MARKET_NAMES,
+    WIN_TO_NIL_COMBINED_MARKET_NAMES,
     EXACT_GOALS_MARKET_NAMES,
 )
 from app.models.bet import TrackedBet
@@ -35,8 +35,10 @@ log = logging.getLogger(__name__)
 _BET_TO_SELECTION: dict[str, str] = {
     "BTTS Yes": "Yes",
     "BTTS No":  "No",
-    "Home Win to Nil": "Yes",
-    "Away Win to Nil": "Yes",
+    # Win to Nil is delivered as one combined market ("Win To Nil") with
+    # selections "Home"/"Away" — not per-side Yes/No markets (DB audit 2026-07-02).
+    "Home Win to Nil": "Home",
+    "Away Win to Nil": "Away",
     "Exactly 1 Goal":  "1",
     "Exactly 2 Goals": "2",
     "Exactly 3 Goals": "3",
@@ -63,9 +65,9 @@ _MARKET_TYPE_SCOPE: dict[str, frozenset] = {
     "Home Over 1.5": HOME_GOALS_MARKET_NAMES,
     "Away Over 0.5": AWAY_GOALS_MARKET_NAMES,
     "Away Over 1.5": AWAY_GOALS_MARKET_NAMES,
-    # Win to nil
-    "Home Win to Nil": WIN_TO_NIL_HOME_MARKET_NAMES,
-    "Away Win to Nil": WIN_TO_NIL_AWAY_MARKET_NAMES,
+    # Win to nil — combined market, disambiguated by selection ("Home"/"Away")
+    "Home Win to Nil": WIN_TO_NIL_COMBINED_MARKET_NAMES,
+    "Away Win to Nil": WIN_TO_NIL_COMBINED_MARKET_NAMES,
     # Exact goals
     "Exactly 1 Goal":  EXACT_GOALS_MARKET_NAMES,
     "Exactly 2 Goals": EXACT_GOALS_MARKET_NAMES,

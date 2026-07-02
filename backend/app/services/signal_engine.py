@@ -26,6 +26,7 @@ from app.core.config import (
     UNDER_GOALS_SUPPRESSED_LEAGUES,
     HOME_GOALS_MARKET_NAMES, AWAY_GOALS_MARKET_NAMES,
     WIN_TO_NIL_HOME_MARKET_NAMES, WIN_TO_NIL_AWAY_MARKET_NAMES,
+    WIN_TO_NIL_COMBINED_MARKET_NAMES,
     EXACT_GOALS_MARKET_NAMES,
     DISABLED_MARKETS,
     DISABLED_LEAGUES,
@@ -45,7 +46,7 @@ from app.engines import dual_engine
 from app.engines import bos as bos_engine
 from app.models import Fixture, MarketSnapshot, Signal
 from app.services.performance_intelligence import compute_performance_weights, PerformanceWeights
-from app.services.staking import expected_value as _ev, kelly_stake_pct
+from app.services.staking import expected_value as _ev
 from app.core.config import (
     BOS_SI_THRESHOLD, BOS_O00_MAX, BOS_CMA_MAX,
 )
@@ -185,6 +186,10 @@ def _build_win_to_nil_home(snapshots: list[MarketSnapshot]) -> dict[str, dict[st
     for s in snapshots:
         if s.market_type in WIN_TO_NIL_HOME_MARKET_NAMES:
             result.setdefault(s.bookmaker, {})[s.selection_name] = s.odds
+        elif s.market_type in WIN_TO_NIL_COMBINED_MARKET_NAMES and s.selection_name == "Home":
+            # Combined "Win To Nil" market (selections Home/Away) — normalise to
+            # the Yes/No shape the Bayesian lookup maps expect.
+            result.setdefault(s.bookmaker, {})["Yes"] = s.odds
     return result
 
 
@@ -193,6 +198,8 @@ def _build_win_to_nil_away(snapshots: list[MarketSnapshot]) -> dict[str, dict[st
     for s in snapshots:
         if s.market_type in WIN_TO_NIL_AWAY_MARKET_NAMES:
             result.setdefault(s.bookmaker, {})[s.selection_name] = s.odds
+        elif s.market_type in WIN_TO_NIL_COMBINED_MARKET_NAMES and s.selection_name == "Away":
+            result.setdefault(s.bookmaker, {})["Yes"] = s.odds
     return result
 
 
@@ -686,12 +693,11 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 else poi_signal_odds.get("over2_5") if market == "Over 2.5"
                 else None
             )
-            _poi_strong_candidate = p is not None and p.rule_pass and p.rule_strong and p.has_edge
+            _poi_strong_candidate = p is not None and p.rule_pass and p.rule_strong
             _bay_only_candidate = (
                 b is not None
                 and (b.derived_prob or 0.0) >= 0.70
                 and _cand_best_odd is not None
-                and (b.derived_prob or 0.0) * _cand_best_odd > 1.0  # positive EV
                 and ds.confidence == "None"  # dual engine weak — Bayesian solo signal
             )
             # Preliminary flag; refined to `is_candidate = ... and not is_dual_signal` below.
@@ -822,25 +828,15 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 continue
 
             # ── Stake sizing ──────────────────────────────────────────────────
-            # Dual Signal: dual_engine already computed Kelly via Bayesian prob.
-            # Poisson Signal: dual_engine returns 0.0 (no Bayesian input) — compute
-            # quarter-Kelly directly from Poisson probability + bookmaker odds,
-            # capped at POISSON_ONLY_KELLY_CAP (1.5%) since only one engine confirms.
-            # Bayesian Signal: quarter-Kelly from Bayesian prob, same cap — one engine only.
+            # Kelly retired 2026-07-02 (it self-zeroes without a model-vs-market
+            # edge). Stakes are probability-scaled flat: cap × model probability.
+            # Dual Signal: dual_engine already applied cap=max_kelly_pct (2%) via
+            # the Bayesian engine. Single-engine tiers (Poisson-only / Bayesian-
+            # led) use the lower POISSON_ONLY_KELLY_CAP (1.5%) — one engine only.
             if is_poisson_signal and p is not None and p.poisson_prob:
-                adjusted_stake_pct = kelly_stake_pct(
-                    prob=p.poisson_prob,
-                    odds=_poi_best_odd,
-                    fraction=0.25,
-                    cap=POISSON_ONLY_KELLY_CAP,
-                )
-            elif is_bayesian_signal and not is_dual_signal and b is not None and b.derived_prob and b.exec_odd:
-                adjusted_stake_pct = kelly_stake_pct(
-                    prob=b.derived_prob,
-                    odds=b.exec_odd,
-                    fraction=0.25,
-                    cap=POISSON_ONLY_KELLY_CAP,
-                )
+                adjusted_stake_pct = round(POISSON_ONLY_KELLY_CAP * p.poisson_prob, 4)
+            elif is_bayesian_signal and not is_dual_signal and b is not None and b.derived_prob:
+                adjusted_stake_pct = round(POISSON_ONLY_KELLY_CAP * b.derived_prob, 4)
             else:
                 adjusted_stake_pct = ds.recommended_stake_pct
 
@@ -890,25 +886,15 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 if _raw_prob > _shrink_threshold_hi:
                     _raw_prob = _shrink_threshold_hi + (_raw_prob - _shrink_threshold_hi) * _shrink_factor_hi
 
-            # ── Explicit EV score ─────────────────────────────────────────────
-            # EV = p_model × exec_odd − 1.  Use calibration-corrected probability
-            # and the EXECUTION price (Fix 1) — what the user actually gets at
-            # their book — not the longer displayed proxy odd.
+            # ── Explicit EV score (diagnostic only) ───────────────────────────
+            # EV = p_model × exec_odd − 1, on the calibration-corrected probability
+            # and execution price. Stored for display/analytics; the negative-EV
+            # hard gate was removed 2026-07-02 — EV never rejects a signal.
             _ev_prob = _raw_prob
             _ev_odds = (b.exec_odd if b else None)
             _ev_score: float | None = None
             if _ev_prob is not None and _ev_odds is not None and _ev_odds > 1.0:
                 _ev_score = round(_ev(_ev_prob, _ev_odds), 4)
-
-            # Hard gate: if the calibration-shrunk EV is negative, the bet is
-            # loss-making at the real execution price — drop it regardless of
-            # model confidence.  Dual signals with is_value=True can still fail
-            # this gate when shrinkage pushes a high-probability pick below breakeven.
-            # Only enforced when we have Bayesian exec_odd — Poisson-only signals
-            # that pass the Both+High or Poisson-strong gates are not penalised here
-            # because their odds come from a different path (poi_signal_odds).
-            if _ev_score is not None and _ev_score < 0 and not is_poisson_signal:
-                continue
 
             # ── BOS quality boost / penalty ───────────────────────────────────
             # BOS high SI = stable, LOW-scoring fixture.  Apply a boost only to
@@ -1036,10 +1022,9 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             """Build a Poisson-only flip Signal, running it through dual_engine.fuse."""
             if prob is None or best_odd is None or best_odd <= 1.0:
                 return None
-            _min_e = float(POISSON_RULES.get("min_edge_pct", 3.0))
+            # _edge is diagnostic only (edge_pct field) — the edge floor gate
+            # was removed 2026-07-02 with the rest of the EV gating.
             _edge = prob - (1.0 / best_odd)
-            if _edge * 100 < _min_e:
-                return None
             _grade = "A" if strong else "B"
             _p = poi_engine.PoissonResult(
                 rule_key=rule_key, market=market,

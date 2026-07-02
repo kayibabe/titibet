@@ -44,7 +44,6 @@ from app.services.signal_engine import (
     _is_end_of_northern_season, _OVER_GOALS_MARKETS,
 )
 from app.services.form_service import get_team_form_lambdas
-from app.services.staking import kelly_stake_pct
 
 settings = get_settings()
 
@@ -216,7 +215,10 @@ async def run_backtest(
             condition = MARKETS[mkt]
 
             b = bay_by_market.get(mkt)
-            if b and (not b.is_value or (b.edge or 0.0) < min_edge):
+            # is_value is now the probability floor only; the min_edge parameter
+            # is retained for API compatibility but no longer filters (EV gating
+            # retired 2026-07-02).
+            if b and not b.is_value:
                 b = None
             p_key = MARKET_TO_POISSON_KEY.get(mkt)
             p = poi_by_market.get(mkt)
@@ -316,27 +318,10 @@ async def run_backtest(
             if not is_dual_bt and not is_poisson_bt:
                 continue
 
-            # ── New gates (mirroring 2026-06-16 signal_engine improvements) ───
+            # ── New gates (mirroring signal_engine) ──────────────────────────
+            # (The negative-EV hard gate was removed 2026-07-02, mirroring the
+            # live signal engine — EV never rejects a bet.)
             if apply_new_gates:
-                # Gate 1: ev_score hard gate.
-                # Shrink probability (mirrors signal_engine shrinkage) then check
-                # exec-price EV. If calibration-corrected EV < 0, skip the bet.
-                if b is not None and not is_poisson_bt:
-                    _shrink_threshold = float(POISSON_RULES.get("prob_shrink_threshold", 0.75))
-                    _shrink_factor    = float(POISSON_RULES.get("prob_shrink_factor", 0.88))
-                    _shrink_threshold_hi = float(POISSON_RULES.get("prob_shrink_threshold_hi", 0.80))
-                    _shrink_factor_hi    = float(POISSON_RULES.get("prob_shrink_factor_hi", 0.35))
-                    _rp = b.derived_prob
-                    if _rp is not None and _rp > _shrink_threshold:
-                        _rp = _shrink_threshold + (_rp - _shrink_threshold) * _shrink_factor
-                        if _rp > _shrink_threshold_hi:
-                            _rp = _shrink_threshold_hi + (_rp - _shrink_threshold_hi) * _shrink_factor_hi
-                    _exec = exec_odd_from(b.best_actual_odd, mkt) if b.best_actual_odd else 0.0
-                    if _rp is not None and _exec > 1.0:
-                        _ev_bt = _rp * _exec - 1.0
-                        if _ev_bt < 0:
-                            continue
-
                 # Gate 2: end-of-northern-season suppression.
                 # Tier 2+ Over-goals signals dropped May 10 – June 30.
                 # Tier 3 remaining signals confidence-downgraded.
@@ -369,7 +354,8 @@ async def run_backtest(
             if settle_odd <= 1:
                 continue
             flat_stake = BACKTEST_FLAT_STAKE
-            ks = kelly_stake_pct(b.derived_prob, settle_odd) * 100 if b and settle_odd > 1 else 0.0
+            # Probability-scaled flat stake (Kelly retired with EV gating).
+            ks = settings.max_kelly_pct * b.derived_prob * 100 if b and b.derived_prob else 0.0
 
             profit = flat_stake * (settle_odd - 1.0) if won else -flat_stake
 

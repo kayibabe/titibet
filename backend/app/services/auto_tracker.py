@@ -31,11 +31,14 @@ FLAT_STAKE = 50_000.0
 
 
 def _grade(q: float | None) -> str | None:
+    # Thresholds recalibrated 2026-07-02 for the probability-based quality scale
+    # (quality ≈ prob × tier/bookmaker/confidence factors, typically 0.2–0.8;
+    # the old 0.035–0.08 cutoffs matched the retired EV-based scale).
     if q is None:
         return None
-    if q >= 0.08:  return "A"
-    if q >= 0.055: return "B"
-    if q >= 0.035: return "C"
+    if q >= 0.60: return "A"
+    if q >= 0.45: return "B"
+    if q >= 0.30: return "C"
     return "D"
 
 

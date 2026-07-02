@@ -71,9 +71,9 @@ def fuse(
 
     contradiction = bool(mixed_signals)
 
-    # Normalise Poisson edge_pct (percentage -> fraction) so quality scores stay in [0, 1].
-    # bayesian.quality_score is already in [0, 1] after the Bayesian engine fix.
-    p_edge = ((poisson.edge_pct or 0) / 100.0) if poisson else 0.0
+    # Poisson quality contribution: model probability (edge-vs-market retired
+    # 2026-07-02). Both this and bayesian.quality_score live in [0, 1].
+    p_prob = (poisson.poisson_prob or 0.0) if poisson else 0.0
 
     if b_ok and p_ok:
         if contradiction:
@@ -85,11 +85,11 @@ def fuse(
         elif not contradiction and bayesian.confidence == "High" and poisson.grade == "A":
             agreement = "Both"
             confidence = "High"
-            qs = bayesian.quality_score * 0.6 + p_edge * 0.4
+            qs = bayesian.quality_score * 0.6 + p_prob * 0.4
         elif bayesian.confidence in ("High", "Medium") or poisson.grade in ("A", "B"):
             agreement = "Both"
             confidence = "Medium"
-            qs = bayesian.quality_score * 0.6 + p_edge * 0.3
+            qs = bayesian.quality_score * 0.6 + p_prob * 0.3
         else:
             agreement = "Both"
             confidence = "Low"
@@ -105,30 +105,16 @@ def fuse(
         tier_down = {"A": "Medium", "B": "Low", "C": "None"}
         agreement = "Poisson Only"
         confidence = tier_down.get(poisson.grade, "None")
-        qs = p_edge * 0.4
+        qs = p_prob * 0.4
+
     else:
         agreement = "None"
         confidence = "None"
         qs = 0.0
 
-    # Demote confidence one tier when Bayesian edge falls below the minimum threshold.
-    # Prevents high-agreement-but-low-edge signals from receiving full staking.
-    # Guard: only demote High or Medium -- a signal already at Low should NOT be pushed
-    # to None here, because the Bayesian engine already assigned Low precisely because
-    # the edge was thin.  Double-demoting it silently drops valid Both/Low agreements.
-    if bayesian is not None and (bayesian.edge or 0.0) < settings.min_value_edge and confidence in ("High", "Medium"):
-        demotion = {"High": "Medium", "Medium": "Low"}
-        confidence = demotion.get(confidence, confidence)
-
-    # Hard block: when Bayesian edge is genuinely negative (bookmaker's implied
-    # probability exceeds our model's probability), Poisson-only signals have no
-    # business in the feed -- we're firing on pattern alone against the market.
-    # Audit evidence: 24 Home Over 1.5 + 18 Away Over 1.5 negative-edge signals
-    # showed -12% ROI at ~50% hit rate; the market was right, our model was wrong.
-    if (bayesian is not None
-            and (bayesian.edge or 0.0) < 0.0
-            and agreement == "Poisson Only"):
-        confidence = "None"
+    # (Edge-based demotion and the negative-edge Poisson-only hard block were
+    # removed 2026-07-02: signals are no longer accepted or rejected on
+    # model-vs-market edge.)
 
     # Market+agreement suppression -- audit-validated (2026-06-03, n=924 settled).
     # Home Over 1.5 Poisson Only: Low+Poisson=-35.7% ROI (n=30), Medium+Poisson=-10.5% (n=41).
