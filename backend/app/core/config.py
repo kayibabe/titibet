@@ -210,13 +210,15 @@ DOUBLE_CHANCE_MARKET_NAMES: frozenset = frozenset({
 HOME_GOALS_MARKET_NAMES: frozenset = frozenset({
     "Total - Home",
     "Home Team Total Goals",
-    "Home Team Total Goals(1st Half)",   # included only for completeness — scope filter handles it
+    # Full-time only. Half-scoped variants like "Home Team Total Goals(1st Half)"
+    # must NOT be listed: every consumer (bayesian best-odd, poisson signal odds,
+    # CLV scope) merges these names into one pool and takes the max odd, so a
+    # 1st-half Over 0.5 (~2.5) silently replaces the full-time price (~1.4).
 })
 
 AWAY_GOALS_MARKET_NAMES: frozenset = frozenset({
     "Total - Away",
     "Away Team Total Goals",
-    "Away Team Total Goals(1st Half)",
 })
 
 WIN_TO_NIL_HOME_MARKET_NAMES: frozenset = frozenset({
