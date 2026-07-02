@@ -406,6 +406,174 @@ async def run_backtest(
     return _summarise(results)
 
 
+# ── Correct Score backtest ────────────────────────────────────────────────────
+#
+# CS picks are EV-gated, not confidence-gated, so they don't flow through
+# run_backtest. Data collection is split from parameter evaluation so the
+# calibration CLI can sweep (min_ev × odds_ceiling × rho) in memory without
+# re-reading snapshots per combination.
+
+from dataclasses import dataclass as _dataclass
+
+from app.engines import correct_score as cs_engine
+
+
+@_dataclass
+class CSSample:
+    """Everything needed to replay CS picks for one finished fixture."""
+    fixture_id: int
+    event_date: date
+    league: str
+    lambda_h: float
+    lambda_a: float
+    cs_odds: dict[tuple[int, int], cs_engine.CSOdds]
+    home_score: int
+    away_score: int
+
+
+async def collect_cs_backtest_data(
+    db: AsyncSession,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> list[CSSample]:
+    """
+    Load per-fixture CS backtest samples: blended lambdas (same CS-ratio +
+    form blend the live engine uses, form window strictly before the fixture
+    date — no lookahead) plus the full CS board and the final score.
+
+    FT fixtures only — CS settles on the 90-minute score and stored scores
+    for AET/PEN fixtures may include extra time.
+    """
+    query = select(Fixture).where(
+        Fixture.status == "FT",
+        Fixture.home_score.isnot(None),
+        Fixture.away_score.isnot(None),
+    )
+    if date_from:
+        query = query.where(Fixture.event_date >= date_from)
+    if date_to:
+        query = query.where(Fixture.event_date <= date_to)
+    fixtures: list[Fixture] = list((await db.execute(query)).scalars().all())
+
+    fw = poi_engine._form_lambda_weight()
+    samples: list[CSSample] = []
+
+    for fixture in fixtures:
+        league_lower = (fixture.league or "").lower().strip()
+        if league_lower in DISABLED_LEAGUES:
+            continue
+        if any(kw in league_lower for kw in YOUTH_LEAGUE_KEYWORDS):
+            continue
+
+        snap_result = await db.execute(
+            select(MarketSnapshot).where(MarketSnapshot.fixture_id == fixture.id)
+        )
+        snapshots = _latest_snapshots(list(snap_result.scalars().all()))
+        if not snapshots:
+            continue
+
+        cs_by_bookie = _build_cs_by_bookie(snapshots)
+        if not cs_by_bookie:
+            continue
+        poi_odds, _ = _build_poisson_odds(snapshots)
+        d = poi_engine.derive_lambdas(poi_odds.get("s00"), poi_odds.get("s10"), poi_odds.get("s01"))
+        if not d:
+            continue
+
+        form_lambdas = await get_team_form_lambdas(
+            db=db,
+            home_team=fixture.home_team,
+            away_team=fixture.away_team,
+            before_date=fixture.event_date or date.today(),
+        )
+        lam_h = poi_engine._blend_lam(d["lambda_h"], form_lambdas.get("lambda_h") if form_lambdas else None, fw)
+        lam_a = poi_engine._blend_lam(d["lambda_a"], form_lambdas.get("lambda_a") if form_lambdas else None, fw)
+        if not lam_h or not lam_a or lam_h <= 0 or lam_a <= 0:
+            continue
+
+        cs_odds = cs_engine.collect_cs_odds(cs_by_bookie)
+        if not cs_odds:
+            continue
+
+        samples.append(CSSample(
+            fixture_id=fixture.id,
+            event_date=fixture.event_date or date.today(),
+            league=fixture.league or "",
+            lambda_h=lam_h,
+            lambda_a=lam_a,
+            cs_odds=cs_odds,
+            home_score=fixture.home_score,
+            away_score=fixture.away_score,
+        ))
+
+    samples.sort(key=lambda s: (s.event_date, s.fixture_id))
+    return samples
+
+
+def evaluate_cs_params(
+    samples: list[CSSample],
+    *,
+    min_ev: float,
+    odds_ceiling: float,
+    rho: float,
+    min_bookmakers: int = 2,
+    min_model_prob: float = 0.06,
+    flat_stake: float = BACKTEST_FLAT_STAKE,
+    matrices: Optional[dict[int, list[list[float]]]] = None,
+) -> dict:
+    """
+    Replay one parameter combination over pre-collected samples.
+    `matrices` optionally caches score matrices keyed by fixture_id for this rho.
+    """
+    picks = []
+    for s in samples:
+        matrix = matrices.get(s.fixture_id) if matrices is not None else None
+        if matrix is None:
+            matrix = cs_engine.score_matrix(s.lambda_h, s.lambda_a, rho=rho)
+            if matrix is None:
+                continue
+            if matrices is not None:
+                matrices[s.fixture_id] = matrix
+        pick = cs_engine.best_cs_pick(
+            matrix, s.cs_odds, s.lambda_h, s.lambda_a,
+            min_ev=min_ev, odds_ceiling=odds_ceiling,
+            min_bookmakers=min_bookmakers, min_model_prob=min_model_prob,
+        )
+        if pick is None:
+            continue
+        won = s.home_score == pick.home_goals and s.away_score == pick.away_goals
+        profit = flat_stake * (pick.exec_odds - 1.0) if won else -flat_stake
+        picks.append({
+            "fixture_id": s.fixture_id,
+            "event_date": s.event_date,
+            "league": s.league,
+            "scoreline": f"{pick.home_goals}-{pick.away_goals}",
+            "model_prob": pick.model_prob,
+            "exec_odds": pick.exec_odds,
+            "ev": pick.ev,
+            "won": won,
+            "profit": profit,
+        })
+
+    n = len(picks)
+    wins = sum(1 for p in picks if p["won"])
+    total_profit = sum(p["profit"] for p in picks)
+    total_stake = n * flat_stake
+    return {
+        "min_ev": min_ev,
+        "odds_ceiling": odds_ceiling,
+        "rho": rho,
+        "n": n,
+        "wins": wins,
+        "hit_rate": round(wins / n * 100, 1) if n else 0.0,
+        "roi": round(total_profit / total_stake * 100, 1) if total_stake else 0.0,
+        "profit": round(total_profit, 2),
+        "avg_odds": round(sum(p["exec_odds"] for p in picks) / n, 2) if n else None,
+        "avg_ev": round(sum(p["ev"] for p in picks) / n, 3) if n else None,
+        "picks": picks,
+    }
+
+
 def _summarise(results: list[BacktestResult]) -> dict:
     if not results:
         return {

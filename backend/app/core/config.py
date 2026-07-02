@@ -146,6 +146,30 @@ BACKTEST_FLAT_STAKE: float = 10_000.0
 
 
 # =============================================================================
+# Correct Score (CS) market — EV-driven exact-score picks served in Value Bets.
+# One pick max per fixture (highest-EV scoreline). Calibrated by run_cs_backtest.py.
+# =============================================================================
+
+# Calibration sweep 2026-07-02 (run_cs_backtest.py, 656 fixtures 2026-05-18..06-22):
+# every combo with n >= 100 lost 11-31% ROI. Model is calibrated on 2-8% cells but
+# overconfident on the 9-15% cells EV-picking selects (pred 0.115 -> actual 0.081),
+# and the CS board's ~40% overround + exec haircut swallows the calibrated bins.
+# Re-run the sweep when meaningfully more CS history has accumulated before enabling.
+CS_ENABLED: bool = False                 # kill switch for live CS signal generation
+CS_MARKET_PREFIX: str = "Correct Score "  # Signal.market = "Correct Score 2-1"
+CS_DC_RHO: float = -0.10                 # Dixon-Coles low-score correlation (rho)
+CS_MAX_GOALS: int = 6                    # score matrix grid size (0..6 per side)
+CS_MIN_EV: float = 0.15                  # minimum exec-price EV to surface a pick
+CS_ODDS_CEILING: float = 15.0            # skip scorelines priced above this — model error dominates
+CS_MIN_BOOKMAKERS: int = 2               # scoreline must be priced by at least this many books
+CS_MIN_MODEL_PROB: float = 0.06          # skip cells the model itself thinks are near-impossible
+CS_MAX_PICKS_PER_DAY: int = 5            # daily cap, best EV first
+CS_KELLY_CAP: float = 0.005              # hard stake cap — CS variance is brutal
+CS_AUTO_TRACK_STAKE: float = 10_000.0    # flat auto-track stake (vs 50k for normal system picks)
+CS_ZINB_VETO_DIVERGENCE: float = 1.0     # skip fixture if |zinb_total − blend_total| exceeds this
+
+
+# =============================================================================
 # API-Football market type name sets
 # Match the bet.name field from /odds. Frozensets for O(1) lookup.
 # =============================================================================
