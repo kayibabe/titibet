@@ -779,6 +779,24 @@ async def _get_advisory_cache(db: AsyncSession, target_date: date) -> dict | Non
     return None
 
 
+async def invalidate_advisory_cache(db: AsyncSession, target_date: date) -> None:
+    """Drop the cached advisory payload for a date.
+
+    Called by compute_signals_for_date: the cached acca pins leg odds from the
+    signal rows it was built on, so once those rows are deleted/recomputed the
+    cached payload is definitionally stale (2026-07-02: a pre-fix acca kept
+    serving contaminated 1st-half prices after the signals were corrected).
+    """
+    key = f"{_ADVISORY_CACHE_PREFIX}{target_date.isoformat()}"
+    try:
+        await db.execute(
+            text("DELETE FROM system_settings WHERE key = :k"), {"k": key}
+        )
+        await db.commit()
+    except Exception:
+        logger.warning("Failed to invalidate advisory cache for %s", target_date, exc_info=True)
+
+
 async def _set_advisory_cache(db: AsyncSession, target_date: date, data: dict) -> None:
     key = f"{_ADVISORY_CACHE_PREFIX}{target_date.isoformat()}"
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")

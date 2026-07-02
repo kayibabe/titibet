@@ -466,6 +466,13 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         await db.execute(delete(Signal).where(Signal.fixture_id.in_(fixture_ids_today)))
         await db.commit()
 
+        # The cached AI advisory for this date embeds acca legs + odds from the
+        # signal rows just deleted — drop it so users never see an acca priced
+        # off rows that no longer exist. The next advisory request (or the
+        # scheduled cache-warm job) regenerates it from the fresh signals.
+        from app.services.advisor_service import invalidate_advisory_cache
+        await invalidate_advisory_cache(db, run_date)
+
     # Collect all new Signal objects across all fixtures before writing to DB.
     # This allows portfolio-level stake normalization (improvement #1) to run
     # after all per-signal Kelly stakes are computed, before the batch commit.
