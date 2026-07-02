@@ -8,6 +8,18 @@ import ADVISORS_META from './advisorsMeta'
 
 // ── Report export helpers ─────────────────────────────────────────────────────
 
+// Escape LLM/API-sourced strings before interpolating into raw report HTML —
+// team names come from an external feed and advisor text from LLMs, so the
+// export window must not render them as markup.
+function esc(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function buildReportHtml(data, date) {
   const generatedAt = new Date().toLocaleString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
@@ -32,10 +44,10 @@ function buildReportHtml(data, date) {
         <div style="margin:6px 0;padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span style="color:#16a34a;font-size:13px;">✓</span>
-            <strong style="font-size:13px;color:#111827;">${match}</strong>
-            ${market ? `<span style="font-size:11px;padding:2px 7px;background:#ede9fe;color:#7c3aed;border-radius:4px;font-weight:600;">${market}</span>` : ''}
+            <strong style="font-size:13px;color:#111827;">${esc(match)}</strong>
+            ${market ? `<span style="font-size:11px;padding:2px 7px;background:#ede9fe;color:#7c3aed;border-radius:4px;font-weight:600;">${esc(market)}</span>` : ''}
           </div>
-          ${reason ? `<p style="margin:5px 0 0 21px;font-size:12px;color:#6b7280;line-height:1.5;">${reason}</p>` : ''}
+          ${reason ? `<p style="margin:5px 0 0 21px;font-size:12px;color:#6b7280;line-height:1.5;">${esc(reason)}</p>` : ''}
         </div>`
     }).join('')
   }
@@ -45,7 +57,7 @@ function buildReportHtml(data, date) {
     return warnings.map(w => `
       <div style="display:flex;gap:8px;margin:5px 0;align-items:flex-start;">
         <span style="color:#d97706;font-size:13px;flex-shrink:0;">⚠</span>
-        <span style="font-size:12px;color:#92400e;line-height:1.5;">${w}</span>
+        <span style="font-size:12px;color:#92400e;line-height:1.5;">${esc(w)}</span>
       </div>`).join('')
   }
 
@@ -56,9 +68,9 @@ function buildReportHtml(data, date) {
         <div style="display:flex;align-items:center;gap:8px;">
           <span style="font-size:16px;">🎟️</span>
           <strong style="font-size:15px;color:#5b21b6;">Acca of the Day</strong>
-          ${acca.confidence ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:#fff;color:#7c3aed;border:1px solid #c4b5fd;">${acca.confidence}</span>` : ''}
+          ${acca.confidence ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:#fff;color:#7c3aed;border:1px solid #c4b5fd;">${esc(acca.confidence)}</span>` : ''}
         </div>
-        ${acca.combined_odds ? `<span style="font-size:18px;font-weight:800;color:#7c3aed;">@ ${acca.combined_odds}</span>` : ''}
+        ${acca.combined_odds ? `<span style="font-size:18px;font-weight:800;color:#7c3aed;">@ ${esc(acca.combined_odds)}</span>` : ''}
       </div>
       <div style="padding:14px 18px;space-y:8px;">
         ${(acca.legs || []).map((leg, i) => {
@@ -73,11 +85,11 @@ function buildReportHtml(data, date) {
             <span style="min-width:22px;height:22px;background:#ede9fe;color:#7c3aed;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">${i+1}</span>
             <div style="flex:1;">
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                <strong style="font-size:13px;color:#111827;">${match}</strong>
-                ${leg.market ? `<span style="font-size:11px;padding:2px 7px;background:#ede9fe;color:#7c3aed;border-radius:4px;font-weight:600;">${leg.market}</span>` : ''}
+                <strong style="font-size:13px;color:#111827;">${esc(match)}</strong>
+                ${leg.market ? `<span style="font-size:11px;padding:2px 7px;background:#ede9fe;color:#7c3aed;border-radius:4px;font-weight:600;">${esc(leg.market)}</span>` : ''}
               </div>
-              ${ko ? `<p style="margin:3px 0 0;font-size:11px;color:#9ca3af;">${ko}</p>` : ''}
-              ${leg.reason ? `<p style="margin:4px 0 0;font-size:12px;color:#6b7280;line-height:1.5;">${leg.reason}</p>` : ''}
+              ${ko ? `<p style="margin:3px 0 0;font-size:11px;color:#9ca3af;">${esc(ko)}</p>` : ''}
+              ${leg.reason ? `<p style="margin:4px 0 0;font-size:12px;color:#6b7280;line-height:1.5;">${esc(leg.reason)}</p>` : ''}
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;">
               ${leg.odd != null ? `<span style="font-weight:700;font-size:13px;color:#111827;">${Number(leg.odd).toFixed(2)}</span>` : ''}
@@ -85,8 +97,8 @@ function buildReportHtml(data, date) {
             </div>
           </div>`
         }).join('')}
-        ${acca.combined_odds ? `<div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid #e5e7eb;margin-top:4px;font-size:12px;"><span style="color:#6b7280;">${acca.legs.length} legs combined</span><strong style="color:#7c3aed;">Combined odds: ${acca.combined_odds}</strong></div>` : ''}
-        ${acca.rationale ? `<p style="font-size:12px;color:#6b7280;line-height:1.6;margin-top:8px;padding-top:8px;border-top:1px solid #f3f4f6;">${acca.rationale}</p>` : ''}
+        ${acca.combined_odds ? `<div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid #e5e7eb;margin-top:4px;font-size:12px;"><span style="color:#6b7280;">${acca.legs.length} legs combined</span><strong style="color:#7c3aed;">Combined odds: ${esc(acca.combined_odds)}</strong></div>` : ''}
+        ${acca.rationale ? `<p style="font-size:12px;color:#6b7280;line-height:1.6;margin-top:8px;padding-top:8px;border-top:1px solid #f3f4f6;">${esc(acca.rationale)}</p>` : ''}
       </div>
     </div>` : ''
 
@@ -103,20 +115,20 @@ function buildReportHtml(data, date) {
         <div style="padding:14px 18px;background:#f9fafb;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
           <div>
             <div style="display:flex;align-items:center;gap:8px;">
-              <span style="font-size:18px;">${adv.emoji || ''}</span>
-              <strong style="font-size:15px;color:#111827;">${adv.name}</strong>
-              <span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;background:${verdictBg[verdict] || '#f9fafb'};color:${verdictColor[verdict] || '#374151'};border:1px solid ${verdictColor[verdict] || '#d1d5db'};">${verdict}</span>
+              <span style="font-size:18px;">${esc(adv.emoji || '')}</span>
+              <strong style="font-size:15px;color:#111827;">${esc(adv.name)}</strong>
+              <span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;background:${verdictBg[verdict] || '#f9fafb'};color:${verdictColor[verdict] || '#374151'};border:1px solid ${verdictColor[verdict] || '#d1d5db'};">${esc(verdict)}</span>
             </div>
-            <p style="margin:3px 0 0 26px;font-size:11px;color:#9ca3af;">${adv.role || ''}</p>
+            <p style="margin:3px 0 0 26px;font-size:11px;color:#9ca3af;">${esc(adv.role || '')}</p>
           </div>
-          <span style="font-size:10px;font-family:monospace;color:#7c3aed;">${adv.model || ''}</span>
+          <span style="font-size:10px;font-family:monospace;color:#7c3aed;">${esc(adv.model || '')}</span>
         </div>
         <!-- Advisor body -->
         <div style="padding:16px 18px;">
-          ${hasError ? `<p style="color:#dc2626;font-size:12px;">⚠ Advisor request failed: ${summary || adv.result?.error}</p>` : ''}
+          ${hasError ? `<p style="color:#dc2626;font-size:12px;">⚠ Advisor request failed: ${esc(summary || adv.result?.error)}</p>` : ''}
           ${picks.length ? `<p style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#374151;margin:0 0 8px;">Top Picks</p>${picksHtml(picks)}` : ''}
           ${warnings.length ? `<p style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#374151;margin:${picks.length ? '14px' : '0'} 0 8px;">Watch Out</p>${warningsHtml(warnings)}` : ''}
-          ${summary && !hasError ? `<p style="font-size:12px;color:#6b7280;line-height:1.6;margin:${picks.length || warnings.length ? '14px' : '0'} 0 0;padding-top:${picks.length || warnings.length ? '12px' : '0'};border-top:${picks.length || warnings.length ? '1px solid #f3f4f6' : 'none'};">${summary}</p>` : ''}
+          ${summary && !hasError ? `<p style="font-size:12px;color:#6b7280;line-height:1.6;margin:${picks.length || warnings.length ? '14px' : '0'} 0 0;padding-top:${picks.length || warnings.length ? '12px' : '0'};border-top:${picks.length || warnings.length ? '1px solid #f3f4f6' : 'none'};">${esc(summary)}</p>` : ''}
         </div>
       </div>`
   }).join('')
@@ -158,7 +170,7 @@ function buildReportHtml(data, date) {
     ${consensus ? `
     <div style="margin-top:12px;display:inline-flex;align-items:center;gap:8px;padding:6px 14px;background:${verdictBg[consensus] || '#f9fafb'};border:1px solid ${verdictColor[consensus] || '#d1d5db'};border-radius:20px;">
       <span style="font-size:12px;color:#6b7280;font-weight:600;">Consensus:</span>
-      <strong style="font-size:13px;color:${verdictColor[consensus] || '#374151'};">${consensus}</strong>
+      <strong style="font-size:13px;color:${verdictColor[consensus] || '#374151'};">${esc(consensus)}</strong>
     </div>` : ''}
   </div>
 
@@ -172,7 +184,7 @@ function buildReportHtml(data, date) {
   <div style="margin-top:28px;padding:12px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:8px;font-size:11px;color:#9ca3af;line-height:1.6;">
     <strong style="color:#6b7280;">Disclaimer:</strong> AI analysis is advisory only — always apply your own judgement and conduct your own research before staking.
     This report was generated by TiTiBet's AI Advisory Council (Scout · Strategist · Skeptic).
-    Models used: ${(data.advisors || []).map(a => a.model).filter(Boolean).join(' · ') || 'multiple AI providers'}.
+    Models used: ${esc((data.advisors || []).map(a => a.model).filter(Boolean).join(' · ') || 'multiple AI providers')}.
   </div>
 
   <!-- Print button (hidden on print) -->
@@ -349,7 +361,7 @@ function AccaTicket({ acca }) {
           {legs.length > 0 && (
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/25">
               <Zap size={10} />
-              {tracked ? 'Auto-tracked · K50,000' : 'Auto-tracked · K50,000'}
+              {tracked ? 'Auto-tracked · K50,000' : 'In your tracker · K50,000'}
             </span>
           )}
         </div>
@@ -614,14 +626,16 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
     }
   }, [tabMode, date]) // eslint-disable-line
 
-  async function runAnalysis() {
+  // force=true bypasses both the local guard and the server's daily cache —
+  // used by the Refresh button so it actually re-runs the AI pipeline.
+  async function runAnalysis(force = false) {
     if (loading) return
-    if (data && lastDate === date) return
+    if (!force && data && lastDate === date) return
 
     setLoading(true)
     setError(null)
     try {
-      const result = await fetchAdvisorInsights(date)
+      const result = await fetchAdvisorInsights(date, { force })
       setData(result)
       setLastDate(date)
     } catch (e) {
@@ -638,8 +652,9 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
     return (
       <div className="space-y-4">
         {error && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--code-bg)] px-4 py-3 text-sm text-[var(--text)] opacity-75">
-            Advisor unavailable.
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
+            <p className="text-sm font-semibold text-red-400">Advisor unavailable</p>
+            <p className="mt-0.5 text-xs text-red-400/90">{error}</p>
           </div>
         )}
 
@@ -720,7 +735,7 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
               <ExportButton data={data} date={date} />
             )}
             <button
-              onClick={runAnalysis}
+              onClick={() => runAnalysis(true)}
               disabled={loading}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)] text-xs text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-40 transition-colors"
             >
@@ -777,7 +792,7 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
             </div>
           )}
           <button
-            onClick={e => { e.stopPropagation(); runAnalysis() }}
+            onClick={e => { e.stopPropagation(); runAnalysis(Boolean(data && lastDate === date)) }}
             disabled={loading}
             className={`
               flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all

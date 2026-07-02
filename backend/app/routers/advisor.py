@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import date
 from typing import Optional
 
@@ -12,6 +13,11 @@ from app.models.user import User
 from app.services.advisor_service import get_advisor_insights
 
 router = APIRouter(prefix="/api/advisor", tags=["advisor"])
+
+# force=True re-runs the full AI pipeline (4 LLM calls) on the paid provider
+# chain — throttle it per user so a subscriber can't hammer the quota.
+_FORCE_COOLDOWN_SECONDS = 60
+_last_force_at: dict[int, float] = {}
 
 
 @router.get("")
@@ -41,6 +47,23 @@ async def advisor_insights(
             detail="AI Advisory requires a Pro or Elite subscription.",
         )
 
-    target_date = date.fromisoformat(date_str) if date_str else date.today()
+    try:
+        target_date = date.fromisoformat(date_str) if date_str else date.today()
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid date — expected YYYY-MM-DD.",
+        )
+
+    if force:
+        now = time.monotonic()
+        last = _last_force_at.get(current_user.id)
+        if last is not None and now - last < _FORCE_COOLDOWN_SECONDS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Refresh is rate-limited — try again in a minute.",
+            )
+        _last_force_at[current_user.id] = now
+
     ids = [int(i) for i in fixture_ids.split(",") if i.strip().isdigit()] if fixture_ids else None
     return await get_advisor_insights(db, target_date, fixture_ids=ids, current_user=current_user, force=force)

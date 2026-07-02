@@ -18,7 +18,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 import anthropic
@@ -48,7 +48,7 @@ ACCA_BUILDER: dict = {
     "role":  "Daily accumulator recommendation",
     "emoji": "🎟️",
     "models": {
-        "claude":   "claude-sonnet-4-6",
+        "claude":   "claude-sonnet-5",
         "gemini":   "gemini-2.0-flash",
         "cerebras": "llama3.3-70b",
         "groq":     "llama-3.3-70b-versatile",
@@ -88,7 +88,7 @@ ADVISORS: list[dict] = [
         "models": {
             # Scout does the most complex per-match statistical reasoning — use the
             # same quality tier as Strategist/Skeptic.
-            "claude":   "claude-sonnet-4-6",
+            "claude":   "claude-sonnet-5",
             "gemini":   "gemini-2.0-flash",
             "cerebras": "llama3.3-70b",
             "groq":     "llama-3.3-70b-versatile",
@@ -118,7 +118,7 @@ ADVISORS: list[dict] = [
         "role":  "Portfolio construction & value ranking",
         "emoji": "♟️",
         "models": {
-            "claude":   "claude-sonnet-4-6",
+            "claude":   "claude-sonnet-5",
             "gemini":   "gemini-2.0-flash",            # stronger reasoning
             "cerebras": "llama3.3-70b",
             "groq":     "llama-3.3-70b-versatile",
@@ -148,7 +148,7 @@ ADVISORS: list[dict] = [
         "role":  "Contrarian risk & red-flag analysis",
         "emoji": "🧐",
         "models": {
-            "claude":   "claude-sonnet-4-6",
+            "claude":   "claude-sonnet-5",
             "gemini":   "gemini-2.0-flash",
             "cerebras": "llama3.3-70b",
             "groq":     "llama-3.1-8b-instant",       # 8B model = separate rate-limit pool from 70B
@@ -406,16 +406,20 @@ async def _call_claude(advisor: dict, context: str, api_key: str) -> dict | None
             api_key=api_key,
             base_url="https://api.anthropic.com",  # ignore ANTHROPIC_BASE_URL from Claude Code env
         )
+        # No assistant prefill — the Sonnet 4.6/5 family rejects it with a 400.
+        # Thinking stays off: this is a fast structured-selection task and
+        # thinking tokens would eat into max_tokens.
         msg = await client.messages.create(
             model=advisor["models"]["claude"],
-            max_tokens=1024,
+            max_tokens=2048,
+            thinking={"type": "disabled"},
             system=advisor["system"],
             messages=[
-                {"role": "user",      "content": f"{advisor['task']}\n\n{context}"},
-                {"role": "assistant", "content": "{"},   # prefill → guaranteed JSON
+                {"role": "user", "content": f"{advisor['task']}\n\n{context}"},
             ],
         )
-        return _extract_json("{" + msg.content[0].text)
+        text = next((b.text for b in msg.content if b.type == "text"), "")
+        return _extract_json(text)
     except anthropic.APIError as exc:
         body_msg = ""
         if isinstance(exc.body, dict):
@@ -763,7 +767,7 @@ async def _get_advisory_cache(db: AsyncSession, target_date: date) -> dict | Non
 
 async def _set_advisory_cache(db: AsyncSession, target_date: date, data: dict) -> None:
     key = f"{_ADVISORY_CACHE_PREFIX}{target_date.isoformat()}"
-    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     await db.execute(text("""
         INSERT INTO system_settings (key, value, updated_at) VALUES (:k, :v, :t)
         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
@@ -926,12 +930,14 @@ async def get_advisor_insights(
     advisor_outputs = all_outputs[:3]
     acca_model_label, acca_result = all_outputs[3]
 
-    # AI-3: Consensus verdict — aggregate across all three advisors
+    # AI-3: Consensus verdict — aggregate across the advisors that actually
+    # answered. Errored advisors carry a placeholder "Mixed" verdict which
+    # would dilute the consensus, so they're excluded.
     _verdict_score = {"Strong": 2, "Mixed": 1, "Caution": 0}
     advisor_verdicts = [
         result.get("verdict", "Mixed")
         for _, result in advisor_outputs
-        if isinstance(result, dict) and "verdict" in result
+        if isinstance(result, dict) and "verdict" in result and not result.get("error")
     ]
     if advisor_verdicts:
         avg_score = sum(_verdict_score.get(v, 1) for v in advisor_verdicts) / len(advisor_verdicts)
@@ -939,33 +945,49 @@ async def get_advisor_insights(
     else:
         consensus_verdict = "Mixed"
 
-    # Compute combined odds from acca legs (product of individual odds)
-    acca_legs = acca_result.get("legs", []) if isinstance(acca_result, dict) else []
+    # Validate acca legs against the pool the AI was given. Legs that match no
+    # pool fixture are hallucinations and get dropped — they could never settle.
+    # Matched legs are enriched with fixture_id + kickoff_at, and the AI-reported
+    # odd is replaced with the server-side bayesian_best_odd (when the leg's
+    # market matches the pool signal) so tracked stakes never rest on an
+    # LLM-estimated price.
+    raw_legs = acca_result.get("legs", []) if isinstance(acca_result, dict) else []
 
-    # Enrich each leg with fixture_id + kickoff_at by matching against the acca
-    # pool (the same (sig, fix) rows the AI was given). This lets the frontend
-    # show kickoff time per leg, and lets settlement/result-lookup key off
-    # fixture_id directly instead of a fragile team-name match.
-    _pool_by_names = {
-        ((fix.home_team or "").strip().lower(), (fix.away_team or "").strip().lower()): fix
-        for _sig, fix in acca_pool
+    def _norm(s: str | None) -> str:
+        return (s or "").strip().lower()
+
+    _pool_by_names: dict[tuple[str, str], tuple[Signal, Fixture]] = {
+        (_norm(fix.home_team), _norm(fix.away_team)): (sig, fix)
+        for sig, fix in acca_pool
     }
-    for leg in acca_legs:
-        key = ((leg.get("home_team") or "").strip().lower(), (leg.get("away_team") or "").strip().lower())
-        fix = _pool_by_names.get(key)
-        if fix:
-            leg["fixture_id"] = fix.id
-            leg["kickoff_at"] = fix.kickoff_at.isoformat() if fix.kickoff_at else None
+    acca_legs: list[dict] = []
+    for leg in raw_legs:
+        match = _pool_by_names.get((_norm(leg.get("home_team")), _norm(leg.get("away_team"))))
+        if match is None:
+            logger.warning(
+                "Acca leg dropped — no matching pool fixture: %s vs %s (%s)",
+                leg.get("home_team"), leg.get("away_team"), leg.get("market"),
+            )
+            continue
+        sig, fix = match
+        leg["fixture_id"] = fix.id
+        leg["kickoff_at"] = fix.kickoff_at.isoformat() if fix.kickoff_at else None
+        if _norm(leg.get("market")) == _norm(sig.market) and sig.bayesian_best_odd and sig.bayesian_best_odd > 1.0:
+            leg["odd"] = sig.bayesian_best_odd
+        acca_legs.append(leg)
 
+    # Combined odds = product over ALL displayed legs — if any leg lacks a real
+    # odd we can't quote a truthful combined price, so leave it unset rather
+    # than silently multiplying a subset.
     combined_odds: float | None = None
     if acca_legs:
         try:
-            product = 1.0
-            for leg in acca_legs:
-                odd = float(leg.get("odd") or 0)
-                if odd > 1.0:
-                    product *= odd
-            combined_odds = round(product, 2) if product > 1.0 else None
+            leg_odds = [float(leg.get("odd") or 0) for leg in acca_legs]
+            if all(o > 1.0 for o in leg_odds):
+                product = 1.0
+                for o in leg_odds:
+                    product *= o
+                combined_odds = round(product, 2)
         except (TypeError, ValueError):
             combined_odds = None
 
@@ -979,7 +1001,6 @@ async def get_advisor_insights(
         and combined_odds is not None
         and combined_odds >= 3.0
         and len(acca_pool) >= 3
-        and all(r[0].dual_confidence == "High" and r[0].dual_agreement == "Both" for r in acca_pool[:3])
     ):
         resolved_confidence = "High"
     else:
@@ -1027,8 +1048,14 @@ async def get_advisor_insights(
         "accumulator": accumulator,
     }
 
-    # Persist AI output to cache (omit the per-user tracked flag)
-    if fixture_ids is None:
+    # Persist AI output to cache (omit the per-user tracked flag).
+    # A run with any errored advisor (or a failed acca) is NOT cached — caching
+    # it would pin the failure for the whole day, since cache hits skip the AI
+    # entirely. Leaving the cache empty lets the next request retry live.
+    has_errors = accumulator.get("error") is not None or any(
+        isinstance(res, dict) and res.get("error") for _, res in advisor_outputs
+    )
+    if fixture_ids is None and not has_errors:
         try:
             cacheable = {
                 **result_payload,
@@ -1037,5 +1064,7 @@ async def get_advisor_insights(
             await _set_advisory_cache(db, target_date, cacheable)
         except Exception as exc:
             logger.warning("Failed to write advisory cache: %s", exc)
+    elif fixture_ids is None:
+        logger.info("Advisory result not cached — advisor/acca errors present; next request retries live")
 
     return result_payload
