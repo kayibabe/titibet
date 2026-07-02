@@ -602,9 +602,23 @@ async def _call_advisor(
     return "none", _err("no_provider", "All configured AI providers are at quota. Add more keys to .env.")
 
 
-# ── Auto-tracking helper ──────────────────────────────────────────────────────
+# ── Acca tracking helpers ─────────────────────────────────────────────────────
 
-async def _auto_track_acca(
+async def _is_acca_tracked(db: AsyncSession, target_date: date, uid: int) -> bool:
+    """True when this user already has the day's AI acca in their tracker."""
+    from app.models.bet import TrackedBet
+
+    row = await db.scalar(
+        select(TrackedBet.id).where(
+            TrackedBet.source_rule_key == "acca_advisory",
+            TrackedBet.event_date == target_date,
+            TrackedBet.user_id == uid,
+        )
+    )
+    return row is not None
+
+
+async def _create_acca_bet(
     db:           AsyncSession,
     acca:         dict,
     target_date:  date,
@@ -612,7 +626,8 @@ async def _auto_track_acca(
 ) -> bool:
     """
     Persist the AI acca as a single TrackedBet row (idempotent per user+date).
-    Returns True if newly created, False if a row already existed.
+    Only called from the explicit track endpoint — viewing the advisory tab
+    never creates a bet. Returns True if newly created, False if a row existed.
     """
     from sqlalchemy import select, or_
     from sqlalchemy.exc import IntegrityError
@@ -625,8 +640,7 @@ async def _auto_track_acca(
 
     uid: int | None = getattr(current_user, "id", None) if current_user else None
 
-    # Advisory is a Pro-only feature; skip tracking for unauthenticated contexts
-    # (e.g. the scheduled cache-warming job).  Logged-in users always get a row.
+    # Tracking requires a logged-in user (the scheduled cache-warming job has none)
     if uid is None:
         return False
 
@@ -811,15 +825,18 @@ async def get_advisor_insights(
     if not force and fixture_ids is None:
         cached = await _get_advisory_cache(db, target_date)
         if cached and cached.get("matches_analysed", 0) > 0:
-            # Cache hit — still do per-user acca tracking so each subscriber gets
-            # their own TrackedBet row, then return immediately.
+            # Cache hit — report whether this user already tracked the acca
+            # (tracking itself only happens via the explicit track endpoint),
+            # then return immediately.
             acca_data = cached.get("accumulator", {})
             tracked = False
             if acca_data.get("legs") and not acca_data.get("error"):
-                try:
-                    tracked = await _auto_track_acca(db, acca_data, target_date, current_user)
-                except Exception as exc:
-                    logger.warning("_auto_track_acca (cache hit) failed: %s", exc)
+                uid = getattr(current_user, "id", None) if current_user else None
+                if uid is not None:
+                    try:
+                        tracked = await _is_acca_tracked(db, target_date, uid)
+                    except Exception as exc:
+                        logger.warning("_is_acca_tracked (cache hit) failed: %s", exc)
                 try:
                     await _attach_leg_results(db, acca_data["legs"], target_date)
                 except Exception as exc:
@@ -1015,13 +1032,16 @@ async def get_advisor_insights(
         "error":         acca_result.get("error") if isinstance(acca_result, dict) else None,
     }
 
-    # Auto-track the acca as a single TrackedBet row (idempotent — deduped by date)
+    # Report whether this user already tracked the acca — tracking itself is
+    # opt-in via the explicit track endpoint, never a side effect of viewing.
     tracked = False
     if acca_legs and not accumulator.get("error"):
-        try:
-            tracked = await _auto_track_acca(db, accumulator, target_date, current_user)
-        except Exception as exc:
-            logger.warning("_auto_track_acca failed: %s", exc)
+        uid = getattr(current_user, "id", None) if current_user else None
+        if uid is not None:
+            try:
+                tracked = await _is_acca_tracked(db, target_date, uid)
+            except Exception as exc:
+                logger.warning("_is_acca_tracked failed: %s", exc)
         try:
             await _attach_leg_results(db, acca_legs, target_date)
         except Exception as exc:
@@ -1068,3 +1088,29 @@ async def get_advisor_insights(
         logger.info("Advisory result not cached — advisor/acca errors present; next request retries live")
 
     return result_payload
+
+
+async def track_acca_for_user(
+    db:           AsyncSession,
+    target_date:  date,
+    current_user: Any,
+) -> dict:
+    """
+    Explicitly add the day's AI acca to this user's tracker (one row per
+    user+date). Resolves the acca via get_advisor_insights — normally a cache
+    hit — so the tracked odds are always the server-validated ones.
+    """
+    insights = await get_advisor_insights(db, target_date, current_user=current_user)
+    if insights.get("error"):
+        return {"tracked": False, "error": insights["error"], "message": insights.get("message", "")}
+
+    acca = insights.get("accumulator") or {}
+    if not acca.get("legs") or acca.get("error") or not acca.get("combined_odds"):
+        return {
+            "tracked": False,
+            "error":   "no_acca",
+            "message": "No accumulator available to track for this date.",
+        }
+
+    created = await _create_acca_bet(db, acca, target_date, current_user)
+    return {"tracked": True, "created": created, "combined_odds": acca.get("combined_odds")}

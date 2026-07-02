@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_optional
 from app.core.database import get_db
 from app.models.user import User
-from app.services.advisor_service import get_advisor_insights
+from app.services.advisor_service import get_advisor_insights, track_acca_for_user
 
 router = APIRouter(prefix="/api/advisor", tags=["advisor"])
 
@@ -18,6 +18,29 @@ router = APIRouter(prefix="/api/advisor", tags=["advisor"])
 # chain — throttle it per user so a subscriber can't hammer the quota.
 _FORCE_COOLDOWN_SECONDS = 60
 _last_force_at: dict[int, float] = {}
+
+
+def _require_pro(current_user: Optional[User]) -> User:
+    if (
+        current_user is None
+        or current_user.tier not in ("pro", "elite")
+        or current_user.subscription_status != "active"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="AI Advisory requires a Pro or Elite subscription.",
+        )
+    return current_user
+
+
+def _parse_date(date_str: Optional[str]) -> date:
+    try:
+        return date.fromisoformat(date_str) if date_str else date.today()
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid date — expected YYYY-MM-DD.",
+        )
 
 
 @router.get("")
@@ -35,25 +58,8 @@ async def advisor_insights(
     and runs Scout, Strategist, Skeptic concurrently. At least one provider key must be set
     in backend/.env; returns a setup message when none are configured.
     """
-    # Require Pro or Elite subscription
-    is_pro = (
-        current_user is not None
-        and current_user.tier in ("pro", "elite")
-        and current_user.subscription_status == "active"
-    )
-    if not is_pro:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="AI Advisory requires a Pro or Elite subscription.",
-        )
-
-    try:
-        target_date = date.fromisoformat(date_str) if date_str else date.today()
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid date — expected YYYY-MM-DD.",
-        )
+    current_user = _require_pro(current_user)
+    target_date = _parse_date(date_str)
 
     if force:
         now = time.monotonic()
@@ -67,3 +73,25 @@ async def advisor_insights(
 
     ids = [int(i) for i in fixture_ids.split(",") if i.strip().isdigit()] if fixture_ids else None
     return await get_advisor_insights(db, target_date, fixture_ids=ids, current_user=current_user, force=force)
+
+
+@router.post("/track-acca")
+async def track_acca(
+    date_str:     Optional[str]  = Query(None, alias="date"),
+    db:           AsyncSession   = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """
+    Add the day's AI acca to the current user's bet tracker (opt-in — viewing
+    the advisory never tracks). Idempotent: one acca row per user per date.
+    """
+    current_user = _require_pro(current_user)
+    target_date = _parse_date(date_str)
+
+    result = await track_acca_for_user(db, target_date, current_user)
+    if not result.get("tracked"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=result.get("message") or "No accumulator available to track.",
+        )
+    return result

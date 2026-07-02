@@ -3,7 +3,7 @@ import {
   Sparkles, AlertTriangle, CheckCircle, MinusCircle, Loader2, RefreshCw, ArrowRight,
   Download, FileText, Printer, Ticket, Zap, Clock,
 } from 'lucide-react'
-import { fetchAdvisorInsights } from '../../api/advisor'
+import { fetchAdvisorInsights, trackAcca } from '../../api/advisor'
 import ADVISORS_META from './advisorsMeta'
 
 // ── Report export helpers ─────────────────────────────────────────────────────
@@ -321,10 +321,35 @@ const TICKET_STATUS_CFG = {
   pending: { cls: 'text-amber-400 border-amber-500/40 bg-amber-500/10',  label: '⏳ Live'  },
 }
 
-function AccaTicket({ acca }) {
+function AccaTicket({ acca, date }) {
+  // tracked flag from the API = "already in this user's tracker"; tracking
+  // itself is opt-in via the button below — viewing never creates a bet.
+  const [isTracked, setIsTracked] = useState(Boolean(acca?.tracked))
+  const [trackBusy, setTrackBusy] = useState(false)
+  const [trackErr,  setTrackErr]  = useState(null)
+
+  useEffect(() => {
+    setIsTracked(Boolean(acca?.tracked))
+    setTrackErr(null)
+  }, [acca])
+
   if (!acca) return null
-  const { legs = [], combined_odds, rationale, confidence, error, tracked } = acca
+  const { legs = [], combined_odds, rationale, confidence, error } = acca
   const ticketStatus = accaTicketStatus(legs)
+
+  async function handleTrack() {
+    if (trackBusy || isTracked) return
+    setTrackBusy(true)
+    setTrackErr(null)
+    try {
+      await trackAcca(date)
+      setIsTracked(true)
+    } catch (e) {
+      setTrackErr(e.message)
+    } finally {
+      setTrackBusy(false)
+    }
+  }
 
   const confCfg = {
     High:   { cls: 'text-green-400 border-green-500/40 bg-green-500/10',  dot: 'bg-green-400' },
@@ -358,11 +383,23 @@ function AccaTicket({ acca }) {
               @{combined_odds}
             </span>
           )}
-          {legs.length > 0 && (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/25">
-              <Zap size={10} />
-              {tracked ? 'Auto-tracked · K50,000' : 'In your tracker · K50,000'}
-            </span>
+          {legs.length > 0 && !error && (
+            isTracked ? (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-green-500/10 text-green-400 border border-green-500/25">
+                <CheckCircle size={10} />
+                In your tracker · K50,000
+              </span>
+            ) : (
+              <button
+                onClick={handleTrack}
+                disabled={trackBusy}
+                title="Add this acca to your bet tracker at a K50,000 stake"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 active:scale-95 disabled:opacity-50 transition-all"
+              >
+                {trackBusy ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
+                {trackBusy ? 'Tracking…' : 'Track · K50,000'}
+              </button>
+            )
           )}
         </div>
       </div>
@@ -371,6 +408,10 @@ function AccaTicket({ acca }) {
       <div className="px-4 py-3 space-y-3">
         {error && (
           <p className="text-xs text-red-400 opacity-80">Acca builder unavailable — {error}</p>
+        )}
+
+        {trackErr && (
+          <p className="text-xs text-red-400 opacity-80">Could not track — {trackErr}</p>
         )}
 
         {legs.length > 0 && (
@@ -672,7 +713,7 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
 
         {/* Acca of the Day — shown once analysis is loaded */}
         {!loading && data?.accumulator && (
-          <AccaTicket acca={data.accumulator} />
+          <AccaTicket acca={data.accumulator} date={date} />
         )}
 
         {/* Acca skeleton while loading */}
