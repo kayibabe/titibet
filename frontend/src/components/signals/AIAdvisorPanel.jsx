@@ -372,7 +372,11 @@ function AccaTicket({ acca, date }) {
               {TICKET_STATUS_CFG[ticketStatus].label}
             </span>
           )}
-          {confidence && (
+          {legs.length === 0 && !error ? (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-[var(--text)] border-[var(--border)] bg-[var(--code-bg)] opacity-70">
+              Unavailable
+            </span>
+          ) : confidence && (
             <span className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full border ${confCfg.cls}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${confCfg.dot}`} />
               {confidence}
