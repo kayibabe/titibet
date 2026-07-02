@@ -509,7 +509,13 @@ MARKET_MIN_ODDS: dict = {
     "Over 1.5":        1.30,
     "Over 2.5":        1.55,
     "Under 2.5":       2.10,  # < 2.10 implies < 48% probability — no value at short Under 2.5
-    "Home Over 0.5":   1.70,  # audit 2026-06-15: <1.70 band = -18.9% ROI on 275 bets
+    # Recalibrated 2026-07-02: the old 1.70 floor came from an audit run while
+    # team-total odds were contaminated with 1st-half prices (~2x full-time), so
+    # its ROI evidence is void. Real full-time Home Over 0.5 prices sit at
+    # 1.10-1.55; 1.30 keeps out near-certainty prices where any calibration
+    # error flips EV, while readmitting the market. Re-audit on corrected odds
+    # before trusting a data-derived floor again.
+    "Home Over 0.5":   1.30,
     "Home Win to Nil": 1.40,
     "Away Win to Nil": 1.40,
 }
