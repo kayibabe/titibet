@@ -216,6 +216,18 @@ DATA_MIGRATIONS: list[str] = [
          OR match_name LIKE '%Al Hikma%'
       )
     """,
+    # 2026-07-02: Delfin SC vs Emelec was postponed — convert to system pick
+    # and void it so it doesn't sit as a stale Pending row.
+    """
+    UPDATE tracked_bets
+    SET user_id            = NULL,
+        source_rule_key    = 'system_dual',
+        source_rule_label  = 'Dual Signal (High+Both)',
+        result_status      = 'Void'
+    WHERE event_date = '2026-07-02'
+      AND match_name LIKE '%Delfin%'
+      AND result_status = 'Pending'
+    """,
 ]
 
 
