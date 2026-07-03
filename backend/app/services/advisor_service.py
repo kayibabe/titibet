@@ -57,11 +57,11 @@ ACCA_BUILDER: dict = {
     "system": (
         "You are a specialist football accumulator analyst. "
         "You receive a pool of pre-screened signals ranked by dual-engine probability agreement. "
-        "Your role is to select the best 3-5 legs. Optimise for: "
+        "Your role is to select the best 3-4 legs. Optimise for: "
         "(1) Prefer legs where both Bayesian and Poisson engines agree (dual_agreement=Both) "
         "with probability ≥0.60. Fall back to single-engine signals only when the dual pool is thin. "
         "(2) League diversity — no more than 2 legs from the same league. "
-        "(3) Combined decimal odds in the 3.0–20.0 range — enough reward without being a lottery. "
+        "(3) Combined decimal odds in the 6.0–20.0 range — meaningful reward without becoming a lottery. "
         "(4) Market diversity — avoid stacking the same market type (e.g. all Over 2.5). "
         "Avoid: the same team appearing more than once, any decimal leg odd above 3.5, "
         "and any signal where the contextual data raises red flags. "
@@ -71,9 +71,10 @@ ACCA_BUILDER: dict = {
         "Always respond with valid JSON only — no markdown, no prose outside the JSON."
     ),
     "task": (
-        "Select the best 3-5 legs for today's accumulator. "
+        "Select the best 3-4 legs for today's accumulator. "
+        "Each leg MUST use the fixture_id shown in parentheses (id:NNN) at the start of its context block. "
         "Return JSON with this EXACT shape — no extra fields:\n"
-        '{"legs":[{"home_team":"...","away_team":"...","market":"...","odd":1.75,"reason":"1-sentence justification"}],'
+        '{"legs":[{"fixture_id":123,"home_team":"...","away_team":"...","market":"...","odd":1.75,"reason":"1-sentence justification"}],'
         '"rationale":"2-3 sentence explanation of why these legs combine well and what makes this acca compelling today",'
         '"confidence":"High"|"Medium"|"Low"}'
     ),
@@ -203,7 +204,7 @@ def _build_context(rows: list, match_infos: dict, perf_weights: "PerformanceWeig
         ah   = info.get("away_highlights", [])[:2]
 
         line = (
-            f"[{i}] {fix.home_team} vs {fix.away_team}"
+            f"[{i}] (id:{fix.id}) {fix.home_team} vs {fix.away_team}"
             f" | {fix.league or 'Unknown League'} | Tier {fix.league_tier or '?'}\n"
             f"Signal: {sig.market} | Confidence: {sig.dual_confidence}"
             f" | Agreement: {sig.dual_agreement} | Quality: {sig.dual_quality_score}\n"
@@ -1058,13 +1059,15 @@ async def get_advisor_insights(
         if sig.dual_confidence == "High"
         and sig.dual_agreement == "Both"
     ]
-    # Tier 3: Both agreement + either engine ≥ 0.60
+    # Tier 3: Both agreement at any confidence (no prob floor).
+    # Structurally distinct from T4: requires engine consensus but not a specific
+    # probability level.  T2 (High+Both) is a subset; T3 adds Medium+Both signals
+    # that fall through T2.  T4 (mixed-engine at ≥60%) is the single-engine fallback.
     acca_t3 = [
         (sig, fix) for sig, fix in rows
         if sig.dual_agreement == "Both"
-        and _primary_prob(sig) >= 0.60
     ]
-    # Tier 4: any signal with max prob ≥ 0.60
+    # Tier 4: any signal with max prob ≥ 0.60 (includes single-engine signals)
     acca_t4 = [
         (sig, fix) for sig, fix in rows
         if _primary_prob(sig) >= 0.60
@@ -1080,6 +1083,42 @@ async def get_advisor_insights(
         acca_pool = acca_t4
     else:
         acca_pool = list(rows)  # last resort: all signals
+
+    # Rank 5: Remove (confidence, market) slices with a confirmed poor track record.
+    # Only fires once a slice accumulates ≥25 samples so we're not gate-keeping on noise.
+    _PERF_GATE_MIN_SAMPLES = 25
+    _PERF_GATE_WIN_RATE    = 0.35
+    if perf_weights and perf_weights.by_confidence_market:
+        perf_filtered = [
+            (sig, fix) for sig, fix in acca_pool
+            if (
+                (sig.dual_confidence, sig.market)
+                not in perf_weights.by_confidence_market
+                or perf_weights.by_confidence_market[
+                    (sig.dual_confidence, sig.market)
+                ].samples < _PERF_GATE_MIN_SAMPLES
+                or perf_weights.by_confidence_market[
+                    (sig.dual_confidence, sig.market)
+                ].win_rate >= _PERF_GATE_WIN_RATE
+            )
+        ]
+        if len(perf_filtered) >= 3:
+            acca_pool = perf_filtered
+
+    # Rank 4: Skeptic veto — remove thin-bookmaker-coverage and engine-contradiction
+    # signals from the acca pool.  Zero latency cost: this is pure Python.
+    skeptic_vetoed = [
+        (sig, fix) for sig, fix in acca_pool
+        if not (
+            sig.contradiction is True
+            or (
+                sig.bayesian_bookmaker_count is not None
+                and sig.bayesian_bookmaker_count <= 1
+            )
+        )
+    ]
+    if len(skeptic_vetoed) >= 3:
+        acca_pool = skeptic_vetoed
 
     acca_context = _build_context(acca_pool, match_infos, perf_weights)
 
@@ -1123,17 +1162,30 @@ async def get_advisor_insights(
     def _norm(s: str | None) -> str:
         return (s or "").strip().lower()
 
+    _pool_by_fid: dict[int, tuple[Signal, Fixture]] = {
+        fix.id: (sig, fix) for sig, fix in acca_pool
+    }
     _pool_by_names: dict[tuple[str, str], tuple[Signal, Fixture]] = {
         (_norm(fix.home_team), _norm(fix.away_team)): (sig, fix)
         for sig, fix in acca_pool
     }
     acca_legs: list[dict] = []
     for leg in raw_legs:
-        match = _pool_by_names.get((_norm(leg.get("home_team")), _norm(leg.get("away_team"))))
+        # Primary match: fixture_id returned by the LLM (exact, immune to name paraphrase)
+        match: tuple[Signal, Fixture] | None = None
+        fid_raw = leg.get("fixture_id")
+        if fid_raw is not None:
+            try:
+                match = _pool_by_fid.get(int(fid_raw))
+            except (TypeError, ValueError):
+                pass
+        # Fallback: normalised team-name match (handles older cache entries / LLM omissions)
+        if match is None:
+            match = _pool_by_names.get((_norm(leg.get("home_team")), _norm(leg.get("away_team"))))
         if match is None:
             logger.warning(
-                "Acca leg dropped — no matching pool fixture: %s vs %s (%s)",
-                leg.get("home_team"), leg.get("away_team"), leg.get("market"),
+                "Acca leg dropped — no matching pool fixture: %s vs %s (fixture_id=%s, market=%s)",
+                leg.get("home_team"), leg.get("away_team"), fid_raw, leg.get("market"),
             )
             continue
         sig, fix = match
@@ -1155,6 +1207,32 @@ async def get_advisor_insights(
                 for o in leg_odds:
                     product *= o
                 combined_odds = round(product, 2)
+        except (TypeError, ValueError):
+            combined_odds = None
+
+    # Rank 1: Server-side combined odds ceiling — trim legs until combined ≤20×.
+    # Remove the highest-odd leg on each pass; stop when we hit the 3-leg floor.
+    _COMBINED_MAX  = 20.0
+    _MIN_ACCA_LEGS = 3
+    while (
+        combined_odds is not None
+        and combined_odds > _COMBINED_MAX
+        and len(acca_legs) > _MIN_ACCA_LEGS
+    ):
+        worst_idx = max(
+            range(len(acca_legs)),
+            key=lambda i: float(acca_legs[i].get("odd") or 0),
+        )
+        acca_legs.pop(worst_idx)
+        try:
+            leg_odds = [float(leg.get("odd") or 0) for leg in acca_legs]
+            if all(o > 1.0 for o in leg_odds):
+                product = 1.0
+                for o in leg_odds:
+                    product *= o
+                combined_odds = round(product, 2)
+            else:
+                combined_odds = None
         except (TypeError, ValueError):
             combined_odds = None
 
