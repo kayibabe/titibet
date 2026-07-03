@@ -72,10 +72,13 @@ ACCA_BUILDER: dict = {
         "For each leg use the Bayesian best_odd from the context; if missing, estimate from the probability. "
         "Set confidence to 'High' when ≥3 legs in a ticket have both engines agreeing at ≥0.60 probability. "
         "Set confidence to 'Medium' for mixed pools. "
+        "Order your tickets from strongest to weakest: rank first by confidence (High > Medium > Low), "
+        "then by how many legs have dual_agreement=Both, then by combined odds proximity to the 6-20x sweet spot. "
         "Always respond with valid JSON only — no markdown, no prose outside the JSON."
     ),
     "task": (
-        "Build all possible non-overlapping accumulator tickets from the signals above. "
+        "Build all possible non-overlapping accumulator tickets from the signals above, "
+        "ranked strongest first. "
         "Each leg MUST use the fixture_id shown in parentheses (id:NNN) at the start of its context block. "
         "Return JSON with this EXACT shape — no extra fields:\n"
         '{"tickets":['
@@ -1369,6 +1372,19 @@ async def get_advisor_insights(
             "tracked":       ticket_tracked,
             "error":         None,
         })
+
+    # ── Server-side ranking (authoritative — overrides LLM ordering) ─────────
+    # Rank: High confidence > Medium > Low; within tier, prefer all legs with
+    # dual agreement; within that, prefer odds closer to the 6-20x sweet spot.
+    def _ticket_rank(t: dict) -> tuple:
+        conf = {"High": 3, "Medium": 2, "Low": 1}.get(t.get("confidence") or "Low", 0)
+        odds = float(t.get("combined_odds") or 0)
+        in_range = 1 if 6.0 <= odds <= 20.0 else 0
+        # Distance from sweet-spot midpoint (13×) — smaller is better
+        dist = abs(odds - 13.0) if odds > 0 else 999
+        return (-conf, -in_range, dist)
+
+    processed_tickets.sort(key=_ticket_rank)
 
     # For backward compat keep `accumulator` (singular) as the first ticket,
     # or an error shell when no valid tickets were produced.

@@ -362,9 +362,18 @@ function AccaTicket({ acca, date, index = 0, total = 1 }) {
         <div className="flex items-center gap-2 flex-wrap">
           <Ticket size={15} className="text-[var(--accent)] shrink-0" />
           <span className="text-sm font-bold text-[var(--text-h)]">
-            {total > 1 ? `Acca ${index + 1} of ${total}` : 'Acca of the Day'}
+            {total > 1
+              ? index === 0 ? 'Top Pick' : `Alt Pick ${index}`
+              : 'Acca of the Day'}
           </span>
-          <span className="text-[10px] text-[var(--text)] opacity-55 hidden sm:inline">AI-selected accumulator</span>
+          {total > 1 && (
+            <span className="text-[10px] text-[var(--text)] opacity-50">
+              {index + 1}/{total}
+            </span>
+          )}
+          {total <= 1 && (
+            <span className="text-[10px] text-[var(--text)] opacity-55 hidden sm:inline">AI-selected accumulator</span>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {ticketStatus && (
