@@ -4,7 +4,8 @@ import { useSignals } from '../store/useSignals'
 import { computeSignals, fetchSignals } from '../api/signals'
 import { syncData, fetchBets } from '../api/tracker'
 import SignalCard from '../components/signals/SignalCard'
-import ValueBetCard, { ODDS_TIERS } from '../components/signals/ValueBetCard'
+import AccumulatorLegCard, { ACCUMULATOR_TIERS } from '../components/signals/ValueBetCard'
+import { fetchAccumulators } from '../api/signals'
 import TrackModal from '../components/tracker/TrackModal'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import AIAdvisorPanel from '../components/signals/AIAdvisorPanel'
@@ -134,94 +135,131 @@ const TABS = [
   { id: 'advisor',   label: 'AI Advisory', icon: Sparkles   },
 ]
 
-const VB_FREE_LIMIT = 5
-
 function ValueBetsTab({ date, isPro, onUpgrade }) {
-  const [minOdds, setMinOdds] = useState(1.5)
-  const [allSignals, setAllSignals] = useState([])
+  const [selectedTier, setSelectedTier] = useState(2.0)
+  const [accumulators, setAccumulators] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     setLoading(true)
     setError(null)
-    fetchSignals({ date, sort_by: 'system' })
-      .then(data => setAllSignals(Array.isArray(data) ? data : []))
+    fetchAccumulators({ date })
+      .then(data => setAccumulators(data))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [date])
 
-  const valueBets = useMemo(() => {
-    return allSignals
-      .filter(s => s.bayesian?.is_value && (s.bayesian?.best_odd ?? 0) >= minOdds)
-      .sort((a, b) => (b.bayesian?.prob ?? 0) - (a.bayesian?.prob ?? 0))
-  }, [allSignals, minOdds])
-
-  const displayed   = isPro ? valueBets : valueBets.slice(0, VB_FREE_LIMIT)
-  const lockedCount = valueBets.length - displayed.length
+  const currentAcc = accumulators?.tiers?.[String(selectedTier)]
 
   return (
     <div className="space-y-5">
       <p className="text-xs text-[var(--text)] opacity-70">
-        Bets where our dual-engine probability beats the bookmaker's implied probability — positive expected value identified by the Bayesian engine.
+        Pick a target odds level — we combine today's top-qualifying picks into an accumulator that reaches it using our model's fair-value prices.
       </p>
 
-      {/* Odds tier picker */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-[var(--text)] opacity-80 shrink-0">Min odds:</span>
-        {ODDS_TIERS.map(tier => {
-          const selected = minOdds === tier.min
-          const count = allSignals.filter(s => s.bayesian?.is_value && (s.bayesian?.best_odd ?? 0) >= tier.min).length
+      {/* Tier selector */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+        {ACCUMULATOR_TIERS.map(({ odds, label, desc }) => {
+          const acc = accumulators?.tiers?.[String(odds)]
+          const selected = selectedTier === odds
           return (
-            <button key={tier.min} onClick={() => setMinOdds(tier.min)} title={tier.desc}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${selected ? 'border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--accent)]' : 'border-[var(--border)] text-[var(--text)] hover:border-[var(--accent)]/50 hover:text-[var(--text-h)] hover:bg-[var(--code-bg)]'}`}>
-              {tier.label}
-              {!loading && count > 0 && <span className={`text-[10px] font-bold tabular-nums ${selected ? 'opacity-80' : 'text-emerald-400'}`}>{count}</span>}
+            <button
+              key={odds}
+              onClick={() => setSelectedTier(odds)}
+              title={desc}
+              className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border font-semibold transition-colors ${
+                selected
+                  ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]'
+                  : 'border-[var(--border)] text-[var(--text)] hover:border-[var(--accent)]/40 hover:text-[var(--text-h)] hover:bg-[var(--code-bg)]'
+              }`}
+            >
+              <span className="text-xl font-black tabular-nums leading-none">{label}</span>
+              {!loading && acc && (
+                <span className={`text-[10px] font-medium ${selected ? 'opacity-80' : 'opacity-60'}`}>
+                  {acc.leg_count} leg{acc.leg_count !== 1 ? 's' : ''}
+                </span>
+              )}
+              {loading && <span className="text-[10px] opacity-40">—</span>}
             </button>
           )
         })}
       </div>
 
-      {!loading && !error && valueBets.length > 0 && (
-        <div className="flex items-center gap-4 text-xs text-[var(--text)] opacity-70">
-          <span><span className="font-semibold text-[var(--text-h)]">{valueBets.length}</span> value bet{valueBets.length !== 1 ? 's' : ''}</span>
-          <span className="ml-auto">Sorted by probability</span>
-        </div>
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
       )}
-
-      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
 
       {loading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 animate-pulse">
-          {[1,2,3,4,5,6].map(i => <div key={i} className="h-40 rounded-xl bg-[var(--border)]" />)}
+        <div className="space-y-2 animate-pulse">
+          {[1, 2, 3, 4].map(i => (
+            <div key={i} className="h-16 rounded-xl bg-[var(--border)]" />
+          ))}
         </div>
       )}
 
-      {!loading && !error && valueBets.length === 0 && (
-        <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-12 flex flex-col items-center gap-3 text-center">
-          <span className="text-4xl">🔍</span>
-          <p className="text-sm font-semibold text-[var(--text-h)]">No value bets at {minOdds}+ odds</p>
-          <p className="text-xs text-[var(--text)] opacity-80 max-w-xs">Try lowering the minimum odds, or check a different date.</p>
-        </div>
-      )}
-
-      {!loading && displayed.length > 0 && (
+      {!loading && !error && currentAcc && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {displayed.map((signal, i) => <ValueBetCard key={signal.id} signal={signal} rank={i + 1} />)}
+          {/* Accumulator header */}
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent)]/6">
+            <Zap size={14} className="text-[var(--accent)] shrink-0" />
+            <div className="flex-1 min-w-0">
+              <span className="text-sm font-semibold text-[var(--text-h)]">
+                {currentAcc.leg_count}-leg accumulator
+              </span>
+              <span className="text-[var(--text)] opacity-50 mx-2">·</span>
+              <span className="text-sm font-bold text-[var(--accent)] tabular-nums">
+                ~{currentAcc.combined_odds.toFixed(2)}x
+              </span>
+              <span className="text-xs text-[var(--text)] opacity-60 ml-1">combined odds</span>
+            </div>
+            {currentAcc.insufficient_picks && (
+              <span className="shrink-0 text-[10px] font-semibold text-amber-400 bg-amber-500/15 border border-amber-500/25 px-2 py-0.5 rounded">
+                Partial — not enough qualifying picks
+              </span>
+            )}
           </div>
-          {lockedCount > 0 && (
-            <div className="relative">
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 opacity-30 pointer-events-none select-none">
-                {valueBets.slice(VB_FREE_LIMIT, VB_FREE_LIMIT + 3).map(signal => <ValueBetCard key={signal.id} signal={signal} />)}
-              </div>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="rounded-xl bg-[var(--bg)] border border-[var(--border)] shadow-lg px-6 py-4 text-center space-y-2">
-                  <Zap size={18} className="mx-auto text-[var(--accent)]" />
-                  <p className="text-sm font-semibold text-[var(--text-h)]">{lockedCount} more value bet{lockedCount !== 1 ? 's' : ''} locked</p>
-                  <button onClick={onUpgrade} className="text-xs font-semibold text-[var(--accent)] hover:underline">Upgrade to Pro →</button>
-                </div>
-              </div>
+
+          {/* Legs */}
+          {currentAcc.legs.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-2 text-center">
+              <span className="text-3xl">📡</span>
+              <p className="text-sm font-semibold text-[var(--text-h)]">No qualifying picks for this tier</p>
+              <p className="text-xs text-[var(--text)] opacity-70 max-w-xs">
+                Try a lower odds target, or sync fresh data.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {currentAcc.legs.map((leg, i) =>
+                leg.locked ? (
+                  <div key={leg.signal_id} className="relative select-none">
+                    <div className="opacity-30 pointer-events-none">
+                      <AccumulatorLegCard leg={leg} index={i} />
+                    </div>
+                    <div className="absolute inset-0 flex items-center justify-center rounded-xl">
+                      <div className="flex items-center gap-2 rounded-lg bg-[var(--bg)] border border-[var(--border)] shadow-lg px-4 py-2 text-xs">
+                        <Zap size={12} className="text-[var(--accent)]" />
+                        <span className="font-semibold text-[var(--text-h)]">Pro only</span>
+                        <button onClick={onUpgrade} className="font-semibold text-[var(--accent)] hover:underline ml-1">
+                          Upgrade →
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <AccumulatorLegCard key={leg.signal_id} leg={leg} index={i} />
+                )
+              )}
+            </div>
+          )}
+
+          {!isPro && currentAcc.legs.some(l => l.locked) && (
+            <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/8 px-4 py-3 text-center text-sm">
+              <span className="text-slate-300">Showing first 2 legs. </span>
+              <button onClick={onUpgrade} className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">
+                Upgrade to Pro for full accumulators →
+              </button>
             </div>
           )}
         </>
