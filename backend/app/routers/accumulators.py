@@ -34,13 +34,37 @@ def _primary_prob(sig: Signal) -> float:
 
 
 def _build_accumulator(candidates: list[dict], target_odds: float) -> dict:
+    """
+    Greedy combiner with minimised overshoot.
+
+    At each step, check whether any single remaining candidate can close the
+    remaining gap to target on its own.  If yes, take the one whose fair_odds
+    is closest to the exact remaining needed amount (minimising overshoot).
+    If no single candidate can close the gap alone, take the shortest-odds
+    pick and continue.
+    """
     legs: list[dict] = []
     combined = 1.0
-    for c in candidates:
+
+    for i, c in enumerate(candidates):
         if combined >= target_odds:
             break
+        remaining_needed = target_odds / combined
+        # Which remaining candidates can single-handedly reach target?
+        eligible = [
+            c2 for c2 in candidates[i:]
+            if c2["fair_odds"] >= remaining_needed
+        ]
+        if eligible:
+            # Take the pick whose odds land closest to (but at or above) remaining_needed
+            best_last = min(eligible, key=lambda c2: c2["fair_odds"] - remaining_needed)
+            legs.append(best_last)
+            combined *= best_last["fair_odds"]
+            break
+        # No single remaining pick can close the gap — add the shortest-odds pick
         legs.append(c)
         combined *= c["fair_odds"]
+
     return {
         "target_odds": target_odds,
         "combined_odds": round(combined, 4),

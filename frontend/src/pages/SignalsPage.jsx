@@ -150,7 +150,7 @@ function ValueBetsTab({ date, isPro, onUpgrade }) {
       .finally(() => setLoading(false))
   }, [date])
 
-  const currentAcc = accumulators?.tiers?.[String(selectedTier)]
+  const currentAcc = accumulators?.tiers?.[selectedTier.toFixed(1)]
 
   return (
     <div className="space-y-5">
@@ -161,7 +161,7 @@ function ValueBetsTab({ date, isPro, onUpgrade }) {
       {/* Tier selector */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
         {ACCUMULATOR_TIERS.map(({ odds, label, desc }) => {
-          const acc = accumulators?.tiers?.[String(odds)]
+          const acc = accumulators?.tiers?.[odds.toFixed(1)]
           const selected = selectedTier === odds
           return (
             <button
