@@ -15,6 +15,7 @@ Configure as many keys as you like — more keys = more resilience.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -601,17 +602,53 @@ async def _call_advisor(
 
 # ── Acca tracking helpers ─────────────────────────────────────────────────────
 
-async def _is_acca_tracked(db: AsyncSession, target_date: date, uid: int) -> bool:
-    """True when this user already has the day's AI acca in their tracker."""
-    from app.models.bet import TrackedBet
+def _acca_fingerprint(legs: list[dict]) -> str:
+    """
+    Stable 12-char hex hash of an acca's legs.
 
-    row = await db.scalar(
-        select(TrackedBet.id).where(
-            TrackedBet.source_rule_key == "acca_advisory",
-            TrackedBet.event_date == target_date,
-            TrackedBet.user_id == uid,
-        )
+    Two accas are considered the same ticket when they contain the same set of
+    (fixture_id, market) pairs — regardless of order or odds.  Stored as the
+    suffix of selection_name ("Accumulator|<fp>") so dedup queries stay fast
+    on the indexed column without a schema migration.
+    """
+    parts = sorted(
+        f"{leg.get('fixture_id')}:{(leg.get('market') or '').strip().lower()}"
+        for leg in legs
+        if leg.get("fixture_id")
     )
+    return hashlib.md5("|".join(parts).encode()).hexdigest()[:12]
+
+
+async def _is_acca_tracked(
+    db:          AsyncSession,
+    target_date: date,
+    uid:         int,
+    fp:          str | None = None,
+) -> bool:
+    """
+    True when this user already has this specific acca in their tracker.
+
+    When fp (fingerprint) is supplied the check is exact — only this acca's
+    legs count as "tracked".  Falls back to a legacy date-level check for rows
+    written before fingerprinting was introduced (selection_name='Accumulator').
+    """
+    from app.models.bet import TrackedBet
+    from sqlalchemy import or_
+
+    conditions = [
+        TrackedBet.source_rule_key == "acca_advisory",
+        TrackedBet.event_date == target_date,
+        TrackedBet.user_id == uid,
+    ]
+    if fp:
+        conditions.append(
+            or_(
+                TrackedBet.selection_name == f"Accumulator|{fp}",
+                TrackedBet.selection_name == "Accumulator",   # legacy rows
+            )
+        )
+
+    row = await db.scalar(select(TrackedBet.id).where(*conditions))
     return row is not None
 
 
@@ -622,11 +659,13 @@ async def _create_acca_bet(
     current_user: Any | None,
 ) -> bool:
     """
-    Persist the AI acca as a single TrackedBet row (idempotent per user+date).
-    Only called from the explicit track endpoint — viewing the advisory tab
-    never creates a bet. Returns True if newly created, False if a row existed.
+    Persist the AI acca as a single TrackedBet row.
+
+    Multiple distinct accas (different legs) may be tracked on the same day —
+    each is distinguished by its content fingerprint stored in selection_name as
+    "Accumulator|<12-char-hex>".  A duplicate is only rejected when the exact
+    same set of legs has already been tracked by this user.
     """
-    from sqlalchemy import select, or_
     from sqlalchemy.exc import IntegrityError
     from app.models.bet import TrackedBet
 
@@ -637,18 +676,21 @@ async def _create_acca_bet(
 
     uid: int | None = getattr(current_user, "id", None) if current_user else None
 
-    # Tracking requires a logged-in user (the scheduled cache-warming job has none)
     if uid is None:
         return False
 
-    # Dedup: one acca_advisory row per (user_id, event_date) — check this user only
-    dup_q = select(TrackedBet).where(
+    fp = _acca_fingerprint(legs)
+    fp_tag = f"Accumulator|{fp}"
+
+    # Dedup: same fingerprint already tracked by this user → skip
+    dup_q = select(TrackedBet.id).where(
         TrackedBet.source_rule_key == "acca_advisory",
         TrackedBet.event_date == target_date,
         TrackedBet.user_id == uid,
+        TrackedBet.selection_name == fp_tag,
     )
     if await db.scalar(dup_q):
-        return False  # already tracked
+        return False
 
     leg_summary = "\n".join(
         f"{i+1}. {leg.get('home_team','')} vs {leg.get('away_team','')} · "
@@ -665,7 +707,7 @@ async def _create_acca_bet(
         match_name=f"AI Acca · {len(legs)} leg{'s' if len(legs) != 1 else ''}",
         league=None,
         market_type="Accumulator",
-        selection_name="Accumulator",
+        selection_name=fp_tag,
         odds=combined_odds,
         stake=50_000.0,
         source_rule_key="acca_advisory",
@@ -763,42 +805,43 @@ async def auto_track_acca_legs(
         existing_keys.add(key)
         inserted += 1
 
-    # Combined accumulator row — dedup on market_type="Accumulator"
-    combo_key = (None, "Accumulator")
-    if combo_key not in existing_keys:
-        # Check by source_rule_key + date since fixture_id is NULL for the combo row
-        combo_exists = await db.scalar(
-            select(TrackedBet.id).where(
-                TrackedBet.source_rule_key == "acca_advisory_system",
-                TrackedBet.event_date == target_date,
-                TrackedBet.user_id.is_(None),
-            )
+    # Combined accumulator row — dedup by fingerprint so multiple distinct
+    # accas can coexist on the same date.
+    fp = _acca_fingerprint(legs)
+    fp_tag = f"Accumulator|{fp}"
+    combo_exists = await db.scalar(
+        select(TrackedBet.id).where(
+            TrackedBet.source_rule_key == "acca_advisory_system",
+            TrackedBet.event_date == target_date,
+            TrackedBet.user_id.is_(None),
+            TrackedBet.selection_name == fp_tag,
         )
-        if not combo_exists:
-            leg_summary = "\n".join(
-                f"{i+1}. {leg.get('home_team','')} vs {leg.get('away_team','')} · "
-                f"{leg.get('market','')} @ {float(leg.get('odd') or 0):.2f}"
-                for i, leg in enumerate(legs)
-            )
-            combo = TrackedBet(
-                user_id=None,
-                fixture_id=None,
-                bookmaker="AI Acca",
-                event_date=target_date,
-                match_name=f"AI Acca · {len(legs)} leg{'s' if len(legs) != 1 else ''}",
-                league=None,
-                market_type="Accumulator",
-                selection_name="Accumulator",
-                odds=combined_odds,
-                stake=50_000.0,
-                source_rule_key="acca_advisory_system",
-                source_rule_label="AI Acca of the Day (System)",
-                dual_confidence=acca.get("confidence"),
-                notes=json.dumps({"legs": legs, "leg_summary": leg_summary}),
-                result_status="Pending",
-            )
-            db.add(combo)
-            inserted += 1
+    )
+    if not combo_exists:
+        leg_summary = "\n".join(
+            f"{i+1}. {leg.get('home_team','')} vs {leg.get('away_team','')} · "
+            f"{leg.get('market','')} @ {float(leg.get('odd') or 0):.2f}"
+            for i, leg in enumerate(legs)
+        )
+        combo = TrackedBet(
+            user_id=None,
+            fixture_id=None,
+            bookmaker="AI Acca",
+            event_date=target_date,
+            match_name=f"AI Acca · {len(legs)} leg{'s' if len(legs) != 1 else ''}",
+            league=None,
+            market_type="Accumulator",
+            selection_name=fp_tag,
+            odds=combined_odds,
+            stake=50_000.0,
+            source_rule_key="acca_advisory_system",
+            source_rule_label="AI Acca of the Day (System)",
+            dual_confidence=acca.get("confidence"),
+            notes=json.dumps({"legs": legs, "leg_summary": leg_summary}),
+            result_status="Pending",
+        )
+        db.add(combo)
+        inserted += 1
 
     if inserted:
         try:
@@ -978,7 +1021,8 @@ async def get_advisor_insights(
                 uid = getattr(current_user, "id", None) if current_user else None
                 if uid is not None:
                     try:
-                        tracked = await _is_acca_tracked(db, target_date, uid)
+                        fp = _acca_fingerprint(acca_data["legs"])
+                        tracked = await _is_acca_tracked(db, target_date, uid, fp=fp)
                     except Exception as exc:
                         logger.warning("_is_acca_tracked (cache hit) failed: %s", exc)
                 try:
@@ -1282,7 +1326,8 @@ async def get_advisor_insights(
         uid = getattr(current_user, "id", None) if current_user else None
         if uid is not None:
             try:
-                tracked = await _is_acca_tracked(db, target_date, uid)
+                fp = _acca_fingerprint(acca_legs)
+                tracked = await _is_acca_tracked(db, target_date, uid, fp=fp)
             except Exception as exc:
                 logger.warning("_is_acca_tracked failed: %s", exc)
         try:
