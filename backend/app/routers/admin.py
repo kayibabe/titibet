@@ -690,6 +690,42 @@ async def trigger_strategy_pipeline(
     }
 
 
+@router.post("/advisory/retrack")
+async def retrack_advisory_acca(
+    target_date: str = Query(description="ISO date to retrack, e.g. 2026-07-03"),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Force-replace today's (or any date's) system acca tracking rows.
+
+    Deletes existing acca_leg_system / acca_advisory_system rows for the date,
+    then re-runs auto_track_acca_legs() against the current advisory cache.
+    Use after clearing the advisory cache mid-day to sync system bets with the
+    newly generated acca.
+    """
+    from datetime import date as date_type
+    from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
+
+    try:
+        d = date_type.fromisoformat(target_date)
+    except ValueError:
+        raise HTTPException(400, f"Invalid date: {target_date!r} — use ISO format YYYY-MM-DD")
+
+    result = await get_advisor_insights(db, d, current_user=None)
+    acca = result.get("accumulator", {})
+    if not acca.get("legs") or acca.get("error"):
+        return {"replaced": 0, "message": "No valid acca available for this date."}
+
+    n = await auto_track_acca_legs(db, acca, d, replace=True)
+    return {
+        "replaced": n,
+        "date": d.isoformat(),
+        "combined_odds": acca.get("combined_odds"),
+        "legs": len(acca.get("legs", [])),
+    }
+
+
 @router.get("/watchguard")
 async def get_watchguard_status(
     db: AsyncSession = Depends(get_db),

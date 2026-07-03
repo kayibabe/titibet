@@ -686,12 +686,16 @@ async def auto_track_acca_legs(
     db:          AsyncSession,
     acca:        dict,
     target_date: date,
+    replace:     bool = False,
 ) -> int:
     """
     Create system-level TrackedBet rows (user_id=None) for each acca leg and
-    one combined accumulator row.  Idempotent: skips any leg already tracked for
-    this date (keyed on fixture_id + market_type).  Returns count of new rows.
-    Called from the pre-sync and advisory-cache scheduler jobs.
+    one combined accumulator row.  Idempotent by default: skips any leg already
+    tracked for this date (keyed on fixture_id + market_type).
+
+    When replace=True, existing system acca rows for the date are deleted first
+    so the new acca fully replaces the old one (used after a cache clear/force).
+    Returns count of new rows.
     """
     from app.models.bet import TrackedBet
 
@@ -700,17 +704,28 @@ async def auto_track_acca_legs(
     if not legs or not combined_odds or combined_odds <= 1.0:
         return 0
 
-    # Load existing system acca rows for this date to dedup
-    existing_rows = list(
-        (await db.execute(
-            select(TrackedBet.fixture_id, TrackedBet.market_type)
-            .where(
-                TrackedBet.event_date == target_date,
-                TrackedBet.source_rule_key.in_(["acca_leg_system", "acca_advisory_system"]),
-            )
-        )).all()
-    )
-    existing_keys: set[tuple] = {(r.fixture_id, r.market_type) for r in existing_rows}
+    if replace:
+        await db.execute(
+            text(
+                "DELETE FROM tracked_bets "
+                "WHERE event_date = :d AND user_id IS NULL "
+                "AND source_rule_key IN ('acca_leg_system','acca_advisory_system')"
+            ),
+            {"d": target_date.isoformat()},
+        )
+        existing_keys: set[tuple] = set()
+    else:
+        # Load existing system acca rows for this date to dedup
+        existing_rows = list(
+            (await db.execute(
+                select(TrackedBet.fixture_id, TrackedBet.market_type)
+                .where(
+                    TrackedBet.event_date == target_date,
+                    TrackedBet.source_rule_key.in_(["acca_leg_system", "acca_advisory_system"]),
+                )
+            )).all()
+        )
+        existing_keys = {(r.fixture_id, r.market_type) for r in existing_rows}
 
     inserted = 0
     for leg in legs:
