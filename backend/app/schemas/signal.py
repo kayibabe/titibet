@@ -22,7 +22,6 @@ class BayesianOut(BaseModel):
     confidence: Optional[str] = None
     quality_score: Optional[float] = None
     kelly_pct: Optional[float] = None
-    ev_pct: Optional[float] = None
 
 
 class PoissonOut(BaseModel):
@@ -53,9 +52,6 @@ class AdvancedModelsOut(BaseModel):
     # ZINB — expected goals from Zero-Inflated Negative Binomial model
     zinb_lambda_h: Optional[float] = None
     zinb_lambda_a: Optional[float] = None
-
-    # Explicit Expected Value (p_model × best_odd − 1)
-    ev_score: Optional[float] = None
 
     # Glicko-2 rating differential (home_r − away_r)
     glicko_r_diff: Optional[float] = None

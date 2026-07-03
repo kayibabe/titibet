@@ -33,23 +33,9 @@ function OddsChip({ bookmaker, odds, isBest }) {
   )
 }
 
-// Inline EV pill for table use
-function EVPill({ evPct }) {
-  if (evPct == null) return <span className="text-[var(--text)] opacity-65">—</span>
-  const positive = evPct > 0
-  return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${
-      positive ? 'text-green-400' : 'text-red-400'
-    }`}>
-      {positive ? '+' : ''}{evPct.toFixed(1)}%
-    </span>
-  )
-}
-
 export default function MarketRow({ signal, onTrack }) {
   const [showOdds, setShowOdds] = useState(false)
 
-  const evPct    = signal.bayesian?.ev_pct ?? null
   const fairOdds = signal.bayesian?.prob ? (1 / signal.bayesian.prob).toFixed(2) : null
   const overroundPct = signal.bayesian?.overround
     ? ((signal.bayesian.overround - 1) * 100).toFixed(1)
@@ -80,9 +66,6 @@ export default function MarketRow({ signal, onTrack }) {
         <td className="px-3 py-2 text-sm text-[var(--text-h)] font-medium">{signal.market}</td>
         <td className="px-3 py-2"><ConfidenceBadge confidence={signal.dual_confidence} /></td>
         <td className="px-3 py-2"><AgreementBadge agreement={signal.dual_agreement} /></td>
-
-        {/* EV% column */}
-        <td className="px-3 py-2 font-mono"><EVPill evPct={evPct} /></td>
 
         {/* Fair → Offered odds */}
         <td className="px-3 py-2">

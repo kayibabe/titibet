@@ -51,7 +51,6 @@ export default function EngineBreakdown({ signal }) {
   // ── Bayesian derived values ─────────────────────────────────────────────
   const bayesianProb   = fmtPct(b?.prob)
   const bayesianEdge   = fmtPct(b?.edge)        // edge stored as 0-1 decimal
-  const bayesianEv     = b?.ev_pct != null ? `${b.ev_pct >= 0 ? '+' : ''}${b.ev_pct.toFixed(1)}%` : null
   const bayesianKelly  = b?.kelly_pct != null ? `${(b.kelly_pct * 100).toFixed(2)}%` : null
   const bayesianMargin = b?.overround != null ? `${((b.overround - 1) * 100).toFixed(1)}%` : null
   const bayesianQS     = b?.quality_score != null ? (b.quality_score * 100).toFixed(0) : null
@@ -65,11 +64,6 @@ export default function EngineBreakdown({ signal }) {
   const poissonTotal  = fmtNum(p?.lambda_total)
 
   // ── Tones ───────────────────────────────────────────────────────────────
-  const evTone =
-    b?.ev_pct == null ? undefined :
-    b.ev_pct > 5      ? 'good'    :
-    b.ev_pct > 0      ? 'warn'    : 'bad'
-
   const marginTone =
     b?.overround == null ? undefined :
     b.overround < 1.05   ? 'good'    :
@@ -82,11 +76,6 @@ export default function EngineBreakdown({ signal }) {
   const zinbTotal = adv?.zinb_lambda_h != null && adv?.zinb_lambda_a != null
     ? (adv.zinb_lambda_h + adv.zinb_lambda_a).toFixed(2)
     : null
-  const evScoreDisplay = adv?.ev_score != null
-    ? `${adv.ev_score >= 0 ? '+' : ''}${(adv.ev_score * 100).toFixed(2)}%`
-    : null
-  const evScoreTone = adv?.ev_score == null ? undefined
-    : adv.ev_score > 0.05 ? 'good' : adv.ev_score > 0 ? 'warn' : 'bad'
   const glickoDisplay = adv?.glicko_r_diff != null
     ? `${adv.glicko_r_diff >= 0 ? '+' : ''}${adv.glicko_r_diff.toFixed(0)}`
     : null
@@ -109,7 +98,6 @@ export default function EngineBreakdown({ signal }) {
           <div className="text-xs font-semibold text-blue-400 mb-1">Bayesian</div>
           <Row label="Prob"        value={bayesianProb} />
           <Row label="Edge"        value={bayesianEdge} highlight={b.is_value} />
-          <Row label="EV"          value={bayesianEv}   tone={evTone} />
           <Row label="Best odds"   value={fmtNum(b.best_odd)} />
           <Row label="Bookmaker"   value={b.bookmaker} />
           <Row label="Books"       value={b.bookmaker_count} />
@@ -169,10 +157,9 @@ export default function EngineBreakdown({ signal }) {
                    tone={adv?.bos_passed ? 'good' : adv?.bos_passed === false ? 'bad' : undefined} />
               <Row label="Rating diff"  value={glickoDisplay} tone={glickoTone} />
             </div>
-            {/* EV + BREA/FHGI */}
+            {/* BREA/FHGI */}
             <div>
-              <div className="text-[10px] text-[var(--text)] opacity-50 uppercase tracking-wider mb-1">EV · BREA · FHGI</div>
-              <Row label="Model EV"     value={evScoreDisplay}    tone={evScoreTone} />
+              <div className="text-[10px] text-[var(--text)] opacity-50 uppercase tracking-wider mb-1">BREA · FHGI</div>
               {adv?.brea_ri1 != null && (
                 <Row label="BREA RI₁"   value={breaRiDisplay}    tone={breaRiTone} />
               )}

@@ -48,7 +48,6 @@ const MARKET_OPTIONS     = [
 const SORT_OPTIONS = [
   { value: 'system',      label: 'System Rank' },
   { value: 'quality',     label: 'Quality' },
-  { value: 'ev',          label: '+EV %' },
   { value: 'probability', label: 'Prob %' },
   { value: 'kickoff',     label: 'Kickoff' },
   { value: 'stake',       label: 'Stake %' },
@@ -155,14 +154,11 @@ function ValueBetsTab({ date, isPro, onUpgrade }) {
   const valueBets = useMemo(() => {
     return allSignals
       .filter(s => s.bayesian?.is_value && (s.bayesian?.best_odd ?? 0) >= minOdds)
-      .sort((a, b) => (b.bayesian?.ev_pct ?? 0) - (a.bayesian?.ev_pct ?? 0))
+      .sort((a, b) => (b.bayesian?.prob ?? 0) - (a.bayesian?.prob ?? 0))
   }, [allSignals, minOdds])
 
   const displayed   = isPro ? valueBets : valueBets.slice(0, VB_FREE_LIMIT)
   const lockedCount = valueBets.length - displayed.length
-  const avgEv = valueBets.length
-    ? (valueBets.reduce((s, x) => s + (x.bayesian?.ev_pct ?? 0), 0) / valueBets.length).toFixed(1)
-    : null
 
   return (
     <div className="space-y-5">
@@ -189,8 +185,7 @@ function ValueBetsTab({ date, isPro, onUpgrade }) {
       {!loading && !error && valueBets.length > 0 && (
         <div className="flex items-center gap-4 text-xs text-[var(--text)] opacity-70">
           <span><span className="font-semibold text-[var(--text-h)]">{valueBets.length}</span> value bet{valueBets.length !== 1 ? 's' : ''}</span>
-          {avgEv && <span>Avg EV: <span className="font-semibold text-emerald-400">+{avgEv}%</span></span>}
-          <span className="ml-auto">Sorted by highest EV</span>
+          <span className="ml-auto">Sorted by probability</span>
         </div>
       )}
 
@@ -259,7 +254,6 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
   const [market, setMarket]         = useState('')
   const [sortBy, setSortBy]         = useState('system')
   const [bestPerFixture, setBestPerFixture] = useState(true)
-  const [minEv, setMinEv]           = useState('')
   const [minProb, setMinProb]       = useState('')
   const [leagueSearch, setLeagueSearch] = useState('')
   const [showSavedOnly, setShowSavedOnly] = useState(false)
@@ -318,7 +312,6 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
     setAgreement('')
     setMarketFamily('')
     setMarket('')
-    setMinEv('')
     setMinProb('')
     setLeagueSearch('')
     setShowSavedOnly(false)
@@ -328,7 +321,6 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
   // Count how many filters are active (for badge)
   const activeFilterCount = [
     confidence, agreement, marketFamily, market,
-    minEv !== '' ? minEv : '',
     minProb !== '' ? minProb : '',
     leagueSearch,
   ].filter(Boolean).length
@@ -372,12 +364,6 @@ const reload = () => load(params)
       )
     }
 
-    // Min EV% filter
-    const evThreshold = minEv !== '' ? parseFloat(minEv) : null
-    if (evThreshold !== null && !isNaN(evThreshold)) {
-      list = list.filter(s => (s.bayesian?.ev_pct ?? -Infinity) >= evThreshold)
-    }
-
     // Min probability filter
     const probThreshold = minProb !== '' ? parseFloat(minProb) / 100 : null
     if (probThreshold !== null && !isNaN(probThreshold)) {
@@ -391,9 +377,6 @@ const reload = () => load(params)
     switch (sortBy) {
       case 'system':
         // The API already returns one best signal per fixture in authoritative system-rank order.
-        break
-      case 'ev':
-        list.sort((a, b) => (b.bayesian?.ev_pct ?? -Infinity) - (a.bayesian?.ev_pct ?? -Infinity))
         break
       case 'probability':
         list.sort((a, b) => (b.bayesian?.prob ?? -Infinity) - (a.bayesian?.prob ?? -Infinity))
@@ -419,15 +402,13 @@ const reload = () => load(params)
     }
 
     return list
-  }, [signals, marketFamily, sortBy, minEv, minProb, leagueSearch, showSavedOnly]) // eslint-disable-line
+  }, [signals, marketFamily, sortBy, minProb, leagueSearch, showSavedOnly]) // eslint-disable-line
 
   // Summary stats for the result bar
   const stats = useMemo(() => {
     if (!displayedSignals.length) return null
-    const evValues = displayedSignals.map(s => s.bayesian?.ev_pct).filter(v => v != null)
-    const avgEv = evValues.length ? evValues.reduce((a, b) => a + b, 0) / evValues.length : null
     const highConf = displayedSignals.filter(s => s.dual_confidence === 'High').length
-    return { total: displayedSignals.length, avgEv, highConf }
+    return { total: displayedSignals.length, highConf }
   }, [displayedSignals])
 
   const _LIVE_SET = new Set(['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT'])
@@ -468,7 +449,6 @@ const reload = () => load(params)
   function trackingSourceFamily() {
     if (sortBy === 'system') return 'Signals Board'
     if (sortBy === 'quality') return 'Quality View'
-    if (sortBy === 'ev') return 'EV View'
     if (sortBy === 'probability') return 'Probability View'
     if (sortBy === 'stake') return 'Stake View'
     return 'Signals Board'
@@ -676,25 +656,6 @@ const reload = () => load(params)
                   </div>
                 </label>
 
-                {/* Min EV% */}
-                <label className="flex flex-col gap-1 text-sm text-[var(--text)] w-28">
-                  <span className="font-medium opacity-85 text-xs flex items-center gap-1">
-                    <SlidersHorizontal size={10} /> Min EV %
-                  </span>
-                  <div className="relative">
-                    <input
-                      type="number"
-                      placeholder="e.g. 5"
-                      value={minEv}
-                      onChange={e => setMinEv(e.target.value)}
-                      className="w-full pl-3 pr-6 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--text-h)] text-sm focus:outline-none focus:border-[var(--accent)] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-                    />
-                    {minEv && (
-                      <button onClick={() => setMinEv('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text)] opacity-65 hover:opacity-100 text-xs">✕</button>
-                    )}
-                  </div>
-                </label>
-
                 {/* Min Prob% */}
                 <label className="flex flex-col gap-1 text-sm text-[var(--text)] w-28">
                   <span className="font-medium opacity-85 text-xs flex items-center gap-1">
@@ -787,11 +748,6 @@ const reload = () => load(params)
               {stats.highConf > 0 && (
                 <span><span className="font-semibold text-[var(--accent)]">{stats.highConf}</span> high confidence</span>
               )}
-              {stats.avgEv !== null && (
-                <span>Avg EV: <span className={`font-semibold ${stats.avgEv >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {stats.avgEv >= 0 ? '+' : ''}{stats.avgEv.toFixed(1)}%
-                </span></span>
-              )}
             </>
           )}
           <button
@@ -845,8 +801,7 @@ const reload = () => load(params)
               <span className="text-4xl">🔍</span>
               <p className="text-sm font-semibold text-[var(--text-h)]">No signals match these filters</p>
               <p className="text-xs text-[var(--text)] opacity-75 max-w-xs">
-                Try adjusting the <span className="font-semibold text-[var(--accent)]">Min EV%</span> or{' '}
-                <span className="font-semibold text-[var(--accent)]">Min Prob%</span> thresholds, changing the confidence filter, or{' '}
+                Try adjusting the <span className="font-semibold text-[var(--accent)]">Min Prob%</span> threshold, changing the confidence filter, or{' '}
                 <button onClick={clearAllFilters} className="font-semibold text-[var(--accent)] hover:underline">resetting all filters</button>.
               </p>
             </div>

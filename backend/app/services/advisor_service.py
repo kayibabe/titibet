@@ -202,10 +202,6 @@ def _build_context(rows: list, match_infos: dict, perf_weights: "PerformanceWeig
         hh   = info.get("home_highlights", [])[:2]
         ah   = info.get("away_highlights", [])[:2]
 
-        ev_pct = None
-        if sig.bayesian_prob and sig.bayesian_best_odd:
-            ev_pct = round((sig.bayesian_prob * sig.bayesian_best_odd - 1.0) * 100, 1)
-
         line = (
             f"[{i}] {fix.home_team} vs {fix.away_team}"
             f" | {fix.league or 'Unknown League'} | Tier {fix.league_tier or '?'}\n"
@@ -216,7 +212,7 @@ def _build_context(rows: list, match_infos: dict, perf_weights: "PerformanceWeig
             line += (
                 f"Bayesian: Prob={round(sig.bayesian_prob * 100, 1)}%"
                 f" | Best Odd: {sig.bayesian_best_odd} ({sig.bayesian_bookmaker})"
-                f" | EV: {ev_pct}% | Books: {sig.bayesian_bookmaker_count}\n"
+                f" | Books: {sig.bayesian_bookmaker_count}\n"
             )
         if sig.poisson_prob is not None:
             line += (

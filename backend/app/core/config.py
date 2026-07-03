@@ -157,7 +157,6 @@ CS_ENABLED: bool = False                 # kill switch for live CS signal genera
 CS_MARKET_PREFIX: str = "Correct Score "  # Signal.market = "Correct Score 2-1"
 CS_DC_RHO: float = -0.10                 # Dixon-Coles low-score correlation (rho)
 CS_MAX_GOALS: int = 6                    # score matrix grid size (0..6 per side)
-CS_MIN_EV: float = 0.15                  # minimum exec-price EV to surface a pick
 CS_ODDS_CEILING: float = 15.0            # skip scorelines priced above this — model error dominates
 CS_MIN_BOOKMAKERS: int = 2               # scoreline must be priced by at least this many books
 CS_MIN_MODEL_PROB: float = 0.06          # skip cells the model itself thinks are near-impossible
@@ -500,14 +499,6 @@ BOS_CMA_MAX: float = 4.0          # CMA ceiling for H-score normalisation
 # =============================================================================
 BAYESIAN_KELLY_P_VARIANCE: float = 0.05
 BAYESIAN_KELLY_PRIOR_VARIANCE: float = 0.10
-
-# =============================================================================
-# Dynamic EV threshold
-# θ = base_threshold + noise_multiplier × std(recent EVs)
-# =============================================================================
-EV_BASE_THRESHOLD: float = 0.0
-EV_NOISE_MULTIPLIER: float = 0.5
-EV_DYNAMIC_WINDOW: int = 20
 
 MARKET_MIN_ODDS: dict = {
     "Over 1.5":        1.30,

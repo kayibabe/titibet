@@ -31,8 +31,6 @@ COLUMN_MIGRATIONS = [
     # ── ZINB goal model ───────────────────────────────────────────────────────
     ("signals", "zinb_lambda_h",    "REAL"),
     ("signals", "zinb_lambda_a",    "REAL"),
-    # ── Explicit EV score ─────────────────────────────────────────────────────
-    ("signals", "ev_score",         "REAL"),
     # ── Glicko-2 rating differential ──────────────────────────────────────────
     ("signals", "glicko_r_diff",    "REAL"),
     # ── BREA (BTTS risk enrichment) ───────────────────────────────────────────

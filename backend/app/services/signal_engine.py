@@ -46,7 +46,6 @@ from app.engines import dual_engine
 from app.engines import bos as bos_engine
 from app.models import Fixture, MarketSnapshot, Signal
 from app.services.performance_intelligence import compute_performance_weights, PerformanceWeights
-from app.services.staking import expected_value as _ev
 from app.core.config import (
     BOS_SI_THRESHOLD, BOS_O00_MAX, BOS_CMA_MAX,
 )
@@ -893,16 +892,6 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 if _raw_prob > _shrink_threshold_hi:
                     _raw_prob = _shrink_threshold_hi + (_raw_prob - _shrink_threshold_hi) * _shrink_factor_hi
 
-            # ── Explicit EV score (diagnostic only) ───────────────────────────
-            # EV = p_model × exec_odd − 1, on the calibration-corrected probability
-            # and execution price. Stored for display/analytics; the negative-EV
-            # hard gate was removed 2026-07-02 — EV never rejects a signal.
-            _ev_prob = _raw_prob
-            _ev_odds = (b.exec_odd if b else None)
-            _ev_score: float | None = None
-            if _ev_prob is not None and _ev_odds is not None and _ev_odds > 1.0:
-                _ev_score = round(_ev(_ev_prob, _ev_odds), 4)
-
             # ── BOS quality boost / penalty ───────────────────────────────────
             # BOS high SI = stable, LOW-scoring fixture.  Apply a boost only to
             # markets that benefit from low-scoring stability (Under 2.5 and Win
@@ -1003,7 +992,6 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 bos_passed=_bos_result.passed if _bos_result else None,
                 zinb_lambda_h=round(_zinb_lh, 4) if _zinb_lh else None,
                 zinb_lambda_a=round(_zinb_la, 4) if _zinb_la else None,
-                ev_score=_ev_score,
                 glicko_r_diff=_glicko_rdiff,
                 is_candidate=is_candidate,
             )
@@ -1092,7 +1080,6 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 bos_passed=_bos_result.passed if _bos_result else None,
                 zinb_lambda_h=round(_zinb_lh, 4) if _zinb_lh else None,
                 zinb_lambda_a=round(_zinb_la, 4) if _zinb_la else None,
-                ev_score=round(prob * best_odd - 1.0, 4) if prob and best_odd else None,
                 glicko_r_diff=_glicko_rdiff,
             )
 

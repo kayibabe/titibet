@@ -81,26 +81,6 @@ function DriftBadge({ driftPct }) {
   return null
 }
 
-// ── EV badge — prefers signal.advanced.ev_score (Bayesian-Kelly adjusted) ─────
-function EVBadge({ evPct, evScore }) {
-  // ev_score is a decimal (0.124 = +12.4%), evPct is already a percentage
-  const display = evScore != null ? evScore * 100 : evPct
-  if (display == null) return null
-  const positive = display > 0
-  const source = evScore != null ? 'Model EV' : 'EV'
-  return (
-    <span
-      title={`${source}: ${positive ? '+' : ''}${display.toFixed(2)}% expected return per unit`}
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold border tracking-wide ${
-        positive
-          ? 'bg-green-500/15 text-green-400 border-green-500/30'
-          : 'bg-red-500/15 text-red-500 border-red-500/30'
-      }`}>
-      {positive ? '+' : ''}{display.toFixed(1)}% EV
-    </span>
-  )
-}
-
 // ── Cross-module synergy badge — high-conviction combos ──────────────────────
 // Fires when two independent models independently confirm the same thesis,
 // which is a much stronger signal than either model alone.
@@ -564,8 +544,6 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
   const isBayesianOnly = signal.dual_agreement === 'Bayesian Only' || (signal.dual_agreement === 'Both' && signal.dual_confidence !== 'High')
   const displayBestOdd = signal.best_odd ?? signal.bayesian?.best_odd ?? null
   const displayBookmaker = signal.best_bookmaker ?? signal.bayesian?.bookmaker ?? null
-  const evPct = signal.bayesian?.ev_pct ?? null
-  const evScore = signal.advanced?.ev_score ?? null   // pre-computed, preferred
   const primaryProb = Math.max(signal.bayesian?.prob ?? 0, signal.poisson?.prob ?? 0)
   const isMediumConfidence = signal.dual_confidence === 'Medium'
   const isHighProbabilityOutcome = primaryProb >= 0.7 && !isMediumConfidence
@@ -683,11 +661,8 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
               </div>
             )}
 
-            {/* EV · Agreement · Drift · MarketIntent */}
+            {/* Agreement · Drift · MarketIntent */}
             <div className="flex items-center gap-2 flex-wrap">
-              {isPro
-                ? <EVBadge evPct={evPct} evScore={evScore} />
-                : <LockedPill label="EV%" />}
               <AgreementBadge agreement={signal.dual_agreement} />
               {isPro && <DriftBadge driftPct={signal.odds_drift_pct} />}
               <MarketIntentBadge market={signal.market} />

@@ -1,19 +1,10 @@
 """
 staking.py -- Kelly + unit-based staking recommendations.
 Ported from FootBet odds_engine.py (Kelly) + TiTiBet tracker (unit staking).
-
-Extended with:
-  - full_kelly()          -- raw (unscaled) Kelly fraction
-  - bayesian_kelly()      -- shrinkage-adjusted Kelly (qsbip)
-  - devig()               -- multiplicative overround removal
-  - expected_value()      -- explicit EV = p * odds - 1
-  - dynamic_ev_threshold() -- noise-adaptive EV gate
 """
 from __future__ import annotations
 import math
-import statistics
-from typing import Sequence
-from app.core.config import get_settings, BAYESIAN_KELLY_P_VARIANCE, BAYESIAN_KELLY_PRIOR_VARIANCE, EV_BASE_THRESHOLD, EV_NOISE_MULTIPLIER, EV_DYNAMIC_WINDOW
+from app.core.config import get_settings, BAYESIAN_KELLY_P_VARIANCE, BAYESIAN_KELLY_PRIOR_VARIANCE
 
 settings = get_settings()
 
@@ -89,35 +80,6 @@ def devig(odds_list: list[float]) -> list[float]:
     raw = [1.0 / o for o in odds_list if o > 1.0]
     k = sum(raw)
     return [p / k for p in raw] if k > 0 else raw
-
-
-def expected_value(prob: float, decimal_odds: float) -> float:
-    """EV = prob x decimal_odds - 1. Positive = expected profit per unit staked."""
-    return prob * decimal_odds - 1.0
-
-
-def dynamic_ev_threshold(
-    historical_evs: Sequence[float] | None = None,
-    base: float | None = None,
-    noise_multiplier: float | None = None,
-) -> float:
-    """
-    theta = base_threshold + noise_multiplier x std(recent EVs).
-    Automatically raises the bar when the model's EV outputs are noisy.
-    Falls back to base_threshold when insufficient history.
-    """
-    base_val = base if base is not None else EV_BASE_THRESHOLD
-    multiplier = noise_multiplier if noise_multiplier is not None else EV_NOISE_MULTIPLIER
-
-    if not historical_evs or len(historical_evs) < 5:
-        return base_val
-
-    window = list(historical_evs)[-EV_DYNAMIC_WINDOW:]
-    try:
-        noise = statistics.stdev(window)
-    except statistics.StatisticsError:
-        noise = 0.0
-    return base_val + multiplier * noise
 
 
 # NOTE: recommended_stake_pct was removed -- it duplicated dual_engine._recommended_stake

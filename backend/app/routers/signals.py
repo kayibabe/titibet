@@ -152,13 +152,6 @@ def _sort_metric(
 ):
     if sort_by == "system":
         return _system_rank(sig, fixture, clv_ranks)
-    if sort_by == "ev":
-        # Use pre-computed ev_score when available (Bayesian Kelly shrinkage applied)
-        if sig.ev_score is not None:
-            return sig.ev_score * 100
-        if sig.bayesian_prob and sig.bayesian_best_odd:
-            return (sig.bayesian_prob * sig.bayesian_best_odd - 1.0) * 100
-        return float("-inf")
     if sort_by == "probability":
         return sig.bayesian_prob if sig.bayesian_prob is not None else float("-inf")
     if sort_by == "stake":
@@ -233,8 +226,6 @@ def _to_signal_out(
             bookmaker_count=sig.bayesian_bookmaker_count, is_value=sig.bayesian_is_value,
             confidence=sig.bayesian_confidence, quality_score=sig.bayesian_quality_score,
             kelly_pct=sig.bayesian_kelly_pct,
-            ev_pct=round((sig.bayesian_prob * sig.bayesian_best_odd - 1.0) * 100, 2)
-            if sig.bayesian_prob and sig.bayesian_best_odd else None,
         )
     poisson = None
     # Construct PoissonOut whenever ANY Poisson-side info exists — a market
@@ -252,7 +243,7 @@ def _to_signal_out(
     # Advanced model enrichment — only populate when at least one field is non-None
     _has_advanced = any([
         sig.bos_si is not None, sig.zinb_lambda_h is not None,
-        sig.ev_score is not None, sig.glicko_r_diff is not None,
+        sig.glicko_r_diff is not None,
     ])
     advanced = None
     if _has_advanced:
@@ -261,7 +252,6 @@ def _to_signal_out(
             bos_passed=sig.bos_passed,
             zinb_lambda_h=sig.zinb_lambda_h,
             zinb_lambda_a=sig.zinb_lambda_a,
-            ev_score=sig.ev_score,
             glicko_r_diff=sig.glicko_r_diff,
         )
 
@@ -566,11 +556,6 @@ async def stat_driven_picks(
         vals = [v for v in (sig.bayesian_prob, sig.poisson_prob) if v is not None]
         return max(vals) if vals else None
 
-    def _ev(sig: Signal) -> float | None:
-        if sig.bayesian_prob and sig.bayesian_best_odd:
-            return round((sig.bayesian_prob * sig.bayesian_best_odd - 1.0) * 100, 2)
-        return None
-
     def _leg(sig: Signal, fix: Fixture) -> dict:
         return {
             "signal_id":            sig.id,
@@ -588,7 +573,6 @@ async def stat_driven_picks(
             "bookmaker":            sig.bayesian_bookmaker or "Manual",
             "odds":                 sig.bayesian_best_odd,
             "probability":          _primary_prob(sig),
-            "ev_pct":               _ev(sig),
             "confidence":           sig.dual_confidence,
             "agreement":            sig.dual_agreement,
             "quality_score":        sig.dual_quality_score,

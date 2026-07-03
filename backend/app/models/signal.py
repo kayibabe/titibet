@@ -75,11 +75,6 @@ class Signal(Base):
     zinb_lambda_h: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     zinb_lambda_a: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    # ── Explicit Expected Value ──────────────────────────────────────────────
-    # ev_score = p_model × best_odd − 1
-    # Positive → expected profit per unit staked (before variance).
-    ev_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-
     # ── Glicko-2 rating differential ────────────────────────────────────────
     # home_rating − away_rating on the 1500-point Glicko-2 scale.
     # Positive = home team is rated higher. Magnitude reflects strength gap.

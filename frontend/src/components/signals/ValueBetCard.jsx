@@ -24,14 +24,13 @@ export default function ValueBetCard({ signal, rank }) {
   const impliedProb = b.best_odd ? Math.round((1 / b.best_odd) * 100) : null
   const modelProb   = b.prob ? Math.round(b.prob * 100) : null
   const edge        = modelProb && impliedProb ? modelProb - impliedProb : null
-  const evPct       = b.ev_pct ?? null
 
   const isFinal = FINAL.has(signal.status)
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] overflow-hidden hover:border-[var(--accent)]/40 transition-colors">
-      {/* Top stripe — EV colour coded */}
-      <div className={`h-1 w-full ${evPct >= 50 ? 'bg-emerald-500' : evPct >= 20 ? 'bg-amber-400' : 'bg-blue-400'}`} />
+      {/* Top stripe */}
+      <div className="h-1 w-full bg-blue-400" />
 
       <div className="p-4 space-y-3">
         {/* Header row */}
@@ -67,10 +66,10 @@ export default function ValueBetCard({ signal, rank }) {
         {/* Metrics row */}
         <div className="grid grid-cols-3 gap-2">
           <div className="rounded-lg bg-[var(--code-bg)] p-2 text-center">
-            <p className={`text-sm font-bold tabular-nums ${evPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-              {evPct != null ? `+${evPct.toFixed(1)}%` : '—'}
+            <p className={`text-sm font-bold tabular-nums ${(edge ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {edge != null ? `+${edge}pp` : '—'}
             </p>
-            <p className="text-[9px] text-[var(--text)] opacity-70 mt-0.5">EV</p>
+            <p className="text-[9px] text-[var(--text)] opacity-70 mt-0.5">Edge</p>
           </div>
           <div className="rounded-lg bg-[var(--code-bg)] p-2 text-center">
             <p className="text-sm font-bold tabular-nums text-[var(--text-h)]">

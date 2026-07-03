@@ -56,21 +56,15 @@ class BayesianResult:
     overround: float
     coverage: float
     bookmaker_count: int
-    ev_pct: float
-    # Reference price used for EV/edge/Kelly math.
+    # Reference price used for edge/Kelly math.
     # When Pinnacle/Bet365 has odds: consensus_odd == best_actual_odd (sharp price).
     # Fallback (no sharp book): consensus_odd = second-best to guard against
     # stale soft-book outliers; is_outlier_odds = True when triggered.
     consensus_odd: float = 0.0
     is_outlier_odds: bool = False
-    # ── Execution-price fields (Fix 1) ─────────────────────────────────────────
     # exec_odd: the realistic price the user gets at their book (betPawa / 888bets
     #   / Betway), derived by haircutting the displayed proxy (best_actual_odd).
-    #   EV / Kelly / is_value are decided on THIS, not the longer proxy price.
-    # ev_pct_ref: the old proxy-price EV, retained for diagnostics so the gap
-    #   between "looks good on the screen price" and "is good at my book" is visible.
     exec_odd: float = 0.0
-    ev_pct_ref: float = 0.0
 
 
 @dataclass
@@ -514,7 +508,7 @@ def analyse_fixture(
                 best_actual_odd=0.0, best_bookmaker="N/A",
                 implied_prob=0.0, edge=0.0, kelly_pct=0.0,
                 is_value=False, confidence="N/A", quality_score=0.0,
-                overround=overround, coverage=coverage, bookmaker_count=n_bookies, ev_pct=0.0,
+                overround=overround, coverage=coverage, bookmaker_count=n_bookies,
                 consensus_odd=0.0, is_outlier_odds=False,
             ))
             continue
@@ -548,13 +542,7 @@ def analyse_fixture(
             exec_odd = exec_odd_from(effective_odd, market_name)
         else:
             exec_odd = max(1.01, round(effective_odd, 4))
-        # EV numbers are DIAGNOSTIC ONLY since 2026-07-02 — stored and displayed,
-        # never used to accept/reject or grade a signal.
-        ev_pct_ref = round((derived_prob * effective_odd - 1.0) * 100, 2)
-        ev_pct = round((derived_prob * exec_odd - 1.0) * 100, 2) if exec_odd > 1.0 else -100.0
-
         # Value = the model considers the outcome likely enough (probability floor).
-        # Edge-vs-market and exec-price EV gates retired 2026-07-02.
         is_value = derived_prob >= settings.min_derived_prob
         # Probability-scaled flat stake (replaces Kelly, which needs an edge).
         ks = _prob_stake_pct(derived_prob, settings.max_kelly_pct) if exec_odd > 1.0 else 0.0
@@ -566,9 +554,9 @@ def analyse_fixture(
             best_actual_odd=best_odd, best_bookmaker=best_bookie,
             implied_prob=implied_prob, edge=edge, kelly_pct=ks,
             is_value=is_value, confidence=conf, quality_score=qs,
-            overround=overround, coverage=coverage, bookmaker_count=n_bookies, ev_pct=ev_pct,
+            overround=overround, coverage=coverage, bookmaker_count=n_bookies,
             consensus_odd=consensus_odd, is_outlier_odds=is_outlier_odds,
-            exec_odd=exec_odd, ev_pct_ref=ev_pct_ref,
+            exec_odd=exec_odd,
         ))
 
     results.sort(key=lambda m: (-int(m.is_value), -m.edge))

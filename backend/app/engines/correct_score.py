@@ -21,7 +21,6 @@ from app.core.config import (
     CS_MARKET_PREFIX,
     CS_MAX_GOALS,
     CS_MIN_BOOKMAKERS,
-    CS_MIN_EV,
     CS_MIN_MODEL_PROB,
     CS_ODDS_CEILING,
     exec_odd_from,
@@ -135,7 +134,6 @@ def best_cs_pick(
     lam_h: float,
     lam_a: float,
     *,
-    min_ev: float = CS_MIN_EV,
     odds_ceiling: float = CS_ODDS_CEILING,
     min_bookmakers: int = CS_MIN_BOOKMAKERS,
     min_model_prob: float = CS_MIN_MODEL_PROB,
@@ -162,8 +160,6 @@ def best_cs_pick(
         if exec_odds <= 1.0:
             continue
         ev = prob * exec_odds - 1.0
-        if ev < min_ev:
-            continue
         if best is None or ev > best.ev:
             best = CSPick(
                 home_goals=h, away_goals=a,

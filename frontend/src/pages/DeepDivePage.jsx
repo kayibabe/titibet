@@ -145,7 +145,6 @@ function H2HRow({ match, homeTeam }) {
 // Mobile signal card — shown instead of table row on small screens
 function SignalCard({ sig, onTrack }) {
   const conf = sig.dual_confidence || sig.bayesian?.confidence
-  const ev   = sig.bayesian?.ev_pct
   const confColor = { High: 'text-green-400', Medium: 'text-yellow-400', Low: 'text-slate-400' }[conf] || 'text-[var(--text)]'
 
   return (
@@ -155,7 +154,6 @@ function SignalCard({ sig, onTrack }) {
         {conf && <span className={`text-xs font-bold shrink-0 ${confColor}`}>{conf}</span>}
       </div>
       <div className="flex items-center gap-3 text-xs text-[var(--text)] opacity-80 flex-wrap">
-        {ev != null && <span className="font-mono text-[var(--accent)] font-semibold">+{ev.toFixed(1)}% EV</span>}
         {sig.bayesian?.best_odd && (
           <span>Best: <span className="font-mono text-[var(--text-h)]">{sig.bayesian.best_odd.toFixed(2)}</span></span>
         )}
@@ -511,7 +509,6 @@ export default function DeepDivePage({ fixtureId, settings, onBack }) {
                       <th className="px-3 py-2 text-left">Market</th>
                       <th className="px-3 py-2 text-left">Confidence</th>
                       <th className="px-3 py-2 text-left">Agreement</th>
-                      <th className="px-3 py-2 text-left">EV %</th>
                       <th className="px-3 py-2 text-left">Fair → Offered</th>
                       <th className="px-3 py-2 text-right">Quality</th>
                       <th className="px-3 py-2 text-right">Stake</th>

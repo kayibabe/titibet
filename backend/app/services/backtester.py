@@ -522,10 +522,12 @@ def evaluate_cs_params(
                 matrices[s.fixture_id] = matrix
         pick = cs_engine.best_cs_pick(
             matrix, s.cs_odds, s.lambda_h, s.lambda_a,
-            min_ev=min_ev, odds_ceiling=odds_ceiling,
+            odds_ceiling=odds_ceiling,
             min_bookmakers=min_bookmakers, min_model_prob=min_model_prob,
         )
         if pick is None:
+            continue
+        if pick.ev < min_ev:
             continue
         won = s.home_score == pick.home_goals and s.away_score == pick.away_goals
         profit = flat_stake * (pick.exec_odds - 1.0) if won else -flat_stake
