@@ -1,7 +1,8 @@
-﻿import { useState, useEffect } from 'react'
-import { LayoutDashboard, Menu, X } from 'lucide-react'
+﻿import { useState, useEffect, useRef } from 'react'
+import { LayoutDashboard, Menu, X, User, LogOut, Settings } from 'lucide-react'
 import Sidebar from './Sidebar'
 import BottomNav from './BottomNav'
+import { useAuth } from '../../context/AuthContext'
 
 function LiveClock() {
   const [now, setNow] = useState(() => new Date())
@@ -31,6 +32,55 @@ const PAGE_TITLES = {
   admin:     'User Panel',
   account:   'My Account',
   pricing:   'Plans & Pricing',
+}
+
+function UserMenu({ onNavigate }) {
+  const { user, logout } = useAuth()
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  const initial = (user?.name || user?.email || '?')[0].toUpperCase()
+
+  return (
+    <div ref={ref} className="relative lg:hidden">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-8 h-8 rounded-full bg-[var(--accent)] flex items-center justify-center text-white text-sm font-bold shrink-0"
+        aria-label="Account menu"
+      >
+        {initial}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-44 bg-[var(--bg)] border border-[var(--border)] rounded-xl shadow-xl py-1 z-50">
+          {user?.email && (
+            <p className="px-3 py-2 text-[10px] text-[var(--text)] opacity-60 truncate border-b border-[var(--border)]">
+              {user.email}
+            </p>
+          )}
+          <button
+            onClick={() => { onNavigate('account'); setOpen(false) }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] transition-colors"
+          >
+            <Settings size={14} /> Account
+          </button>
+          <button
+            onClick={() => { logout(); setOpen(false) }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-[var(--code-bg)] transition-colors"
+          >
+            <LogOut size={14} /> Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function AppShell({ activePage, onNavigate, children }) {
@@ -78,8 +128,9 @@ export default function AppShell({ activePage, onNavigate, children }) {
           Signals&nbsp;·&nbsp;Tracker&nbsp;·&nbsp;Analytics
         </span>
 
-        {/* Live clock — right side */}
-        <div className="ml-auto lg:ml-0">
+        {/* Right side: user avatar (mobile) + clock (sm+) */}
+        <div className="ml-auto flex items-center gap-2">
+          <UserMenu onNavigate={navigate} />
           <LiveClock />
         </div>
       </header>
