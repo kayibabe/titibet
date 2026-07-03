@@ -720,7 +720,7 @@ async def _create_acca_bet(
         odds=combined_odds,
         stake=50_000.0,
         source_rule_key="acca_advisory",
-        source_rule_label="AI Acca of the Day",
+        source_rule_label=acca.get("rank_label") or "AI Acca of the Day",
         dual_confidence=acca.get("confidence"),
         notes=notes,
     )
@@ -849,7 +849,7 @@ async def auto_track_acca_legs(
                 odds=combined_odds,
                 stake=50_000.0,
                 source_rule_key="acca_advisory_system",
-                source_rule_label="AI Acca of the Day (System)",
+                source_rule_label=f"{ticket.get('rank_label') or 'AI Acca of the Day'} (System)",
                 dual_confidence=ticket.get("confidence"),
                 notes=json.dumps({"legs": legs, "leg_summary": leg_summary}),
                 result_status="Pending",
@@ -1385,6 +1385,17 @@ async def get_advisor_insights(
         return (-conf, -in_range, dist)
 
     processed_tickets.sort(key=_ticket_rank)
+
+    # Assign rank labels after sorting so every TrackedBet row carries the
+    # position (Top Pick / Alt Pick 1 / Alt Pick 2 …) in source_rule_label.
+    # This lets the analytics layer slice acca performance by ticket rank.
+    for i, ticket in enumerate(processed_tickets):
+        if len(processed_tickets) == 1:
+            ticket["rank_label"] = "AI Acca of the Day"
+        elif i == 0:
+            ticket["rank_label"] = "Top Pick"
+        else:
+            ticket["rank_label"] = f"Alt Pick {i}"
 
     # For backward compat keep `accumulator` (singular) as the first ticket,
     # or an error shell when no valid tickets were produced.
