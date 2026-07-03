@@ -43,6 +43,7 @@ class UserAdminOut(BaseModel):
     is_active: bool
     is_admin: bool = False
     created_at: datetime
+    last_active_at: Optional[datetime] = None
     model_config = {"from_attributes": True}
 
 

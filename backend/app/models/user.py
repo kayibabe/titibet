@@ -28,6 +28,7 @@ class User(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, onupdate=func.now(), nullable=True)
+    last_active_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     def _subscription_valid(self) -> bool:
         """True if subscription is active and not past its expiry date."""

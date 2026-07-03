@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useCallback } from 'react'
 import { Search, RefreshCw, Shield, Users, CheckCircle, ChevronDown } from 'lucide-react'
 import { fetchAdminStats, fetchUsers, updateUser, deactivateUser } from '../api/admin'
-import { fmtDate } from '../utils/format'
+import { fmtDate, fmtDateTime } from '../utils/format'
 import TelegramPanel from '../components/admin/TelegramPanel'
 import QuotaWidget from '../components/admin/QuotaWidget'
 import LearningProposalsPanel from '../components/admin/LearningProposalsPanel'
@@ -200,6 +200,12 @@ export default function AdminPage() {
               <EditableCell value={u.subscription_status} options={STATUS_OPTIONS} onSave={v => handleUpdate(u.id, { subscription_status: v })} />
               <span className="text-xs text-[var(--text)] opacity-80 ml-auto">{fmtDate(u.created_at)}</span>
             </div>
+            <div className="flex items-center gap-1 text-[11px] text-[var(--text)] opacity-60">
+              <span>Last active:</span>
+              <span className="font-medium opacity-90">
+                {u.last_active_at ? fmtDateTime(u.last_active_at) : 'Never'}
+              </span>
+            </div>
             {u.is_active && (
               <button
                 onClick={() => handleDeactivate(u.id, u.name || u.email)}
@@ -235,6 +241,7 @@ export default function AdminPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--text)] opacity-75">Tier</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--text)] opacity-75">Subscription</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--text)] opacity-75">Joined</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--text)] opacity-75">Last Active</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--text)] opacity-75">Status</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -253,6 +260,9 @@ export default function AdminPage() {
                     <EditableCell value={u.subscription_status} options={STATUS_OPTIONS} onSave={v => handleUpdate(u.id, { subscription_status: v })} />
                   </td>
                   <td className="px-4 py-3 text-xs text-[var(--text)] opacity-75">{fmtDate(u.created_at)}</td>
+                  <td className="px-4 py-3 text-xs text-[var(--text)] opacity-75">
+                    {u.last_active_at ? fmtDateTime(u.last_active_at) : <span className="opacity-40">Never</span>}
+                  </td>
                   <td className="px-4 py-3">
                     {u.is_active
                       ? <span className="text-xs text-green-400">Active</span>

@@ -58,6 +58,8 @@ COLUMN_MIGRATIONS = [
     # Over 1.5 / Over 2.5 Bayesian-only High signals collected to validate
     # performance before enabling as a live tier. Default 0 = served normally.
     ("signals", "is_candidate", "INTEGER NOT NULL DEFAULT 0"),
+    # ── User activity tracking ────────────────────────────────────────────────
+    ("users", "last_active_at", "DATETIME"),
 ]
 
 TABLE_MIGRATIONS: list[str] = [

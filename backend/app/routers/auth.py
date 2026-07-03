@@ -139,6 +139,8 @@ async def login(
         )
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account deactivated")
+    user.last_active_at = datetime.now(timezone.utc)
+    await db.commit()
     token = create_access_token(user.id, user.email)
     return TokenResponse(access_token=token)
 

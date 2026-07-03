@@ -23,6 +23,24 @@ export function fmtDate(isoStr) {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+/**
+ * Format a UTC ISO datetime as date + local time, e.g. "3 Jul 2026, 2:30 PM".
+ * Shows "Today, 2:30 PM" when the date is today.
+ */
+export function fmtDateTime(isoStr) {
+  const d = toUtcDate(isoStr)
+  if (!d) return '—'
+  const now = new Date()
+  const isToday =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true })
+  if (isToday) return `Today, ${time}`
+  const dateStr = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  return `${dateStr}, ${time}`
+}
+
 /** Format an amount as Kwacha, e.g. K1,250.00 */
 export function fmtK(amount, decimals = 2) {
   if (amount == null || isNaN(amount)) return '—'
