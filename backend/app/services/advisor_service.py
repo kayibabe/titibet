@@ -633,7 +633,6 @@ async def _is_acca_tracked(
     written before fingerprinting was introduced (selection_name='Accumulator').
     """
     from app.models.bet import TrackedBet
-    from sqlalchemy import or_
 
     conditions = [
         TrackedBet.source_rule_key == "acca_advisory",
@@ -641,12 +640,7 @@ async def _is_acca_tracked(
         TrackedBet.user_id == uid,
     ]
     if fp:
-        conditions.append(
-            or_(
-                TrackedBet.selection_name == f"Accumulator|{fp}",
-                TrackedBet.selection_name == "Accumulator",   # legacy rows
-            )
-        )
+        conditions.append(TrackedBet.selection_name == f"Accumulator|{fp}")
 
     row = await db.scalar(select(TrackedBet.id).where(*conditions))
     return row is not None
