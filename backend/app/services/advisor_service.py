@@ -606,16 +606,23 @@ def _acca_fingerprint(legs: list[dict]) -> str:
     """
     Stable 12-char hex hash of an acca's legs.
 
-    Two accas are considered the same ticket when they contain the same set of
-    (fixture_id, market) pairs — regardless of order or odds.  Stored as the
-    suffix of selection_name ("Accumulator|<fp>") so dedup queries stay fast
-    on the indexed column without a schema migration.
+    Uses fixture_id when available (exact, immune to name variation).
+    Falls back to sorted home:away:market strings for legs without fixture_id
+    so different accas always produce different hashes even without fixture_ids.
+    Stored as "Accumulator|<fp>" in selection_name for per-acca dedup without
+    a schema migration.
     """
-    parts = sorted(
-        f"{leg.get('fixture_id')}:{(leg.get('market') or '').strip().lower()}"
-        for leg in legs
-        if leg.get("fixture_id")
-    )
+    parts = []
+    for leg in legs:
+        fid = leg.get("fixture_id")
+        mkt = (leg.get("market") or "").strip().lower()
+        if fid:
+            parts.append(f"{fid}:{mkt}")
+        else:
+            home = (leg.get("home_team") or "").strip().lower()
+            away = (leg.get("away_team") or "").strip().lower()
+            parts.append(f"{home}:{away}:{mkt}")
+    parts.sort()
     return hashlib.md5("|".join(parts).encode()).hexdigest()[:12]
 
 
@@ -1373,20 +1380,39 @@ async def get_advisor_insights(
 
 
 async def track_acca_for_user(
-    db:           AsyncSession,
-    target_date:  date,
-    current_user: Any,
+    db:             AsyncSession,
+    target_date:    date,
+    current_user:   Any,
+    expected_odds:  float | None = None,
 ) -> dict:
     """
-    Explicitly add the day's AI acca to this user's tracker (one row per
-    user+date). Resolves the acca via get_advisor_insights — normally a cache
-    hit — so the tracked odds are always the server-validated ones.
+    Explicitly add the day's AI acca to this user's tracker.
+
+    Fetches the advisory from cache (fast).  When expected_odds is supplied and
+    the cached acca's combined_odds differ by more than 0.10, the cache is
+    stale (e.g. user hit Refresh and the fresh result wasn't cached due to an
+    error) — in that case a force-run re-generates the acca so the tracked row
+    matches what the user actually sees.
     """
     insights = await get_advisor_insights(db, target_date, current_user=current_user)
     if insights.get("error"):
         return {"tracked": False, "error": insights["error"], "message": insights.get("message", "")}
 
     acca = insights.get("accumulator") or {}
+
+    # Detect cache/display mismatch: re-run if odds don't match what the user sees.
+    if (
+        expected_odds is not None
+        and acca.get("combined_odds") is not None
+        and abs(float(acca["combined_odds"]) - expected_odds) > 0.10
+    ):
+        logger.info(
+            "track_acca: cache odds %.2f != expected %.2f — forcing fresh run",
+            acca["combined_odds"], expected_odds,
+        )
+        insights = await get_advisor_insights(db, target_date, current_user=current_user, force=True)
+        acca = insights.get("accumulator") or {}
+
     if not acca.get("legs") or acca.get("error") or not acca.get("combined_odds"):
         return {
             "tracked": False,

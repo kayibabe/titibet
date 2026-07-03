@@ -20,9 +20,10 @@ export async function fetchAdvisorInsights(date, { force = false } = {}) {
   return res.json()
 }
 
-export async function trackAcca(date) {
+export async function trackAcca(date, expectedOdds) {
   const params = new URLSearchParams()
   if (date) params.set('date', date)
+  if (expectedOdds != null) params.set('expected_odds', String(expectedOdds))
   const res = await apiFetch(`/api/advisor/track-acca?${params}`, { method: 'POST' })
   if (!res.ok) await throwApiError(res, 'Tracking failed')
   return res.json()

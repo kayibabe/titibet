@@ -77,18 +77,20 @@ async def advisor_insights(
 
 @router.post("/track-acca")
 async def track_acca(
-    date_str:     Optional[str]  = Query(None, alias="date"),
-    db:           AsyncSession   = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user_optional),
+    date_str:      Optional[str]   = Query(None, alias="date"),
+    expected_odds: Optional[float] = Query(None, description="Combined odds the user sees — triggers cache refresh if stale"),
+    db:            AsyncSession    = Depends(get_db),
+    current_user:  Optional[User]  = Depends(get_current_user_optional),
 ):
     """
     Add the day's AI acca to the current user's bet tracker (opt-in — viewing
-    the advisory never tracks). Idempotent: one acca row per user per date.
+    the advisory never tracks). Idempotent per fingerprint: same legs = same
+    row; different legs = new row, even on the same date.
     """
     current_user = _require_pro(current_user)
     target_date = _parse_date(date_str)
 
-    result = await track_acca_for_user(db, target_date, current_user)
+    result = await track_acca_for_user(db, target_date, current_user, expected_odds=expected_odds)
     if not result.get("tracked"):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

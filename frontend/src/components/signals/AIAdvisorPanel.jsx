@@ -340,7 +340,7 @@ function AccaTicket({ acca, date }) {
     setTrackBusy(true)
     setTrackErr(null)
     try {
-      await trackAcca(date)
+      await trackAcca(date, combined_odds)
       setIsTracked(true)
     } catch (e) {
       setTrackErr(e.message)
