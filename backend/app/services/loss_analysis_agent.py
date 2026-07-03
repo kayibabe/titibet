@@ -701,12 +701,31 @@ async def run_loss_analysis_pipeline(
             logger.info("Proposal REJECTED: %s — %s", proposal.get("proposal_id"), bt.reason)
 
     # ── Step 5: Persist accepted proposals ───────────────────────────────────
-    # Persist all accepted types so future consumers can use them without a schema change.
+    # Whitelist keeps Pipeline A's namespace distinct from Pipeline B (strategy_pipeline).
+    # If the LLM hallucinates a Pipeline-B type (market_suppression, league_suppression,
+    # kelly_fraction_adj, min_prob_by_agreement) it would collide with that pipeline's
+    # active rows and deactivate them.
+    _LOSS_ANALYSIS_VALID_CHANGE_TYPES = frozenset({
+        "market_odds_ceiling",
+        "min_probability",
+        "tier_suppression",
+        "min_confidence",
+        "rule_disable",
+        "quality_threshold",
+    })
+
     if report.accepted_proposals:
         for proposal in report.accepted_proposals:
             change_type = proposal.get("change_type", "")
             target = proposal.get("target", "")
             if not change_type or not target:
+                continue
+            if change_type not in _LOSS_ANALYSIS_VALID_CHANGE_TYPES:
+                logger.warning(
+                    "LossAnalysis: skipping proposal with unrecognised change_type=%r "
+                    "(would collide with Pipeline B namespace)",
+                    change_type,
+                )
                 continue
 
             try:

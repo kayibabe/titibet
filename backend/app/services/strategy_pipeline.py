@@ -23,6 +23,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -463,7 +464,14 @@ def _evaluate_proposal(
 
     elif change_type == "league_suppression":
         target_lower = target.lower()
-        subset = [b for b in bets if b.league and target_lower in b.league.lower()]
+        # Use word-boundary matching for short keys (e.g. "mls") to avoid false
+        # positives like "mls" substring-matching "Alliansen MLS Youth".
+        # Mirrors the logic in signal_engine._league_matches_suppression().
+        if len(target_lower) < 6:
+            _pat = re.compile(r'\b' + re.escape(target_lower) + r'\b', re.IGNORECASE)
+            subset = [b for b in bets if b.league and _pat.search(b.league.lower())]
+        else:
+            subset = [b for b in bets if b.league and target_lower in b.league.lower()]
         n = len(subset)
         # Same elevated bar as market_suppression. Same ROI-based criterion.
         if n < MIN_BETS_FOR_SUPPRESSION:

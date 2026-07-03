@@ -69,7 +69,12 @@ ACCA_BUILDER: dict = {
         "(4) Market diversity — avoid stacking the same market type (e.g. all Over 2.5). "
         "Avoid per ticket: the same team more than once, any decimal leg odd above 3.5, "
         "any signal where contextual data raises red flags. "
-        "For each leg use the Bayesian best_odd from the context; if missing, estimate from the probability. "
+        "Only select legs from the exact fixture_ids present in the signal pool — do not invent or guess ids. "
+        "For each leg use the Bayesian best_odd from the context; never invent an odd not shown. "
+        "In each leg's 'reason' field, write a specific 1-sentence justification that names "
+        "the actual probability (e.g. 'Bayesian 72%'), agreement status (Both engines / Bayesian only), "
+        "and one supporting context factor (e.g. 'home team unbeaten in last 6, 8-book consensus'). "
+        "Generic reasons like 'Strong signal' or 'Model indicates value' are not acceptable. "
         "Set confidence to 'High' when ≥3 legs in a ticket have both engines agreeing at ≥0.60 probability. "
         "Set confidence to 'Medium' for mixed pools. "
         "Order your tickets from strongest to weakest: rank first by confidence (High > Medium > Low), "
@@ -82,7 +87,9 @@ ACCA_BUILDER: dict = {
         "Each leg MUST use the fixture_id shown in parentheses (id:NNN) at the start of its context block. "
         "Return JSON with this EXACT shape — no extra fields:\n"
         '{"tickets":['
-        '{"legs":[{"fixture_id":123,"home_team":"...","away_team":"...","market":"...","odd":1.75,"reason":"1-sentence justification"}],'
+        '{"legs":[{"fixture_id":123,"home_team":"...","away_team":"...","market":"...","odd":1.75,'
+        '"dual_agreement":"Both"|"Bayesian Only"|"Poisson Only",'
+        '"reason":"Bayesian 68%, both engines agree; home side unbeaten in 7, 6-book consensus"}],'
         '"rationale":"2-3 sentence explanation of why these legs combine well",'
         '"confidence":"High"|"Medium"|"Low"}'
         "]}"
@@ -212,9 +219,13 @@ def _build_context(rows: list, match_infos: dict, perf_weights: "PerformanceWeig
         hh   = info.get("home_highlights", [])[:2]
         ah   = info.get("away_highlights", [])[:2]
 
+        ko = (
+            fix.kickoff_at.strftime("%H:%M UTC") if fix.kickoff_at else "TBD"
+        )
         line = (
             f"[{i}] (id:{fix.id}) {fix.home_team} vs {fix.away_team}"
-            f" | {fix.league or 'Unknown League'} | Tier {fix.league_tier or '?'}\n"
+            f" | {fix.league or 'Unknown League'} | Tier {fix.league_tier or '?'}"
+            f" | KO: {ko}\n"
             f"Signal: {sig.market} | Confidence: {sig.dual_confidence}"
             f" | Agreement: {sig.dual_agreement} | Quality: {sig.dual_quality_score}\n"
         )
@@ -370,25 +381,30 @@ def _build_skeptic_extras(rows: list) -> str:
 def _extract_json(text: str) -> dict:
     # First attempt: parse as-is
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
     except (json.JSONDecodeError, ValueError):
         pass
     # Second attempt: strip markdown code fences then parse
     stripped = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
     stripped = re.sub(r"\s*```$", "", stripped.strip())
     try:
-        return json.loads(stripped)
+        parsed = json.loads(stripped)
+        if isinstance(parsed, dict):
+            return parsed
     except (json.JSONDecodeError, ValueError):
-        logger.warning(
-            "Failed to parse LLM JSON response (first 200 chars): %s", text[:200]
-        )
-        return {
-            "error": "parse_error",
-            "verdict": "Mixed",
-            "top_picks": [],
-            "warnings": [],
-            "summary": "Advisor returned a malformed response.",
-        }
+        pass
+    logger.warning(
+        "Failed to parse LLM JSON response (first 200 chars): %s", text[:200]
+    )
+    return {
+        "error": "parse_error",
+        "verdict": "Mixed",
+        "top_picks": [],
+        "warnings": [],
+        "summary": "Advisor returned a malformed response.",
+    }
 
 
 def _err(code: str, summary: str) -> dict[str, Any]:
@@ -417,7 +433,7 @@ async def _call_claude(advisor: dict, context: str, api_key: str) -> dict | None
         # thinking tokens would eat into max_tokens.
         msg = await client.messages.create(
             model=advisor["models"]["claude"],
-            max_tokens=2048,
+            max_tokens=3000,
             thinking={"type": "disabled"},
             system=advisor["system"],
             messages=[
@@ -425,6 +441,10 @@ async def _call_claude(advisor: dict, context: str, api_key: str) -> dict | None
             ],
         )
         text = next((b.text for b in msg.content if b.type == "text"), "")
+        if not text:
+            # Empty response — treat as quota/overload and let the chain fall back.
+            logger.info("Claude returned empty text for %s — falling back", advisor["id"])
+            return None
         return _extract_json(text)
     except anthropic.APIError as exc:
         body_msg = ""
@@ -461,7 +481,7 @@ async def _call_gemini(advisor: dict, context: str, api_key: str) -> dict | None
         "generationConfig": {
             "responseMimeType": "application/json",
             "temperature":      0.25,
-            "maxOutputTokens":  1024,
+            "maxOutputTokens":  2048,
         },
     }
     try:
@@ -520,7 +540,7 @@ async def _call_openai_compat(
             {"role": "user",   "content": f"{advisor['task']}\n\n{context}"},
         ],
         "temperature":     0.25,
-        "max_tokens":      1024,
+        "max_tokens":      2048,
         "response_format": {"type": "json_object"},
     }
     try:
@@ -1260,6 +1280,7 @@ async def get_advisor_insights(
 
     _COMBINED_MAX  = 20.0
     _MIN_ACCA_LEGS = 3
+    _MAX_ACCA_LEGS = 4
 
     def _validate_ticket_legs(
         raw_legs: list[dict],
@@ -1292,14 +1313,49 @@ async def get_advisor_insights(
                 )
                 continue
             sig, fix = match
+
+            # Reject legs where the LLM returned a market that doesn't match the
+            # signal — would pair wrong odds with wrong outcome.
+            if _norm(leg.get("market")) != _norm(sig.market):
+                logger.warning(
+                    "Acca leg dropped — market mismatch: LLM=%r signal=%r (%s vs %s)",
+                    leg.get("market"), sig.market,
+                    fix.home_team, fix.away_team,
+                )
+                continue
+
             leg["fixture_id"] = fix.id
             leg["kickoff_at"] = fix.kickoff_at.isoformat() if fix.kickoff_at else None
-            if (
-                _norm(leg.get("market")) == _norm(sig.market)
-                and sig.bayesian_best_odd
-                and sig.bayesian_best_odd > 1.0
-            ):
+
+            # Server-side odd substitution — use canonical Bayesian price.
+            if sig.bayesian_best_odd and sig.bayesian_best_odd > 1.0:
                 leg["odd"] = sig.bayesian_best_odd
+
+            # Explicit odds validation — drop legs with missing or invalid odds.
+            try:
+                odd_val = float(leg.get("odd") or 0)
+                if odd_val <= 1.0:
+                    logger.warning(
+                        "Acca leg dropped — odd ≤1.0 (%.2f): %s vs %s %s",
+                        odd_val, fix.home_team, fix.away_team, sig.market,
+                    )
+                    continue
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Acca leg dropped — non-numeric odd %r: %s vs %s %s",
+                    leg.get("odd"), fix.home_team, fix.away_team, sig.market,
+                )
+                continue
+
+            # Enforce per-leg odd ceiling (prompt says ≤3.5).
+            if odd_val > 3.5:
+                logger.warning(
+                    "Acca leg dropped — odd %.2f exceeds 3.5 ceiling: %s vs %s %s",
+                    odd_val, fix.home_team, fix.away_team, sig.market,
+                )
+                continue
+
+            leg["odd"] = odd_val
             validated.append(leg)
         return validated
 
@@ -1329,7 +1385,13 @@ async def get_advisor_insights(
     processed_tickets: list[dict] = []
 
     for raw_ticket in raw_tickets:
+        if not isinstance(raw_ticket, dict) or "legs" not in raw_ticket:
+            logger.warning("Acca: malformed ticket JSON — expected {legs, rationale, confidence}; skipping")
+            continue
         raw_legs = raw_ticket.get("legs", [])
+        # Enforce hard max before validation so we never exceed 4 legs even if the
+        # LLM ignores the prompt constraint.
+        raw_legs = raw_legs[:_MAX_ACCA_LEGS]
         ticket_legs = _validate_ticket_legs(raw_legs, used_fixture_ids)
         if len(ticket_legs) < _MIN_ACCA_LEGS:
             continue
@@ -1374,15 +1436,19 @@ async def get_advisor_insights(
         })
 
     # ── Server-side ranking (authoritative — overrides LLM ordering) ─────────
-    # Rank: High confidence > Medium > Low; within tier, prefer all legs with
-    # dual agreement; within that, prefer odds closer to the 6-20x sweet spot.
+    # Rank: High confidence > Medium > Low; then count of Both-agreement legs;
+    # then in-range flag; then distance from the 6-20x sweet-spot midpoint.
     def _ticket_rank(t: dict) -> tuple:
         conf = {"High": 3, "Medium": 2, "Low": 1}.get(t.get("confidence") or "Low", 0)
+        dual_both = sum(
+            1 for leg in t.get("legs", [])
+            if (leg.get("dual_agreement") or "").strip().lower() == "both"
+        )
         odds = float(t.get("combined_odds") or 0)
         in_range = 1 if 6.0 <= odds <= 20.0 else 0
         # Distance from sweet-spot midpoint (13×) — smaller is better
         dist = abs(odds - 13.0) if odds > 0 else 999
-        return (-conf, -in_range, dist)
+        return (-conf, -dual_both, -in_range, dist)
 
     processed_tickets.sort(key=_ticket_rank)
 
