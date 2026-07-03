@@ -299,11 +299,8 @@ async def list_signals(
         .where(Signal.is_candidate == False)  # noqa: E712 — exclude data-collection candidates
     )
 
-    if confidence:
-        conf_list = [c.strip() for c in confidence.split(",")]
-        query = query.where(Signal.dual_confidence.in_(conf_list))
-    if agreement:
-        query = query.where(Signal.dual_agreement == agreement)
+    # confidence / agreement params are accepted for API backwards-compatibility
+    # but no longer applied — all signals are returned regardless of tier.
     if market:
         query = query.where(Signal.market == market)
     if min_quality > 0:

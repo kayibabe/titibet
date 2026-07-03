@@ -248,8 +248,8 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
 
   const [date, setDate]             = useState(today)
   const [activeTab, setActiveTab]   = useState('signals')
-  const [confidence, setConfidence] = useState(() => settings?.defaultConfidence || '')
-  const [agreement, setAgreement]   = useState(() => settings?.defaultAgreement  || '')
+  const [confidence, setConfidence] = useState('')
+  const [agreement, setAgreement]   = useState('')
   const [marketFamily, setMarketFamily] = useState('')
   const [market, setMarket]         = useState('')
   const [sortBy, setSortBy]         = useState('system')
@@ -332,11 +332,10 @@ const params = {
     agreement:   agreement  || undefined,
     market:      market     || undefined,
     sort_by:     sortBy,
-    min_quality: (settings?.minQuality > 0) ? settings.minQuality : undefined,
     best_per_fixture: bestPerFixture,
   }
 
-  useEffect(() => { load(params) }, [date, confidence, agreement, market, sortBy, settings?.minQuality, bestPerFixture]) // eslint-disable-line
+  useEffect(() => { load(params) }, [date, confidence, agreement, market, sortBy, bestPerFixture]) // eslint-disable-line
 const reload = () => load(params)
 
   const isToday    = date === today
@@ -346,10 +345,6 @@ const reload = () => load(params)
   // ── Client-side sort + EV filter ────────────────────────────────────────
   const displayedSignals = useMemo(() => {
     let list = [...signals]
-
-    if (settings?.hideContradictions) {
-      list = list.filter(s => s.dual_agreement !== 'Contradiction')
-    }
 
     if (marketFamily) {
       list = list.filter(s => getMarketFamily(s.market) === marketFamily)

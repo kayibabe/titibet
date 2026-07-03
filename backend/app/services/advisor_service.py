@@ -56,25 +56,25 @@ ACCA_BUILDER: dict = {
     },
     "system": (
         "You are a specialist football accumulator analyst. "
-        "Every signal you receive has already been pre-screened: dual_confidence=High, "
-        "dual_agreement=Both (Bayesian and Poisson agree), and implied probability ≥70%. "
-        "Your role is to select the best 3-5 legs from this elite pool. Optimise for: "
-        "(1) Individual probability ≥70% per leg — reject any leg below this threshold. "
-        "(2) Low correlation — pick legs from different leagues and match types. "
+        "You receive a pool of pre-screened signals ranked by dual-engine probability agreement. "
+        "Your role is to select the best 3-5 legs. Optimise for: "
+        "(1) Prefer legs where both Bayesian and Poisson engines agree (dual_agreement=Both) "
+        "with probability ≥0.60. Fall back to single-engine signals only when the dual pool is thin. "
+        "(2) League diversity — no more than 2 legs from the same league. "
         "(3) Combined decimal odds in the 3.0–20.0 range — enough reward without being a lottery. "
         "(4) Market diversity — avoid stacking the same market type (e.g. all Over 2.5). "
-        "Avoid: the same team appearing more than once, any decimal leg odd above 3.0, "
-        "and any signal where the reason sounds speculative. "
-        "For each leg use the bayesian best_odd from the context; if missing, estimate from the probability. "
-        "Because all input signals are High confidence and both engines agree, you MUST set "
-        "confidence to 'High' when you select 3 or more qualifying legs. "
+        "Avoid: the same team appearing more than once, any decimal leg odd above 3.5, "
+        "and any signal where the contextual data raises red flags. "
+        "For each leg use the Bayesian best_odd from the context; if missing, estimate from the probability. "
+        "Set confidence to 'High' when you select ≥3 legs where both engines agree at ≥0.60 probability. "
+        "Set confidence to 'Medium' for mixed pools. "
         "Always respond with valid JSON only — no markdown, no prose outside the JSON."
     ),
     "task": (
-        "Select the best 3-5 legs for today's high-confidence accumulator. "
+        "Select the best 3-5 legs for today's accumulator. "
         "Return JSON with this EXACT shape — no extra fields:\n"
         '{"legs":[{"home_team":"...","away_team":"...","market":"...","odd":1.75,"reason":"1-sentence justification"}],'
-        '"rationale":"2-3 sentence explanation of why these legs combine well",'
+        '"rationale":"2-3 sentence explanation of why these legs combine well and what makes this acca compelling today",'
         '"confidence":"High"|"Medium"|"Low"}'
     ),
 }
@@ -681,6 +681,120 @@ async def _create_acca_bet(
         return False
 
 
+async def auto_track_acca_legs(
+    db:          AsyncSession,
+    acca:        dict,
+    target_date: date,
+) -> int:
+    """
+    Create system-level TrackedBet rows (user_id=None) for each acca leg and
+    one combined accumulator row.  Idempotent: skips any leg already tracked for
+    this date (keyed on fixture_id + market_type).  Returns count of new rows.
+    Called from the pre-sync and advisory-cache scheduler jobs.
+    """
+    from app.models.bet import TrackedBet
+
+    legs = acca.get("legs", [])
+    combined_odds = acca.get("combined_odds")
+    if not legs or not combined_odds or combined_odds <= 1.0:
+        return 0
+
+    # Load existing system acca rows for this date to dedup
+    existing_rows = list(
+        (await db.execute(
+            select(TrackedBet.fixture_id, TrackedBet.market_type)
+            .where(
+                TrackedBet.event_date == target_date,
+                TrackedBet.source_rule_key.in_(["acca_leg_system", "acca_advisory_system"]),
+            )
+        )).all()
+    )
+    existing_keys: set[tuple] = {(r.fixture_id, r.market_type) for r in existing_rows}
+
+    inserted = 0
+    for leg in legs:
+        fid = leg.get("fixture_id")
+        market = leg.get("market", "")
+        if not fid or not market:
+            continue
+        key = (fid, market)
+        if key in existing_keys:
+            continue
+        odd = float(leg.get("odd") or 0)
+        if odd <= 1.0:
+            continue
+        match_name = (
+            f"{leg.get('home_team', '')} vs {leg.get('away_team', '')}"
+            if leg.get("home_team") else "Unknown"
+        )
+        bet = TrackedBet(
+            user_id=None,
+            fixture_id=fid,
+            bookmaker="AI Acca",
+            event_date=target_date,
+            match_name=match_name,
+            league=None,
+            market_type=market,
+            selection_name=market,
+            odds=odd,
+            stake=50_000.0,
+            source_rule_key="acca_leg_system",
+            source_rule_label="AI Acca Leg (Auto)",
+            dual_confidence=acca.get("confidence"),
+            result_status="Pending",
+        )
+        db.add(bet)
+        existing_keys.add(key)
+        inserted += 1
+
+    # Combined accumulator row — dedup on market_type="Accumulator"
+    combo_key = (None, "Accumulator")
+    if combo_key not in existing_keys:
+        # Check by source_rule_key + date since fixture_id is NULL for the combo row
+        combo_exists = await db.scalar(
+            select(TrackedBet.id).where(
+                TrackedBet.source_rule_key == "acca_advisory_system",
+                TrackedBet.event_date == target_date,
+                TrackedBet.user_id.is_(None),
+            )
+        )
+        if not combo_exists:
+            leg_summary = "\n".join(
+                f"{i+1}. {leg.get('home_team','')} vs {leg.get('away_team','')} · "
+                f"{leg.get('market','')} @ {float(leg.get('odd') or 0):.2f}"
+                for i, leg in enumerate(legs)
+            )
+            combo = TrackedBet(
+                user_id=None,
+                fixture_id=None,
+                bookmaker="AI Acca",
+                event_date=target_date,
+                match_name=f"AI Acca · {len(legs)} leg{'s' if len(legs) != 1 else ''}",
+                league=None,
+                market_type="Accumulator",
+                selection_name="Accumulator",
+                odds=combined_odds,
+                stake=50_000.0,
+                source_rule_key="acca_advisory_system",
+                source_rule_label="AI Acca of the Day (System)",
+                dual_confidence=acca.get("confidence"),
+                notes=json.dumps({"legs": legs, "leg_summary": leg_summary}),
+                result_status="Pending",
+            )
+            db.add(combo)
+            inserted += 1
+
+    if inserted:
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.warning("auto_track_acca_legs: commit failed for %s", target_date, exc_info=True)
+            return 0
+
+    return inserted
+
+
 # ── Acca leg results (computed live from current Fixture rows) ───────────────
 # Not persisted into the cache — recomputed on every call so results always
 # reflect the latest fixture score/status rather than a stale snapshot.
@@ -923,29 +1037,51 @@ async def get_advisor_insights(
     # AI-3: Build Skeptic-specific divergence extras (market vs model, thin coverage, drift)
     skeptic_extras = _build_skeptic_extras(rows)
 
-    # ── Acca builder gets its own elite signal pool ───────────────────────────
-    # Strict: High confidence + Both agreement + primary_prob ≥ 0.70
+    # ── Acca builder gets its own signal pool (tiered fallbacks) ─────────────
+    # The pool drives both what the AI sees AND the hallucination-guard validation
+    # (legs not in the pool are dropped).  All four tiers keep the same pool for
+    # both purposes so the AI can never propose legs it wasn't given.
+
     def _primary_prob(sig: Signal) -> float:
         return max(sig.bayesian_prob or 0.0, sig.poisson_prob or 0.0)
 
-    acca_rows_strict = [
+    # Tier 1: best — High+Both+prob≥0.70
+    acca_t1 = [
         (sig, fix) for sig, fix in rows
         if sig.dual_confidence == "High"
         and sig.dual_agreement == "Both"
         and _primary_prob(sig) >= 0.70
     ]
-    # Fallback: High + Both without the prob floor (still no Medium/Contradiction legs)
-    acca_rows_fallback = [
+    # Tier 2: High+Both, no prob floor
+    acca_t2 = [
         (sig, fix) for sig, fix in rows
         if sig.dual_confidence == "High"
         and sig.dual_agreement == "Both"
     ]
-    acca_pool = acca_rows_strict if len(acca_rows_strict) >= 3 else acca_rows_fallback
-    acca_context = (
-        _build_context(acca_pool, match_infos, perf_weights)
-        if acca_pool
-        else context  # last resort: use the full context
-    )
+    # Tier 3: Both agreement + either engine ≥ 0.60
+    acca_t3 = [
+        (sig, fix) for sig, fix in rows
+        if sig.dual_agreement == "Both"
+        and _primary_prob(sig) >= 0.60
+    ]
+    # Tier 4: any signal with max prob ≥ 0.60
+    acca_t4 = [
+        (sig, fix) for sig, fix in rows
+        if _primary_prob(sig) >= 0.60
+    ]
+
+    if len(acca_t1) >= 3:
+        acca_pool = acca_t1
+    elif len(acca_t2) >= 3:
+        acca_pool = acca_t2
+    elif len(acca_t3) >= 3:
+        acca_pool = acca_t3
+    elif len(acca_t4) >= 3:
+        acca_pool = acca_t4
+    else:
+        acca_pool = list(rows)  # last resort: all signals
+
+    acca_context = _build_context(acca_pool, match_infos, perf_weights)
 
     all_advisor_coros = [
         _call_advisor(

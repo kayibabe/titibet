@@ -367,7 +367,7 @@ async def _advisory_cache_job() -> None:
 
     No-op when no AI provider keys are configured.
     """
-    from app.services.advisor_service import get_advisor_insights
+    from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
     async with AsyncSessionLocal() as db:
         try:
             result = await get_advisor_insights(db, date.today(), current_user=None, force=True)
@@ -377,6 +377,11 @@ async def _advisory_cache_job() -> None:
                 "Advisory cache job: %d matches analysed, cached=%s",
                 n_matches, not from_cache,
             )
+            acca = result.get("accumulator", {})
+            if acca.get("legs") and not acca.get("error"):
+                n_tracked = await auto_track_acca_legs(db, acca, date.today())
+                if n_tracked:
+                    logger.info("Advisory cache job: auto-tracked %d acca rows for %s", n_tracked, date.today())
         except Exception:
             logger.exception("Advisory cache job failed — users will fall back to live computation")
 
@@ -439,10 +444,15 @@ async def _tomorrow_presync_job() -> None:
             logger.exception("Tomorrow pre-sync failed — nightly digest job will retry")
             return
         try:
-            from app.services.advisor_service import get_advisor_insights
+            from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
             result = await get_advisor_insights(db, tomorrow, current_user=None, force=True)
             n_matches = result.get("matches_analysed", 0)
             logger.info("Tomorrow advisory cache: %d matches analysed for %s", n_matches, tomorrow)
+            acca = result.get("accumulator", {})
+            if acca.get("legs") and not acca.get("error"):
+                n_tracked = await auto_track_acca_legs(db, acca, tomorrow)
+                if n_tracked:
+                    logger.info("Tomorrow pre-sync: auto-tracked %d acca rows for %s", n_tracked, tomorrow)
         except Exception:
             logger.exception("Tomorrow advisory pre-cache failed — users will fall back to live computation")
         try:

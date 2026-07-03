@@ -322,8 +322,6 @@ const TICKET_STATUS_CFG = {
 }
 
 function AccaTicket({ acca, date }) {
-  // tracked flag from the API = "already in this user's tracker"; tracking
-  // itself is opt-in via the button below — viewing never creates a bet.
   const [isTracked, setIsTracked] = useState(Boolean(acca?.tracked))
   const [trackBusy, setTrackBusy] = useState(false)
   const [trackErr,  setTrackErr]  = useState(null)
@@ -358,15 +356,15 @@ function AccaTicket({ acca, date }) {
   }[confidence] || { cls: 'text-[var(--text)] border-[var(--border)] bg-[var(--code-bg)]', dot: 'bg-[var(--text)]' }
 
   return (
-    <div className="rounded-xl border border-[var(--accent)]/30 bg-[var(--bg)] overflow-hidden">
+    <div className="rounded-xl border-2 border-[var(--accent)]/40 bg-[var(--bg)] overflow-hidden shadow-sm">
       {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-4 py-3 bg-[var(--accent)]/8 border-b border-[var(--accent)]/20">
-        <div className="flex items-center gap-2">
-          <Ticket size={14} className="text-[var(--accent)] shrink-0" />
+      <div className="flex items-center justify-between gap-2 px-4 py-3 bg-[var(--accent)]/10 border-b border-[var(--accent)]/20">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Ticket size={15} className="text-[var(--accent)] shrink-0" />
           <span className="text-sm font-bold text-[var(--text-h)]">Acca of the Day</span>
-          <span className="text-[10px] text-[var(--text)] opacity-60">AI-selected accumulator</span>
+          <span className="text-[10px] text-[var(--text)] opacity-55 hidden sm:inline">AI-selected accumulator</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {ticketStatus && (
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${TICKET_STATUS_CFG[ticketStatus].cls}`}>
               {TICKET_STATUS_CFG[ticketStatus].label}
@@ -388,22 +386,26 @@ function AccaTicket({ acca, date }) {
             </span>
           )}
           {legs.length > 0 && !error && (
-            isTracked ? (
-              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-green-500/10 text-green-400 border border-green-500/25">
-                <CheckCircle size={10} />
-                In your tracker · K50,000
-              </span>
-            ) : (
-              <button
-                onClick={handleTrack}
-                disabled={trackBusy}
-                title="Add this acca to your bet tracker at a K50,000 stake"
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-[var(--accent)] text-white hover:opacity-90 active:scale-95 disabled:opacity-50 transition-all"
-              >
-                {trackBusy ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
-                {trackBusy ? 'Tracking…' : 'Track · K50,000'}
-              </button>
-            )
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-green-500/10 text-green-400 border border-green-500/25">
+              <CheckCircle size={10} />
+              Tracked automatically · K50,000
+            </span>
+          )}
+          {legs.length > 0 && !error && !isTracked && (
+            <button
+              onClick={handleTrack}
+              disabled={trackBusy}
+              title="Add this acca to your personal tracker at a K50,000 stake"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-all"
+            >
+              {trackBusy ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
+              {trackBusy ? 'Adding…' : '+ My Tracker'}
+            </button>
+          )}
+          {legs.length > 0 && !error && isTracked && (
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] text-[var(--accent)] font-semibold">
+              ✓ In tracker
+            </span>
           )}
         </div>
       </div>
@@ -715,31 +717,41 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
           <p className="text-sm text-[var(--text)] opacity-75 text-center py-10">{data.message}</p>
         )}
 
+        {/* ── Acca of the Day (flagship section) ──────────────── */}
+        {/* Acca skeleton while loading */}
+        {loading && (
+          <div className="rounded-xl border-2 border-[var(--accent)]/30 bg-[var(--bg)] overflow-hidden animate-pulse shadow-sm">
+            <div className="flex items-center gap-2 px-4 py-3 bg-[var(--accent)]/10 border-b border-[var(--accent)]/20">
+              <div className="w-4 h-4 rounded bg-[var(--border)]" />
+              <div className="h-3.5 w-36 rounded bg-[var(--border)]" />
+              <div className="ml-auto h-3 w-20 rounded-full bg-[var(--border)]" />
+            </div>
+            <div className="px-4 py-4 space-y-2.5">
+              {[1,2,3,4].map(i => <div key={i} className="h-12 rounded-lg bg-[var(--border)]" />)}
+              <div className="h-3 w-2/3 rounded bg-[var(--border)] mt-2" />
+            </div>
+          </div>
+        )}
+
         {/* Acca of the Day — shown once analysis is loaded */}
         {!loading && data?.accumulator && (
           <AccaTicket acca={data.accumulator} date={date} />
         )}
 
-        {/* Acca skeleton while loading */}
-        {loading && (
-          <div className="rounded-xl border border-[var(--accent)]/20 bg-[var(--bg)] overflow-hidden animate-pulse">
-            <div className="flex items-center gap-2 px-4 py-3 bg-[var(--accent)]/8 border-b border-[var(--accent)]/20">
-              <div className="w-3.5 h-3.5 rounded bg-[var(--border)]" />
-              <div className="h-3 w-32 rounded bg-[var(--border)]" />
-            </div>
-            <div className="px-4 py-3 space-y-2">
-              {[1,2,3].map(i => <div key={i} className="h-10 rounded-lg bg-[var(--border)]" />)}
-            </div>
-          </div>
-        )}
-
         {(loading || data?.advisors?.length > 0) && (
-          <div className="grid gap-4 sm:grid-cols-3">
-            {loading
-              ? ADVISORS_META.map(m => <AdvisorSkeleton key={m.id} {...m} />)
-              : data.advisors.map(adv => <AdvisorCard key={adv.id} advisor={adv} onFilterPick={onFilterPick} />)
-            }
-          </div>
+          <>
+            <div className="flex items-center gap-3 pt-1">
+              <div className="flex-1 h-px bg-[var(--border)]" />
+              <span className="text-[10px] font-bold text-[var(--text)] opacity-50 tracking-widest uppercase">Advisory Council</span>
+              <div className="flex-1 h-px bg-[var(--border)]" />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              {loading
+                ? ADVISORS_META.map(m => <AdvisorSkeleton key={m.id} {...m} />)
+                : data.advisors.map(adv => <AdvisorCard key={adv.id} advisor={adv} onFilterPick={onFilterPick} />)
+              }
+            </div>
+          </>
         )}
 
         {!loading && data?.advisors?.length > 0 && (

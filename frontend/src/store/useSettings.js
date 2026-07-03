@@ -4,11 +4,6 @@ const DEFAULTS = {
   bankroll: 50000,
   unitPct: 1,
   kellyFraction: 0.25,
-  // Signal filters — wired to the /api/signals query params
-  defaultConfidence: '',      // '' = All, or comma-sep e.g. 'High,Medium'
-  defaultAgreement: '',       // '' = All, or 'Both', 'Bayesian Only', 'Poisson Only'
-  minQuality: 0.0,            // min dual_quality_score (0 = off, 0.40+ = Both engines)
-  hideContradictions: true,   // client-side filter
   theme: 'system',
 }
 
