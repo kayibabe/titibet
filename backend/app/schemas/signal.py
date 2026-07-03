@@ -78,6 +78,12 @@ class SignalOut(BaseModel):
     # Selection label for tracker/UI (independent of bayesian.* — kept top-level)
     selection_name: Optional[str] = None
 
+    # Displayable market odds, always populated when the signal has a price —
+    # including Poisson-only signals, whose `bayesian` block is None even though
+    # the row carries bookmaker odds (best_odd falls back to poi_signal_odds).
+    best_odd: Optional[float] = None
+    best_bookmaker: Optional[str] = None
+
     # All bookmaker prices for this market (populated in deep-dive endpoint)
     bookmaker_odds: Optional[list[BookmakerOdds]] = None
 

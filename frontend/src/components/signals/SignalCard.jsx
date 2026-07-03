@@ -368,9 +368,9 @@ function useKickoff(kickoffAt, status) {
 }
 
 // ── Probability line (primary row) ───────────────────────────────────────────
-// Market label + confidence pill | probability bar | %
-// Bookmaker · offered odds display lives in the secondary (Details) layer.
-function ProbabilityLine({ market, confidence, prob }) {
+// Market label + confidence pill | probability bar | % | @odds
+// Full bookmaker detail (name, book count, fair-odds compare) stays in Details.
+function ProbabilityLine({ market, confidence, prob, odd, bookmaker }) {
   if (prob == null) return null
 
   const pct = Math.max(0, Math.min(100, prob * 100))
@@ -418,6 +418,15 @@ function ProbabilityLine({ market, confidence, prob }) {
       <span className="text-sm font-bold font-mono text-[var(--text-h)] w-12 text-right tabular-nums shrink-0">
         {pctLabel}%
       </span>
+
+      {odd != null && odd > 1 && (
+        <span
+          title={bookmaker ? `Best market price · ${bookmaker}` : 'Best market price'}
+          className="text-sm font-bold font-mono text-[var(--accent)] tabular-nums shrink-0"
+        >
+          @{Number(odd).toFixed(2)}
+        </span>
+      )}
     </div>
   )
 }
@@ -537,20 +546,24 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
     ? `${(signal.dual_recommended_stake_pct * 100).toFixed(1)}%`
     : null
 
-  // Convert raw quality score (0.0–0.15+) to an A/B/C/D letter grade.
+  // Convert raw quality score to an A/B/C/D letter grade.
+  // Thresholds match the probability-based quality scale introduced 2026-07-02
+  // (quality ≈ prob × tier/bookmaker/confidence factors, typically 0.2–0.8) —
+  // same cutoffs as the backend auto-tracker grade.
   const qualityGrade = (() => {
     const q = signal.dual_quality_score
     if (q == null) return null
     const rawScore = q.toFixed(4)
-    if (q >= 0.08)  return { label: 'A', color: 'text-green-400',  bg: 'bg-green-500/15  border-green-500/30',  rawScore }
-    if (q >= 0.055) return { label: 'B', color: 'text-blue-400',   bg: 'bg-blue-500/15   border-blue-500/30',   rawScore }
-    if (q >= 0.035) return { label: 'C', color: 'text-amber-400',  bg: 'bg-amber-500/15  border-amber-500/30',  rawScore }
-    return               { label: 'D', color: 'text-slate-400',  bg: 'bg-slate-500/10  border-slate-500/20',  rawScore }
+    if (q >= 0.60) return { label: 'A', color: 'text-green-400',  bg: 'bg-green-500/15  border-green-500/30',  rawScore }
+    if (q >= 0.45) return { label: 'B', color: 'text-blue-400',   bg: 'bg-blue-500/15   border-blue-500/30',   rawScore }
+    if (q >= 0.30) return { label: 'C', color: 'text-amber-400',  bg: 'bg-amber-500/15  border-amber-500/30',  rawScore }
+    return              { label: 'D', color: 'text-slate-400',  bg: 'bg-slate-500/10  border-slate-500/20',  rawScore }
   })()
 
   const isContradiction = signal.dual_agreement === 'Contradiction'
   const isBayesianOnly = signal.dual_agreement === 'Bayesian Only' || (signal.dual_agreement === 'Both' && signal.dual_confidence !== 'High')
-  const displayBestOdd = signal.bayesian?.best_odd ?? null
+  const displayBestOdd = signal.best_odd ?? signal.bayesian?.best_odd ?? null
+  const displayBookmaker = signal.best_bookmaker ?? signal.bayesian?.bookmaker ?? null
   const evPct = signal.bayesian?.ev_pct ?? null
   const evScore = signal.advanced?.ev_score ?? null   // pre-computed, preferred
   const primaryProb = Math.max(signal.bayesian?.prob ?? 0, signal.poisson?.prob ?? 0)
@@ -629,6 +642,8 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
           market={signal.market}
           confidence={signal.dual_confidence}
           prob={primaryProb > 0 ? primaryProb : null}
+          odd={displayBestOdd}
+          bookmaker={displayBookmaker}
         />
 
         {/* One synthesized conviction chip on the face — fires only when two
@@ -654,9 +669,9 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
           <div className="space-y-2 border-t border-[var(--border)] pt-2.5">
 
             {/* Bookmaker · offered odds · bookmaker count */}
-            {signal.bayesian?.best_odd != null && (
+            {displayBestOdd != null && (
               <div className="flex items-center gap-2 flex-wrap text-xs text-[var(--text)]">
-                <span className="opacity-75">{signal.bayesian?.bookmaker}</span>
+                <span className="opacity-75">{displayBookmaker}</span>
                 <span className="font-mono text-[var(--accent)] font-semibold">
                   {Number(displayBestOdd).toFixed(2)}
                 </span>
@@ -685,7 +700,7 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
             <FairOddsRow
               bayesian={signal.bayesian}
               bestOdd={displayBestOdd}
-              bookmaker={signal.bayesian?.bookmaker}
+              bookmaker={displayBookmaker}
             />
 
             {/* Why-market context chips */}

@@ -273,6 +273,10 @@ def _to_signal_out(
         dual_recommended_stake_pct=sig.dual_recommended_stake_pct,
         contradiction=sig.contradiction, computed_at=sig.computed_at,
         selection_name=sig.market,
+        # Top-level odds so Poisson-only signals (bayesian block = None) still
+        # surface their bookmaker price to the UI.
+        best_odd=sig.bayesian_best_odd,
+        best_bookmaker=sig.bayesian_bookmaker,
         odds_drift_pct=sig.odds_drift_pct,
         advanced=advanced,
         bookmaker_odds=bookmaker_odds,
