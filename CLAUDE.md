@@ -117,18 +117,23 @@ Self-learning loop closed
 
 ## Signal ranking — _system_rank() tuple
 
-Signals are ranked by this priority tuple (highest first):
+Signals are ranked by this 14-field priority tuple (highest first). The actual
+tuple is built in `routers/signals.py:_system_rank()` — keep this in sync.
 
+0. `poisson_medium_flag` — 1 if Poisson grade is Medium (gates noisy low-grade signals)
 1. `confidence_rank` — High=3, Medium=2, Low=1
 2. `agreement_rank` — Both=3, Bayesian Only=2, Poisson Only=1, Contradiction=0
 3. `high_probability_flag` — 1 if primary_prob ≥ 0.70
 4. `primary_prob` — continuous (max of bayesian/poisson)
-5. `goals_expectation` — poisson_lambda_total
-6. `dual_model_probability_flag` — 1 if both engines ≥ 0.65
-7. `bookmaker_support_rank` — 3+ books=2, 2 books=1, else 0
-8. `tier_rank` — 1 if Tier 1 league
-9. `avg_prob` — (bayesian + poisson) / 2
-10. `dual_quality_score` — final tie-breaker
+5. `bookmaker_support_rank` — 3+ books=2, 2 books=1, else 0
+6. `clv_market_rank` — 1 if this market has confirmed positive CLV history
+7. `drift_rank` — odds-drift signal (market moving in our favour)
+8. `dual_model_probability_flag` — 1 if both engines ≥ 0.65
+9. `glicko_certainty` — Glicko-2 rating-gap confidence (higher = more reliable)
+10. `tier_rank` — 1 if Tier 1 league
+11. `avg_prob` — (bayesian + poisson) / 2
+12. `dual_quality_score` — fused quality score from dual_engine
+13. `goals_expectation` — poisson_lambda_total (final tie-breaker)
 
 ---
 

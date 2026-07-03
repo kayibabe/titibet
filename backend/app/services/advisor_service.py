@@ -220,7 +220,7 @@ def _build_context(rows: list, match_infos: dict, perf_weights: "PerformanceWeig
         ah   = info.get("away_highlights", [])[:2]
 
         ko = (
-            fix.kickoff_at.strftime("%H:%M UTC") if fix.kickoff_at else "TBD"
+            fix.kickoff_at.strftime("%H:%M CAT") if fix.kickoff_at else "TBD"
         )
         line = (
             f"[{i}] (id:{fix.id}) {fix.home_team} vs {fix.away_team}"
@@ -1104,7 +1104,7 @@ async def get_advisor_insights(
         .where(Signal.dual_confidence.in_(["High", "Medium"]))
         .where(Signal.dual_agreement.in_(["Both", "Bayesian Only", "Poisson Only"]))
         .order_by(Signal.dual_quality_score.desc().nullslast())
-        .limit(12)
+        .limit(15)
     )
     if fixture_ids:
         q = q.where(Signal.fixture_id.in_(fixture_ids))
@@ -1451,6 +1451,77 @@ async def get_advisor_insights(
         return (-conf, -dual_both, -in_range, dist)
 
     processed_tickets.sort(key=_ticket_rank)
+
+    # ── Auto-retry on zero tickets ────────────────────────────────────────────
+    # When all LLM tickets failed validation (bad fixture_ids, odds > 3.5, etc.)
+    # try once more with: the full advisory pool (no tier filtering), the ceiling
+    # relaxed to 25× so borderline leg combinations survive, and all fixtures
+    # available as candidates.  Only fires when the first attempt returned a
+    # non-error response (i.e. the LLM answered but all tickets were rejected
+    # by server-side guards) and there are enough signals to build at least one
+    # ticket.
+    if not processed_tickets and isinstance(acca_result, dict) and not acca_result.get("error") and len(rows) >= 3:
+        logger.info("Acca: zero tickets after validation — retrying with full pool and relaxed ceiling")
+        _pool_by_fid = {fix.id: (sig, fix) for sig, fix in rows}
+        _pool_by_names = {
+            (_norm(fix.home_team), _norm(fix.away_team)): (sig, fix)
+            for sig, fix in rows
+        }
+        _COMBINED_MAX = 25.0
+        used_fixture_ids = set()
+
+        retry_context = _build_context(list(rows), match_infos, perf_weights)
+        retry_model_label, retry_raw = await _call_advisor(ACCA_BUILDER, retry_context, settings)
+
+        retry_raw_tickets: list[dict] = []
+        if isinstance(retry_raw, dict):
+            if "tickets" in retry_raw:
+                retry_raw_tickets = retry_raw.get("tickets") or []
+            elif "legs" in retry_raw:
+                retry_raw_tickets = [retry_raw]
+
+        for raw_ticket in retry_raw_tickets:
+            if not isinstance(raw_ticket, dict) or "legs" not in raw_ticket:
+                continue
+            raw_legs = (raw_ticket.get("legs") or [])[:_MAX_ACCA_LEGS]
+            ticket_legs = _validate_ticket_legs(raw_legs, used_fixture_ids)
+            if len(ticket_legs) < _MIN_ACCA_LEGS:
+                continue
+            ticket_legs, combined_odds = _apply_ceiling(ticket_legs)
+            if len(ticket_legs) < _MIN_ACCA_LEGS:
+                continue
+            for leg in ticket_legs:
+                used_fixture_ids.add(leg["fixture_id"])
+            ai_conf = raw_ticket.get("confidence", "Medium")
+            resolved_conf = (
+                "High"
+                if len(ticket_legs) >= 3 and combined_odds is not None and combined_odds >= 3.0
+                else ai_conf
+            )
+            ticket_tracked = False
+            if uid is not None:
+                try:
+                    fp = _acca_fingerprint(ticket_legs)
+                    ticket_tracked = await _is_acca_tracked(db, target_date, uid, fp=fp)
+                except Exception as exc:
+                    logger.warning("_is_acca_tracked failed on acca retry: %s", exc)
+            try:
+                await _attach_leg_results(db, ticket_legs, target_date)
+            except Exception as exc:
+                logger.warning("_attach_leg_results failed on acca retry: %s", exc)
+            processed_tickets.append({
+                "model":         retry_model_label,
+                "legs":          ticket_legs,
+                "combined_odds": combined_odds,
+                "rationale":     raw_ticket.get("rationale", ""),
+                "confidence":    resolved_conf,
+                "tracked":       ticket_tracked,
+                "error":         None,
+            })
+
+        if processed_tickets:
+            processed_tickets.sort(key=_ticket_rank)
+            acca_model_label = retry_model_label
 
     # Assign rank labels after sorting so every TrackedBet row carries the
     # position (Top Pick / Alt Pick 1 / Alt Pick 2 …) in source_rule_label.

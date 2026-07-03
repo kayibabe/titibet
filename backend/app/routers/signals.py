@@ -549,6 +549,34 @@ async def stat_driven_picks(
     rows = _best_per_fixture(rows, "system", clv_ranks)
     rows.sort(key=lambda r: _sort_metric(r[0], "system", r[1], clv_ranks), reverse=True)
 
+    # ── Same diversity caps as list_signals ──────────────────────────────────
+    # Prevent a single Tier 3 league flooding the stat-picks list with correlated
+    # signals, and prevent a single market dominating when both HO0.5 and AO0.5
+    # each have their own per-market cap configured.
+    tier3_lc: dict[str, int] = {}
+    capped_rows: list = []
+    for sig, fix in rows:
+        if (fix.league_tier or 3) >= 3:
+            n = tier3_lc.get(fix.league or "", 0)
+            if n >= MAX_SIGNALS_PER_TIER3_LEAGUE:
+                continue
+            tier3_lc[fix.league or ""] = n + 1
+        capped_rows.append((sig, fix))
+    rows = capped_rows
+
+    if MAX_SIGNALS_PER_MARKET:
+        mkt_counts: dict[str, int] = {}
+        mkt_capped: list = []
+        for sig, fix in rows:
+            mkt_cap = MAX_SIGNALS_PER_MARKET.get(sig.market or "", 0)
+            if mkt_cap:
+                n = mkt_counts.get(sig.market or "", 0)
+                if n >= mkt_cap:
+                    continue
+                mkt_counts[sig.market or ""] = n + 1
+            mkt_capped.append((sig, fix))
+        rows = mkt_capped
+
     def _primary_prob(sig: Signal) -> float | None:
         vals = [v for v in (sig.bayesian_prob, sig.poisson_prob) if v is not None]
         return max(vals) if vals else None
