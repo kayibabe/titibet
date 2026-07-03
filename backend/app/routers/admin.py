@@ -730,21 +730,25 @@ async def retrack_advisory_acca(
         await db.commit()
 
     result = await get_advisor_insights(db, d, current_user=None)
-    acca = result.get("accumulator", {})
-    if not acca.get("legs") or acca.get("error"):
+    tickets = result.get("accumulators") or []
+    if not tickets:
+        acca = result.get("accumulator", {})
+        if acca.get("legs") and not acca.get("error"):
+            tickets = [acca]
+    if not tickets:
         return {
             "replaced": 0,
             "user_rows_deleted": user_rows_deleted,
             "message": "No valid acca available for this date.",
         }
 
-    n = await auto_track_acca_legs(db, acca, d, replace=True)
+    n = await auto_track_acca_legs(db, tickets, d, replace=True)
     return {
-        "replaced": n,
+        "replaced":          n,
         "user_rows_deleted": user_rows_deleted,
-        "date": d.isoformat(),
-        "combined_odds": acca.get("combined_odds"),
-        "legs": len(acca.get("legs", [])),
+        "date":              d.isoformat(),
+        "tickets":           len(tickets),
+        "combined_odds":     [t.get("combined_odds") for t in tickets],
     }
 
 

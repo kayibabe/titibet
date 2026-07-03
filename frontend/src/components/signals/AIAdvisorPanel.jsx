@@ -321,7 +321,7 @@ const TICKET_STATUS_CFG = {
   pending: { cls: 'text-amber-400 border-amber-500/40 bg-amber-500/10',  label: '⏳ Live'  },
 }
 
-function AccaTicket({ acca, date }) {
+function AccaTicket({ acca, date, index = 0, total = 1 }) {
   const [isTracked, setIsTracked] = useState(Boolean(acca?.tracked))
   const [trackBusy, setTrackBusy] = useState(false)
   const [trackErr,  setTrackErr]  = useState(null)
@@ -361,7 +361,9 @@ function AccaTicket({ acca, date }) {
       <div className="flex items-center justify-between gap-2 px-4 py-3 bg-[var(--accent)]/10 border-b border-[var(--accent)]/20">
         <div className="flex items-center gap-2 flex-wrap">
           <Ticket size={15} className="text-[var(--accent)] shrink-0" />
-          <span className="text-sm font-bold text-[var(--text-h)]">Acca of the Day</span>
+          <span className="text-sm font-bold text-[var(--text-h)]">
+            {total > 1 ? `Acca ${index + 1} of ${total}` : 'Acca of the Day'}
+          </span>
           <span className="text-[10px] text-[var(--text)] opacity-55 hidden sm:inline">AI-selected accumulator</span>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -733,10 +735,15 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
           </div>
         )}
 
-        {/* Acca of the Day — shown once analysis is loaded */}
-        {!loading && data?.accumulator && (
-          <AccaTicket acca={data.accumulator} date={date} />
-        )}
+        {/* Acca tickets — one or more non-overlapping tickets */}
+        {!loading && (() => {
+          const tickets = data?.accumulators?.length
+            ? data.accumulators
+            : data?.accumulator ? [data.accumulator] : []
+          return tickets.map((t, i) => (
+            <AccaTicket key={i} acca={t} date={date} index={i} total={tickets.length} />
+          ))
+        })()}
 
         {(loading || data?.advisors?.length > 0) && (
           <>

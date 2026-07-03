@@ -377,11 +377,18 @@ async def _advisory_cache_job() -> None:
                 "Advisory cache job: %d matches analysed, cached=%s",
                 n_matches, not from_cache,
             )
-            acca = result.get("accumulator", {})
-            if acca.get("legs") and not acca.get("error"):
-                n_tracked = await auto_track_acca_legs(db, acca, date.today())
+            tickets = result.get("accumulators") or []
+            if not tickets:
+                acca = result.get("accumulator", {})
+                if acca.get("legs") and not acca.get("error"):
+                    tickets = [acca]
+            if tickets:
+                n_tracked = await auto_track_acca_legs(db, tickets, date.today())
                 if n_tracked:
-                    logger.info("Advisory cache job: auto-tracked %d acca rows for %s", n_tracked, date.today())
+                    logger.info(
+                        "Advisory cache job: auto-tracked %d acca rows (%d tickets) for %s",
+                        n_tracked, len(tickets), date.today(),
+                    )
         except Exception:
             logger.exception("Advisory cache job failed — users will fall back to live computation")
 
@@ -448,11 +455,18 @@ async def _tomorrow_presync_job() -> None:
             result = await get_advisor_insights(db, tomorrow, current_user=None, force=True)
             n_matches = result.get("matches_analysed", 0)
             logger.info("Tomorrow advisory cache: %d matches analysed for %s", n_matches, tomorrow)
-            acca = result.get("accumulator", {})
-            if acca.get("legs") and not acca.get("error"):
-                n_tracked = await auto_track_acca_legs(db, acca, tomorrow)
+            tickets = result.get("accumulators") or []
+            if not tickets:
+                acca = result.get("accumulator", {})
+                if acca.get("legs") and not acca.get("error"):
+                    tickets = [acca]
+            if tickets:
+                n_tracked = await auto_track_acca_legs(db, tickets, tomorrow)
                 if n_tracked:
-                    logger.info("Tomorrow pre-sync: auto-tracked %d acca rows for %s", n_tracked, tomorrow)
+                    logger.info(
+                        "Tomorrow pre-sync: auto-tracked %d acca rows (%d tickets) for %s",
+                        n_tracked, len(tickets), tomorrow,
+                    )
         except Exception:
             logger.exception("Tomorrow advisory pre-cache failed — users will fall back to live computation")
         try:

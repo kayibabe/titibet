@@ -58,26 +58,31 @@ ACCA_BUILDER: dict = {
     "system": (
         "You are a specialist football accumulator analyst. "
         "You receive a pool of pre-screened signals ranked by dual-engine probability agreement. "
-        "Your role is to select the best 3-4 legs. Optimise for: "
+        "Your role is to build as many non-overlapping accumulator tickets as possible from the pool. "
+        "Each ticket: 3–4 legs. No fixture may appear in more than one ticket. "
+        "Keep building tickets until fewer than 3 signals remain unused. "
+        "Per ticket, optimise for: "
         "(1) Prefer legs where both Bayesian and Poisson engines agree (dual_agreement=Both) "
         "with probability ≥0.60. Fall back to single-engine signals only when the dual pool is thin. "
-        "(2) League diversity — no more than 2 legs from the same league. "
+        "(2) League diversity — no more than 2 legs from the same league within a ticket. "
         "(3) Combined decimal odds in the 6.0–20.0 range — meaningful reward without becoming a lottery. "
         "(4) Market diversity — avoid stacking the same market type (e.g. all Over 2.5). "
-        "Avoid: the same team appearing more than once, any decimal leg odd above 3.5, "
-        "and any signal where the contextual data raises red flags. "
+        "Avoid per ticket: the same team more than once, any decimal leg odd above 3.5, "
+        "any signal where contextual data raises red flags. "
         "For each leg use the Bayesian best_odd from the context; if missing, estimate from the probability. "
-        "Set confidence to 'High' when you select ≥3 legs where both engines agree at ≥0.60 probability. "
+        "Set confidence to 'High' when ≥3 legs in a ticket have both engines agreeing at ≥0.60 probability. "
         "Set confidence to 'Medium' for mixed pools. "
         "Always respond with valid JSON only — no markdown, no prose outside the JSON."
     ),
     "task": (
-        "Select the best 3-4 legs for today's accumulator. "
+        "Build all possible non-overlapping accumulator tickets from the signals above. "
         "Each leg MUST use the fixture_id shown in parentheses (id:NNN) at the start of its context block. "
         "Return JSON with this EXACT shape — no extra fields:\n"
+        '{"tickets":['
         '{"legs":[{"fixture_id":123,"home_team":"...","away_team":"...","market":"...","odd":1.75,"reason":"1-sentence justification"}],'
-        '"rationale":"2-3 sentence explanation of why these legs combine well and what makes this acca compelling today",'
+        '"rationale":"2-3 sentence explanation of why these legs combine well",'
         '"confidence":"High"|"Medium"|"Low"}'
+        "]}"
     ),
 }
 
@@ -727,24 +732,26 @@ async def _create_acca_bet(
 
 async def auto_track_acca_legs(
     db:          AsyncSession,
-    acca:        dict,
+    acca:        dict | list,
     target_date: date,
     replace:     bool = False,
 ) -> int:
     """
-    Create system-level TrackedBet rows (user_id=None) for each acca leg and
-    one combined accumulator row.  Idempotent by default: skips any leg already
-    tracked for this date (keyed on fixture_id + market_type).
+    Create system-level TrackedBet rows (user_id=None) for ALL acca tickets on a
+    date — one leg row per fixture+market, one combined row per ticket fingerprint.
 
-    When replace=True, existing system acca rows for the date are deleted first
-    so the new acca fully replaces the old one (used after a cache clear/force).
-    Returns count of new rows.
+    Accepts either a single acca dict (backward compat) or a list of ticket dicts.
+    Idempotent by default: skips legs already tracked for this date.
+    replace=True wipes all system acca rows first (emergency reset).
+
+    Returns total count of new rows inserted.
     """
     from app.models.bet import TrackedBet
 
-    legs = acca.get("legs", [])
-    combined_odds = acca.get("combined_odds")
-    if not legs or not combined_odds or combined_odds <= 1.0:
+    # Normalise to list of tickets
+    tickets: list[dict] = acca if isinstance(acca, list) else [acca]
+    tickets = [t for t in tickets if t.get("legs") and t.get("combined_odds", 0) > 1.0]
+    if not tickets:
         return 0
 
     if replace:
@@ -758,7 +765,6 @@ async def auto_track_acca_legs(
         )
         existing_keys: set[tuple] = set()
     else:
-        # Load existing system acca rows for this date to dedup
         existing_rows = list(
             (await db.execute(
                 select(TrackedBet.fixture_id, TrackedBet.market_type)
@@ -771,78 +777,81 @@ async def auto_track_acca_legs(
         existing_keys = {(r.fixture_id, r.market_type) for r in existing_rows}
 
     inserted = 0
-    for leg in legs:
-        fid = leg.get("fixture_id")
-        market = leg.get("market", "")
-        if not fid or not market:
-            continue
-        key = (fid, market)
-        if key in existing_keys:
-            continue
-        odd = float(leg.get("odd") or 0)
-        if odd <= 1.0:
-            continue
-        match_name = (
-            f"{leg.get('home_team', '')} vs {leg.get('away_team', '')}"
-            if leg.get("home_team") else "Unknown"
-        )
-        bet = TrackedBet(
-            user_id=None,
-            fixture_id=fid,
-            bookmaker="AI Acca",
-            event_date=target_date,
-            match_name=match_name,
-            league=None,
-            market_type=market,
-            selection_name=market,
-            odds=odd,
-            stake=50_000.0,
-            source_rule_key="acca_leg_system",
-            source_rule_label="AI Acca Leg (Auto)",
-            dual_confidence=acca.get("confidence"),
-            result_status="Pending",
-        )
-        db.add(bet)
-        existing_keys.add(key)
-        inserted += 1
 
-    # Combined accumulator row — dedup by fingerprint so multiple distinct
-    # accas can coexist on the same date.
-    fp = _acca_fingerprint(legs)
-    fp_tag = f"Accumulator|{fp}"
-    combo_exists = await db.scalar(
-        select(TrackedBet.id).where(
-            TrackedBet.source_rule_key == "acca_advisory_system",
-            TrackedBet.event_date == target_date,
-            TrackedBet.user_id.is_(None),
-            TrackedBet.selection_name == fp_tag,
+    for ticket in tickets:
+        legs = ticket.get("legs", [])
+        combined_odds = ticket.get("combined_odds")
+
+        # Individual leg rows
+        for leg in legs:
+            fid = leg.get("fixture_id")
+            market = leg.get("market", "")
+            if not fid or not market:
+                continue
+            key = (fid, market)
+            if key in existing_keys:
+                continue
+            odd = float(leg.get("odd") or 0)
+            if odd <= 1.0:
+                continue
+            match_name = (
+                f"{leg.get('home_team', '')} vs {leg.get('away_team', '')}"
+                if leg.get("home_team") else "Unknown"
+            )
+            db.add(TrackedBet(
+                user_id=None,
+                fixture_id=fid,
+                bookmaker="AI Acca",
+                event_date=target_date,
+                match_name=match_name,
+                league=None,
+                market_type=market,
+                selection_name=market,
+                odds=odd,
+                stake=50_000.0,
+                source_rule_key="acca_leg_system",
+                source_rule_label="AI Acca Leg (Auto)",
+                dual_confidence=ticket.get("confidence"),
+                result_status="Pending",
+            ))
+            existing_keys.add(key)
+            inserted += 1
+
+        # Combined row — one per ticket, deduped by fingerprint
+        fp = _acca_fingerprint(legs)
+        fp_tag = f"Accumulator|{fp}"
+        combo_exists = await db.scalar(
+            select(TrackedBet.id).where(
+                TrackedBet.source_rule_key == "acca_advisory_system",
+                TrackedBet.event_date == target_date,
+                TrackedBet.user_id.is_(None),
+                TrackedBet.selection_name == fp_tag,
+            )
         )
-    )
-    if not combo_exists:
-        leg_summary = "\n".join(
-            f"{i+1}. {leg.get('home_team','')} vs {leg.get('away_team','')} · "
-            f"{leg.get('market','')} @ {float(leg.get('odd') or 0):.2f}"
-            for i, leg in enumerate(legs)
-        )
-        combo = TrackedBet(
-            user_id=None,
-            fixture_id=None,
-            bookmaker="AI Acca",
-            event_date=target_date,
-            match_name=f"AI Acca · {len(legs)} leg{'s' if len(legs) != 1 else ''}",
-            league=None,
-            market_type="Accumulator",
-            selection_name=fp_tag,
-            odds=combined_odds,
-            stake=50_000.0,
-            source_rule_key="acca_advisory_system",
-            source_rule_label="AI Acca of the Day (System)",
-            dual_confidence=acca.get("confidence"),
-            notes=json.dumps({"legs": legs, "leg_summary": leg_summary}),
-            result_status="Pending",
-        )
-        db.add(combo)
-        inserted += 1
+        if not combo_exists:
+            leg_summary = "\n".join(
+                f"{i+1}. {leg.get('home_team','')} vs {leg.get('away_team','')} · "
+                f"{leg.get('market','')} @ {float(leg.get('odd') or 0):.2f}"
+                for i, leg in enumerate(legs)
+            )
+            db.add(TrackedBet(
+                user_id=None,
+                fixture_id=None,
+                bookmaker="AI Acca",
+                event_date=target_date,
+                match_name=f"AI Acca · {len(legs)} leg{'s' if len(legs) != 1 else ''}",
+                league=None,
+                market_type="Accumulator",
+                selection_name=fp_tag,
+                odds=combined_odds,
+                stake=50_000.0,
+                source_rule_key="acca_advisory_system",
+                source_rule_label="AI Acca of the Day (System)",
+                dual_confidence=ticket.get("confidence"),
+                notes=json.dumps({"legs": legs, "leg_summary": leg_summary}),
+                result_status="Pending",
+            ))
+            inserted += 1
 
     if inserted:
         try:
@@ -1013,24 +1022,34 @@ async def get_advisor_insights(
     if not force and fixture_ids is None:
         cached = await _get_advisory_cache(db, target_date)
         if cached and cached.get("matches_analysed", 0) > 0:
-            # Cache hit — report whether this user already tracked the acca
-            # (tracking itself only happens via the explicit track endpoint),
-            # then return immediately.
-            acca_data = cached.get("accumulator", {})
-            tracked = False
-            if acca_data.get("legs") and not acca_data.get("error"):
-                uid = getattr(current_user, "id", None) if current_user else None
-                if uid is not None:
+            # Cache hit — report per-ticket tracked status for this user.
+            uid_cache = getattr(current_user, "id", None) if current_user else None
+
+            # Normalise: old caches have only "accumulator"; new caches have
+            # "accumulators" list.  Upgrade the old format on the fly.
+            if "accumulators" not in cached or not cached["accumulators"]:
+                acca_data = cached.get("accumulator", {})
+                cached["accumulators"] = [acca_data] if acca_data.get("legs") else []
+
+            enriched_tickets: list[dict] = []
+            for ticket in cached["accumulators"]:
+                ticket_legs = ticket.get("legs", [])
+                ticket_tracked = False
+                if ticket_legs and not ticket.get("error") and uid_cache is not None:
                     try:
-                        fp = _acca_fingerprint(acca_data["legs"])
-                        tracked = await _is_acca_tracked(db, target_date, uid, fp=fp)
+                        fp = _acca_fingerprint(ticket_legs)
+                        ticket_tracked = await _is_acca_tracked(db, target_date, uid_cache, fp=fp)
                     except Exception as exc:
                         logger.warning("_is_acca_tracked (cache hit) failed: %s", exc)
                 try:
-                    await _attach_leg_results(db, acca_data["legs"], target_date)
+                    await _attach_leg_results(db, ticket_legs, target_date)
                 except Exception as exc:
                     logger.warning("_attach_leg_results (cache hit) failed: %s", exc)
-            cached["accumulator"] = {**acca_data, "tracked": tracked, "from_cache": True}
+                enriched_tickets.append({**ticket, "tracked": ticket_tracked, "from_cache": True})
+
+            cached["accumulators"] = enriched_tickets
+            # Keep singular backward-compat field pointing at the first ticket
+            cached["accumulator"] = enriched_tickets[0] if enriched_tickets else cached.get("accumulator", {})
             return cached
 
     configured_keys = [
@@ -1211,16 +1230,22 @@ async def get_advisor_insights(
     else:
         consensus_verdict = "Mixed"
 
-    # Validate acca legs against the pool the AI was given. Legs that match no
-    # pool fixture are hallucinations and get dropped — they could never settle.
-    # Matched legs are enriched with fixture_id + kickoff_at, and the AI-reported
-    # odd is replaced with the server-side bayesian_best_odd (when the leg's
-    # market matches the pool signal) so tracked stakes never rest on an
-    # LLM-estimated price.
-    raw_legs = acca_result.get("legs", []) if isinstance(acca_result, dict) else []
-
+    # ── Validate and process acca tickets ────────────────────────────────────
+    # The LLM returns {"tickets": [{legs, rationale, confidence}, ...]} for
+    # multi-ticket mode, or the legacy {"legs": [...]} single-ticket shape.
+    # Both are normalised into raw_tickets here then processed uniformly.
     def _norm(s: str | None) -> str:
         return (s or "").strip().lower()
+
+    if isinstance(acca_result, dict):
+        if "tickets" in acca_result:
+            raw_tickets: list[dict] = acca_result.get("tickets") or []
+        elif "legs" in acca_result:
+            raw_tickets = [acca_result]  # legacy single-ticket
+        else:
+            raw_tickets = []
+    else:
+        raw_tickets = []
 
     _pool_by_fid: dict[int, tuple[Signal, Fixture]] = {
         fix.id: (sig, fix) for sig, fix in acca_pool
@@ -1229,114 +1254,137 @@ async def get_advisor_insights(
         (_norm(fix.home_team), _norm(fix.away_team)): (sig, fix)
         for sig, fix in acca_pool
     }
-    acca_legs: list[dict] = []
-    for leg in raw_legs:
-        # Primary match: fixture_id returned by the LLM (exact, immune to name paraphrase)
-        match: tuple[Signal, Fixture] | None = None
-        fid_raw = leg.get("fixture_id")
-        if fid_raw is not None:
-            try:
-                match = _pool_by_fid.get(int(fid_raw))
-            except (TypeError, ValueError):
-                pass
-        # Fallback: normalised team-name match (handles older cache entries / LLM omissions)
-        if match is None:
-            match = _pool_by_names.get((_norm(leg.get("home_team")), _norm(leg.get("away_team"))))
-        if match is None:
-            logger.warning(
-                "Acca leg dropped — no matching pool fixture: %s vs %s (fixture_id=%s, market=%s)",
-                leg.get("home_team"), leg.get("away_team"), fid_raw, leg.get("market"),
-            )
-            continue
-        sig, fix = match
-        leg["fixture_id"] = fix.id
-        leg["kickoff_at"] = fix.kickoff_at.isoformat() if fix.kickoff_at else None
-        if _norm(leg.get("market")) == _norm(sig.market) and sig.bayesian_best_odd and sig.bayesian_best_odd > 1.0:
-            leg["odd"] = sig.bayesian_best_odd
-        acca_legs.append(leg)
 
-    # Combined odds = product over ALL displayed legs — if any leg lacks a real
-    # odd we can't quote a truthful combined price, so leave it unset rather
-    # than silently multiplying a subset.
-    combined_odds: float | None = None
-    if acca_legs:
-        try:
-            leg_odds = [float(leg.get("odd") or 0) for leg in acca_legs]
-            if all(o > 1.0 for o in leg_odds):
-                product = 1.0
-                for o in leg_odds:
-                    product *= o
-                combined_odds = round(product, 2)
-        except (TypeError, ValueError):
-            combined_odds = None
-
-    # Rank 1: Server-side combined odds ceiling — trim legs until combined ≤20×.
-    # Remove the highest-odd leg on each pass; stop when we hit the 3-leg floor.
     _COMBINED_MAX  = 20.0
     _MIN_ACCA_LEGS = 3
-    while (
-        combined_odds is not None
-        and combined_odds > _COMBINED_MAX
-        and len(acca_legs) > _MIN_ACCA_LEGS
-    ):
-        worst_idx = max(
-            range(len(acca_legs)),
-            key=lambda i: float(acca_legs[i].get("odd") or 0),
-        )
-        acca_legs.pop(worst_idx)
+
+    def _validate_ticket_legs(
+        raw_legs: list[dict],
+        used_fids: set[int],
+    ) -> list[dict]:
+        """Hallucination-guard + server-side odd substitution for one ticket's legs."""
+        validated: list[dict] = []
+        for leg in raw_legs:
+            match: tuple[Signal, Fixture] | None = None
+            fid_raw = leg.get("fixture_id")
+            if fid_raw is not None:
+                try:
+                    fid = int(fid_raw)
+                    if fid not in used_fids:
+                        match = _pool_by_fid.get(fid)
+                except (TypeError, ValueError):
+                    pass
+            if match is None:
+                candidate = _pool_by_names.get(
+                    (_norm(leg.get("home_team")), _norm(leg.get("away_team")))
+                )
+                if candidate and candidate[1].id not in used_fids:
+                    match = candidate
+            if match is None:
+                logger.warning(
+                    "Acca leg dropped — no matching pool fixture: %s vs %s "
+                    "(fixture_id=%s, market=%s)",
+                    leg.get("home_team"), leg.get("away_team"),
+                    fid_raw, leg.get("market"),
+                )
+                continue
+            sig, fix = match
+            leg["fixture_id"] = fix.id
+            leg["kickoff_at"] = fix.kickoff_at.isoformat() if fix.kickoff_at else None
+            if (
+                _norm(leg.get("market")) == _norm(sig.market)
+                and sig.bayesian_best_odd
+                and sig.bayesian_best_odd > 1.0
+            ):
+                leg["odd"] = sig.bayesian_best_odd
+            validated.append(leg)
+        return validated
+
+    def _compute_combined_odds(legs: list[dict]) -> float | None:
         try:
-            leg_odds = [float(leg.get("odd") or 0) for leg in acca_legs]
-            if all(o > 1.0 for o in leg_odds):
-                product = 1.0
-                for o in leg_odds:
-                    product *= o
-                combined_odds = round(product, 2)
-            else:
-                combined_odds = None
+            odds = [float(leg.get("odd") or 0) for leg in legs]
+            if all(o > 1.0 for o in odds):
+                p = 1.0
+                for o in odds:
+                    p *= o
+                return round(p, 2)
         except (TypeError, ValueError):
-            combined_odds = None
+            pass
+        return None
 
-    # Enforce "High" badge when the acca was built from the elite pool and
-    # has ≥3 legs with a sensible combined odd (≥3.0).  The AI may sometimes
-    # self-report "Medium" conservatively — we override it here because the
-    # input signals are already pre-screened as High+Both+≥70%.
-    ai_confidence = acca_result.get("confidence", "Medium") if isinstance(acca_result, dict) else "Medium"
-    if (
-        len(acca_legs) >= 3
-        and combined_odds is not None
-        and combined_odds >= 3.0
-        and len(acca_pool) >= 3
-    ):
-        resolved_confidence = "High"
-    else:
-        resolved_confidence = ai_confidence
+    def _apply_ceiling(legs: list[dict]) -> tuple[list[dict], float | None]:
+        legs = list(legs)
+        combined = _compute_combined_odds(legs)
+        while combined is not None and combined > _COMBINED_MAX and len(legs) > _MIN_ACCA_LEGS:
+            worst = max(range(len(legs)), key=lambda i: float(legs[i].get("odd") or 0))
+            legs.pop(worst)
+            combined = _compute_combined_odds(legs)
+        return legs, combined
 
-    accumulator = {
-        "model":         acca_model_label,
-        "legs":          acca_legs,
-        "combined_odds": combined_odds,
-        "rationale":     acca_result.get("rationale", "") if isinstance(acca_result, dict) else "",
-        "confidence":    resolved_confidence,
-        "error":         acca_result.get("error") if isinstance(acca_result, dict) else None,
-    }
+    uid = getattr(current_user, "id", None) if current_user else None
+    used_fixture_ids: set[int] = set()
+    processed_tickets: list[dict] = []
 
-    # Report whether this user already tracked the acca — tracking itself is
-    # opt-in via the explicit track endpoint, never a side effect of viewing.
-    tracked = False
-    if acca_legs and not accumulator.get("error"):
-        uid = getattr(current_user, "id", None) if current_user else None
+    for raw_ticket in raw_tickets:
+        raw_legs = raw_ticket.get("legs", [])
+        ticket_legs = _validate_ticket_legs(raw_legs, used_fixture_ids)
+        if len(ticket_legs) < _MIN_ACCA_LEGS:
+            continue
+
+        ticket_legs, combined_odds = _apply_ceiling(ticket_legs)
+        if len(ticket_legs) < _MIN_ACCA_LEGS:
+            continue
+
+        # Mark these fixtures as used so later tickets can't reuse them
+        for leg in ticket_legs:
+            used_fixture_ids.add(leg["fixture_id"])
+
+        ai_conf = raw_ticket.get("confidence", "Medium")
+        resolved_conf = (
+            "High"
+            if len(ticket_legs) >= 3 and combined_odds is not None and combined_odds >= 3.0
+            else ai_conf
+        )
+
+        # Track status for this specific ticket
+        ticket_tracked = False
         if uid is not None:
             try:
-                fp = _acca_fingerprint(acca_legs)
-                tracked = await _is_acca_tracked(db, target_date, uid, fp=fp)
+                fp = _acca_fingerprint(ticket_legs)
+                ticket_tracked = await _is_acca_tracked(db, target_date, uid, fp=fp)
             except Exception as exc:
                 logger.warning("_is_acca_tracked failed: %s", exc)
+
         try:
-            await _attach_leg_results(db, acca_legs, target_date)
+            await _attach_leg_results(db, ticket_legs, target_date)
         except Exception as exc:
             logger.warning("_attach_leg_results failed: %s", exc)
 
-    accumulator["tracked"] = tracked
+        processed_tickets.append({
+            "model":         acca_model_label,
+            "legs":          ticket_legs,
+            "combined_odds": combined_odds,
+            "rationale":     raw_ticket.get("rationale", ""),
+            "confidence":    resolved_conf,
+            "tracked":       ticket_tracked,
+            "error":         None,
+        })
+
+    # For backward compat keep `accumulator` (singular) as the first ticket,
+    # or an error shell when no valid tickets were produced.
+    acca_error = acca_result.get("error") if isinstance(acca_result, dict) else "acca_failed"
+    if processed_tickets:
+        accumulator = processed_tickets[0]
+    else:
+        accumulator = {
+            "model":         acca_model_label,
+            "legs":          [],
+            "combined_odds": None,
+            "rationale":     "",
+            "confidence":    "Medium",
+            "tracked":       False,
+            "error":         acca_error or "no_valid_legs",
+        }
 
     result_payload = {
         "configured":        True,
@@ -1354,10 +1402,11 @@ async def get_advisor_insights(
             }
             for adv, (model_label, result) in zip(ADVISORS, advisor_outputs)
         ],
-        "accumulator": accumulator,
+        "accumulator":  accumulator,           # first ticket (backward compat)
+        "accumulators": processed_tickets,     # all tickets
     }
 
-    # Persist AI output to cache (omit the per-user tracked flag).
+    # Persist AI output to cache (omit per-user tracked flags).
     # A run with any errored advisor (or a failed acca) is NOT cached — caching
     # it would pin the failure for the whole day, since cache hits skip the AI
     # entirely. Leaving the cache empty lets the next request retry live.
@@ -1368,7 +1417,11 @@ async def get_advisor_insights(
         try:
             cacheable = {
                 **result_payload,
-                "accumulator": {k: v for k, v in accumulator.items() if k != "tracked"},
+                "accumulator":  {k: v for k, v in accumulator.items() if k != "tracked"},
+                "accumulators": [
+                    {k: v for k, v in t.items() if k != "tracked"}
+                    for t in processed_tickets
+                ],
             }
             await _set_advisory_cache(db, target_date, cacheable)
         except Exception as exc:
@@ -1398,20 +1451,62 @@ async def track_acca_for_user(
     if insights.get("error"):
         return {"tracked": False, "error": insights["error"], "message": insights.get("message", "")}
 
-    acca = insights.get("accumulator") or {}
+    all_tickets: list[dict] = insights.get("accumulators") or []
+    if not all_tickets:
+        # Backward compat: old cache has only "accumulator" (singular)
+        singular = insights.get("accumulator") or {}
+        if singular.get("legs"):
+            all_tickets = [singular]
 
-    # Detect cache/display mismatch: re-run if odds don't match what the user sees.
-    if (
-        expected_odds is not None
-        and acca.get("combined_odds") is not None
-        and abs(float(acca["combined_odds"]) - expected_odds) > 0.10
-    ):
-        logger.info(
-            "track_acca: cache odds %.2f != expected %.2f — forcing fresh run",
-            acca["combined_odds"], expected_odds,
-        )
-        insights = await get_advisor_insights(db, target_date, current_user=current_user, force=True)
-        acca = insights.get("accumulator") or {}
+    if not all_tickets:
+        return {
+            "tracked": False,
+            "error":   "no_acca",
+            "message": "No accumulator available to track for this date.",
+        }
+
+    # Find the specific ticket the user wants to track.
+    # Primary: match by expected_odds (within 0.10 tolerance) so we track the
+    # exact acca displayed to the user even when multiple tickets exist.
+    # Fallback: first ticket.
+    acca: dict | None = None
+    if expected_odds is not None:
+        for ticket in all_tickets:
+            co = ticket.get("combined_odds")
+            if co is not None and abs(float(co) - expected_odds) <= 0.10:
+                acca = ticket
+                break
+
+    if acca is None:
+        # No match — check if every ticket's odds are far from expected_odds
+        # (cache mismatch from a Refresh that wasn't cached).
+        if (
+            expected_odds is not None
+            and not any(
+                ticket.get("combined_odds") is not None
+                and abs(float(ticket["combined_odds"]) - expected_odds) <= 0.10
+                for ticket in all_tickets
+            )
+        ):
+            logger.info(
+                "track_acca: no ticket with odds ≈ %.2f in cache — forcing fresh run",
+                expected_odds,
+            )
+            insights = await get_advisor_insights(db, target_date, current_user=current_user, force=True)
+            all_tickets = insights.get("accumulators") or []
+            if not all_tickets:
+                singular = insights.get("accumulator") or {}
+                if singular.get("legs"):
+                    all_tickets = [singular]
+            # Try matching again after fresh run
+            for ticket in all_tickets:
+                co = ticket.get("combined_odds")
+                if co is not None and abs(float(co) - expected_odds) <= 0.10:
+                    acca = ticket
+                    break
+
+        if acca is None:
+            acca = all_tickets[0]  # fall back to first ticket
 
     if not acca.get("legs") or acca.get("error") or not acca.get("combined_odds"):
         return {
