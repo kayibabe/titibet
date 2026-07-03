@@ -194,6 +194,30 @@ INDEX_MIGRATIONS: list[tuple[str, str]] = [
     ),
 ]
 
+# One-shot data fixes — each is an idempotent UPDATE with tight WHERE guards.
+# Runs on every startup (cheap no-op once the condition is no longer true).
+DATA_MIGRATIONS: list[str] = [
+    # 2026-07-03: Convert 4 manually-tracked bets to system picks so they appear
+    # in the system auto-tracking stats instead of the user's personal tracker.
+    # Guard: only touches rows still owned by a user (user_id IS NOT NULL) that
+    # aren't already classified as system picks.
+    """
+    UPDATE tracked_bets
+    SET user_id            = NULL,
+        source_rule_key    = 'system_dual',
+        source_rule_label  = 'Dual Signal (High+Both)'
+    WHERE event_date = '2026-07-03'
+      AND user_id IS NOT NULL
+      AND (source_rule_key IS NULL OR source_rule_key NOT LIKE 'system%')
+      AND (
+            match_name LIKE '%Treaty United%'
+         OR match_name LIKE '%Drogheda United%'
+         OR match_name LIKE '%Cobh Ramblers%'
+         OR match_name LIKE '%Al Hikma%'
+      )
+    """,
+]
+
 
 async def run_migrations(engine: AsyncEngine) -> None:
     """
@@ -245,3 +269,11 @@ async def run_migrations(engine: AsyncEngine) -> None:
             log.info("Data migration applied: seeded is_admin for elite users")
         except Exception as e:  # noqa: BLE001
             log.warning("Data migration FAILED (is_admin seed): %s", e)
+
+        for dm_sql in DATA_MIGRATIONS:
+            try:
+                result = await conn.execute(text(dm_sql))
+                if result.rowcount:
+                    log.info("Data migration applied: %d row(s) updated", result.rowcount)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Data migration FAILED: %s", e)
