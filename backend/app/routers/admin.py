@@ -692,17 +692,21 @@ async def trigger_strategy_pipeline(
 
 @router.post("/advisory/retrack")
 async def retrack_advisory_acca(
-    target_date: str = Query(description="ISO date to retrack, e.g. 2026-07-03"),
+    target_date:        str  = Query(description="ISO date to retrack, e.g. 2026-07-03"),
+    replace_user_bets:  bool = Query(False, description="Also delete all users' acca_advisory rows for this date so they re-track against the new acca"),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(_require_admin),
 ):
     """
-    Force-replace today's (or any date's) system acca tracking rows.
+    Force-replace a date's system acca tracking rows and optionally user rows.
 
-    Deletes existing acca_leg_system / acca_advisory_system rows for the date,
-    then re-runs auto_track_acca_legs() against the current advisory cache.
-    Use after clearing the advisory cache mid-day to sync system bets with the
-    newly generated acca.
+    Always deletes acca_leg_system / acca_advisory_system rows (user_id=NULL)
+    for the date, then re-runs auto_track_acca_legs() against the current
+    advisory cache.
+
+    replace_user_bets=true additionally purges all users' acca_advisory rows
+    for the date so they see the new acca as un-tracked and can re-add it.
+    Use after a mid-day cache clear where the new acca is materially different.
     """
     from datetime import date as date_type
     from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
@@ -712,14 +716,32 @@ async def retrack_advisory_acca(
     except ValueError:
         raise HTTPException(400, f"Invalid date: {target_date!r} — use ISO format YYYY-MM-DD")
 
+    user_rows_deleted = 0
+    if replace_user_bets:
+        res = await db.execute(
+            text(
+                "DELETE FROM tracked_bets "
+                "WHERE event_date = :d AND source_rule_key = 'acca_advisory' "
+                "AND user_id IS NOT NULL"
+            ),
+            {"d": d.isoformat()},
+        )
+        user_rows_deleted = res.rowcount
+        await db.commit()
+
     result = await get_advisor_insights(db, d, current_user=None)
     acca = result.get("accumulator", {})
     if not acca.get("legs") or acca.get("error"):
-        return {"replaced": 0, "message": "No valid acca available for this date."}
+        return {
+            "replaced": 0,
+            "user_rows_deleted": user_rows_deleted,
+            "message": "No valid acca available for this date.",
+        }
 
     n = await auto_track_acca_legs(db, acca, d, replace=True)
     return {
         "replaced": n,
+        "user_rows_deleted": user_rows_deleted,
         "date": d.isoformat(),
         "combined_odds": acca.get("combined_odds"),
         "legs": len(acca.get("legs", [])),
