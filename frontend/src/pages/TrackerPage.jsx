@@ -76,10 +76,10 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     }).then(setAnalyticsSummary).catch(() => setAnalyticsSummary(null))
   }, [dateFrom, dateTo, statusFilter, sourceFilter, bets])
 
-  // System performance stats — all-time, ignores the page's date/status filters.
+  // Performance banner — all-time, all picks, ignores the page's date/status filters.
   const [systemSummary, setSystemSummary] = useState(null)
   useEffect(() => {
-    fetchAnalytics({ source: 'system' }).then(setSystemSummary).catch(() => setSystemSummary(null))
+    fetchAnalytics({}).then(setSystemSummary).catch(() => setSystemSummary(null))
   }, [bets])
 
   useEffect(() => {
@@ -309,7 +309,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           <div className="flex items-center gap-2">
             <Bot size={13} className="text-violet-400 shrink-0" />
             <span className="text-xs font-semibold text-violet-300">System Performance</span>
-            <span className="ml-auto text-xs text-[var(--text)] opacity-60">{systemSummary.total_bets} auto-tracked picks</span>
+            <span className="ml-auto text-xs text-[var(--text)] opacity-60">{systemSummary.total_bets} total picks</span>
           </div>
           <div className="flex items-center gap-5 flex-wrap text-xs">
             <div className="flex flex-col items-center">
