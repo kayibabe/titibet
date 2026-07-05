@@ -104,8 +104,12 @@ MARKET_ODDS_CEILING: dict[str, float] = {
     "BTTS Yes":       2.40,
 }
 
-# End-of-season months (May, Jun for European leagues; Dec for World Cup etc.)
-END_OF_SEASON_MONTHS = {5, 6}
+# End-of-season months. July added 2026-07-05: all Scandinavian (Veikkausliiga,
+# Superettan, Toppserien, Ykkösliiga, Ettan, Division 2), Irish (Premier
+# Division), and Icelandic leagues finish in July — 62 of 71 July losses
+# carried this tag via LLM but the rules engine was missing month 7, causing
+# understated avoidability scores and no rules-based threshold proposals.
+END_OF_SEASON_MONTHS = {5, 6, 7}
 
 
 # ── Rules-based pre-classifier (no LLM, always runs) ─────────────────────────

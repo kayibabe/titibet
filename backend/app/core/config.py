@@ -468,22 +468,27 @@ POISSON_ONLY_MAX_ODDS: dict[str, float] = {
 }
 
 # Serving-time odds ceiling for Both+High signals where the market is most
-# sceptical. Empirical evidence (n=95 settled, 2026-06-23): Home Over 0.5
-# Both+High at odds ≥2.50 — market implies ≤40% but our model fights hardest
-# here and is least reliable. Overall Both+High hit rate is 65.3% vs 85.0%
-# for Poisson Only; the gap widens at the high-odds tail.
-# Applied at serving time (router) and auto-tracker; does not require
-# signal recomputation.
+# sceptical. Applied at serving time (router) and auto-tracker; does not
+# require signal recomputation.
+# 2026-06-23 baseline: HO0.5 Both+High at ≥2.50 had 65.3% hit rate vs 85.0%
+# for Poisson Only; gap widens at the high-odds tail.
+# 2026-07-05 update: 14/71 loss cards across Tier 1/2/3 all independently
+# converge on 1.95 as the correct HO0.5 ceiling. Market odds ≥1.95 already
+# signals home-team probability <50% — our model consistently fights this and
+# loses. Lowered from 2.50 → 1.95.
+# Away Over 0.5 ceiling 2.10 added (2026-07-05): 11 loss cards, most avoidable
+# market per pipeline. loss_analysis_agent.py had this for detection only;
+# now enforced at serving time.
 DUAL_HIGH_ODDS_CEILING: dict[str, float] = {
-    "Home Over 0.5": 2.50,
+    "Home Over 0.5": 1.95,
+    "Away Over 0.5": 2.10,
 }
 
 # Acca candidate gate: exclude Over 2.5 legs where confidence is High,
 # league tier is unknown (None), and bookmaker odds exceed this ceiling.
-# Source: loss analysis recommendation 2026-07-05 — unranked leagues have
-# thin historical data so High-confidence Over 2.5 at long odds is
-# systematically overconfident.
-ACCA_OVER25_UNKNOWN_TIER_CEILING: float = 3.46
+# 2026-07-05: initial value 3.46 (from card 1); lowered to 3.10 after full
+# 71-card audit — 2 cards independently recommend 3.10 as the threshold.
+ACCA_OVER25_UNKNOWN_TIER_CEILING: float = 3.10
 
 # Kelly fraction cap for Poisson-only signals.
 # Lower than Dual (max_kelly_pct = 2%) because Poisson-only has no Bayesian
