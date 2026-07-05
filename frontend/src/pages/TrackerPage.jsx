@@ -20,10 +20,23 @@ const SOURCE_OPTIONS = [
   { value: 'manual', label: 'Manual Picks', icon: User },
 ]
 
+const DATE_PRESETS = [
+  { label: '7d',  days: 7  },
+  { label: '14d', days: 14 },
+  { label: '30d', days: 30 },
+  { label: '90d', days: 90 },
+  { label: 'All', days: null },
+]
+
+function toYMD(d) {
+  return d.toISOString().slice(0, 10)
+}
+
 export default function TrackerPage({ user, settings, onUpgrade }) {
   const { isPro } = useTier()
   const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
+  const [dateTo, setDateTo]     = useState('')
+  const [activePreset, setActivePreset] = useState('All')
   const [statusFilter, setStatusFilter] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
   const [syncing, setSyncing]           = useState(false)
@@ -102,6 +115,30 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     const id = setInterval(() => { loadBets(betFilters) }, 5 * 60 * 1000)
     return () => clearInterval(id)
   }, [pendingCount]) // eslint-disable-line
+
+  function handlePreset(preset) {
+    setActivePreset(preset.label)
+    if (preset.days === null) {
+      setDateFrom('')
+      setDateTo('')
+    } else {
+      const today = new Date()
+      const from  = new Date(today)
+      from.setDate(today.getDate() - preset.days)
+      setDateFrom(toYMD(from))
+      setDateTo(toYMD(today))
+    }
+  }
+
+  function handleDateFromChange(val) {
+    setDateFrom(val)
+    setActivePreset(null)
+  }
+
+  function handleDateToChange(val) {
+    setDateTo(val)
+    setActivePreset(null)
+  }
 
   async function handleSync() {
     setSyncing(true)
@@ -344,9 +381,25 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
 
       {/* Filter bar */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--code-bg)] px-4 py-3 space-y-3">
-        <div className="grid grid-cols-2 sm:flex sm:items-end gap-3 sm:gap-4">
-          <DatePicker label="From" value={dateFrom} onChange={setDateFrom} />
-          <DatePicker label="To" value={dateTo} onChange={setDateTo} />
+        <div className="flex flex-wrap items-end gap-3">
+          <DatePicker label="From" value={dateFrom} onChange={handleDateFromChange} />
+          <DatePicker label="To"   value={dateTo}   onChange={handleDateToChange} />
+          {/* Quick-select presets */}
+          <div className="flex items-center gap-1 pb-0.5">
+            {DATE_PRESETS.map(preset => (
+              <button
+                key={preset.label}
+                onClick={() => handlePreset(preset)}
+                className={`px-2.5 py-1.5 rounded-md text-xs font-semibold border transition-colors ${
+                  activePreset === preset.label
+                    ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
+                    : 'border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--bg)]'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
           <label className="flex flex-col gap-1 text-sm text-[var(--text)]">
             <span className="font-medium">Status</span>
             <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
