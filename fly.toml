@@ -9,7 +9,7 @@ primary_region = 'jnb'
 [build]
   [build.args]
     # Public Telegram invite link baked into the React build (VITE_ prefix required)
-    VITE_TELEGRAM_FREE_URL = ""
+    VITE_TELEGRAM_FREE_URL = "https://t.me/+my_LDCUEt8dlMTRk"
 
 [env]
   CORS_ORIGINS = 'https://titibet.fly.dev,https://titibet.app,https://www.titibet.app'
