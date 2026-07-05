@@ -13,7 +13,7 @@ from app.core.config import (
     DISABLED_MARKETS, DISABLED_LEAGUES,
     OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS,
-    HO05_DATA_POOR_COUNTRIES,
+    HO05_DATA_POOR_COUNTRIES, ACCA_OVER25_UNKNOWN_TIER_CEILING,
 )
 from app.models import Signal, Fixture
 from app.models.user import User
@@ -135,6 +135,15 @@ async def get_accumulators(
             and sig.dual_agreement == "Both" and (fix.league_tier or 3) >= 3
             and (fix.country or "").lower() in HO05_DATA_POOR_COUNTRIES
         )]
+
+    # Exclude Over 2.5 High-confidence legs in unranked leagues when bookmaker
+    # odds exceed the ceiling — model is systematically overconfident there.
+    rows = [(sig, fix) for sig, fix in rows if not (
+        sig.market == "Over 2.5"
+        and sig.dual_confidence == "High"
+        and fix.league_tier is None
+        and (sig.bayesian_best_odd or 0.0) >= ACCA_OVER25_UNKNOWN_TIER_CEILING
+    )]
 
     # Quality floor
     rows = [(sig, fix) for sig, fix in rows if _primary_prob(sig) >= _MIN_PROB]

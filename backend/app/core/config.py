@@ -478,6 +478,13 @@ DUAL_HIGH_ODDS_CEILING: dict[str, float] = {
     "Home Over 0.5": 2.50,
 }
 
+# Acca candidate gate: exclude Over 2.5 legs where confidence is High,
+# league tier is unknown (None), and bookmaker odds exceed this ceiling.
+# Source: loss analysis recommendation 2026-07-05 — unranked leagues have
+# thin historical data so High-confidence Over 2.5 at long odds is
+# systematically overconfident.
+ACCA_OVER25_UNKNOWN_TIER_CEILING: float = 3.46
+
 # Kelly fraction cap for Poisson-only signals.
 # Lower than Dual (max_kelly_pct = 2%) because Poisson-only has no Bayesian
 # confirmation — one engine rather than two. Quarter-Kelly applied, capped at 1.5%.
