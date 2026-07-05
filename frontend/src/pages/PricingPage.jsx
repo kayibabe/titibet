@@ -1,44 +1,81 @@
 ﻿import { useState, useEffect } from 'react'
-import { Check, Zap, Shield, Star } from 'lucide-react'
+import { Check, Zap, Star } from 'lucide-react'
 import { fetchPlans, initializePayment } from '../api/payments'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../utils/format'
 
-const TIER_ICON = { pro: Zap }
-const TIER_COLOR = {
-  pro: { accent: 'text-blue-400', border: 'border-blue-500/30', bg: 'bg-blue-500/10', btn: 'bg-blue-600 hover:bg-blue-500' },
+const FREE_FEATURES = [
+  'Value signals (limited view)',
+  'Basic bet tracker',
+  'Market analytics',
+]
+
+function fmtMWK(amount) {
+  return `K${amount.toLocaleString()}`
 }
 
-function fmtMWK(tambala) {
-  return `K${(tambala).toLocaleString()}`
-}
-
-function PlanCard({ plan, current, onSelect, loading }) {
-  const c = TIER_COLOR[plan.tier] || TIER_COLOR.pro
-  const Icon = TIER_ICON[plan.tier] || Star
-  const isCurrent = current?.tier === plan.tier && current?.subscription_status === 'active'
-
+function FreeCard({ isCurrent }) {
   return (
-    <div className={`rounded-xl border ${c.border} ${c.bg} p-5 flex flex-col gap-4 relative`}>
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-5 flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <div className="w-8 h-8 rounded-lg bg-slate-500/10 border border-slate-500/20 flex items-center justify-center">
+          <Star size={15} className="text-slate-400" />
+        </div>
+        <div>
+          <p className="text-sm font-bold text-slate-300">Free</p>
+          <p className="text-[10px] text-[var(--text)] opacity-80">Forever</p>
+        </div>
+      </div>
+
+      <div>
+        <span className="text-2xl font-bold text-[var(--text-h)]">K0</span>
+        <span className="text-xs text-[var(--text)] opacity-80 ml-1">/ month</span>
+      </div>
+
+      <ul className="space-y-2 flex-1">
+        {FREE_FEATURES.map((f, i) => (
+          <li key={i} className="flex items-start gap-2 text-xs text-[var(--text)] opacity-75">
+            <Check size={11} className="text-slate-500 shrink-0 mt-0.5" />
+            {f}
+          </li>
+        ))}
+      </ul>
+
+      <div className={`w-full py-2 rounded-lg border text-xs font-semibold text-center ${
+        isCurrent
+          ? 'border-green-500/30 text-green-400'
+          : 'border-[var(--border)] text-[var(--text)] opacity-50'
+      }`}>
+        {isCurrent ? 'Current plan' : 'Always free'}
+      </div>
+    </div>
+  )
+}
+
+function ProCard({ plan, isCurrent, onSelect, loading }) {
+  return (
+    <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-5 flex flex-col gap-4 relative">
       {plan.interval === 'yearly' && (
         <span className="absolute top-3 right-3 text-[10px] font-bold text-green-400 bg-green-500/15 border border-green-500/30 px-2 py-0.5 rounded tracking-wide">
-          SAVE 2 MONTHS
+          10% OFF
         </span>
       )}
 
       <div className="flex items-center gap-2">
-        <div className={`w-8 h-8 rounded-lg ${c.bg} border ${c.border} flex items-center justify-center`}>
-          <Icon size={15} className={c.accent} />
+        <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center justify-center">
+          <Zap size={15} className="text-blue-400" />
         </div>
         <div>
-          <p className={`text-sm font-bold ${c.accent}`}>{plan.label}</p>
+          <p className="text-sm font-bold text-blue-400">Pro</p>
           <p className="text-[10px] text-[var(--text)] opacity-80 capitalize">{plan.interval}</p>
         </div>
       </div>
 
       <div>
         <span className="text-2xl font-bold text-[var(--text-h)]">{fmtMWK(plan.price_mwk)}</span>
-        <span className="text-xs text-[var(--text)] opacity-80 ml-1">/ {plan.interval === 'yearly' ? 'year' : 'month'}</span>
+        <span className="text-xs text-[var(--text)] opacity-80 ml-1">
+          / {plan.interval === 'yearly' ? 'year' : 'month'}
+        </span>
       </div>
 
       <ul className="space-y-2 flex-1">
@@ -58,9 +95,9 @@ function PlanCard({ plan, current, onSelect, loading }) {
         <button
           onClick={() => onSelect(plan.id)}
           disabled={loading === plan.id}
-          className={`w-full py-2 rounded-lg text-white text-xs font-semibold transition-colors ${c.btn} disabled:opacity-50`}
+          className="w-full py-2 rounded-lg text-white text-xs font-semibold transition-colors bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
         >
-          {loading === plan.id ? 'Redirecting…' : `Upgrade to ${plan.label}`}
+          {loading === plan.id ? 'Redirecting…' : 'Upgrade to Pro'}
         </button>
       )}
     </div>
@@ -78,7 +115,9 @@ export default function PricingPage() {
     fetchPlans().then(setPlans).catch(() => {})
   }, [])
 
-  const filtered = plans.filter(p => p.interval === interval)
+  const proPlan = plans.find(p => p.tier === 'pro' && p.interval === interval)
+  const isFreeCurrent = !user || user.tier === 'free'
+  const isProCurrent  = user?.tier === 'pro' && user?.subscription_status === 'active'
 
   async function handleSelect(planId) {
     setError('')
@@ -117,23 +156,6 @@ export default function PricingPage() {
         </div>
       )}
 
-      {/* Free tier */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <Star size={15} className="text-[var(--text)] opacity-70" />
-          <p className="text-sm font-bold text-[var(--text-h)]">Free</p>
-          <span className="text-[10px] text-[var(--text)] opacity-70 ml-1">Forever</span>
-        </div>
-        <ul className="grid grid-cols-2 gap-1.5">
-          {['Value signals (limited view)', 'Basic bet tracker', 'Market analytics'].map((f, i) => (
-            <li key={i} className="flex items-center gap-1.5 text-xs text-[var(--text)] opacity-75">
-              <Check size={10} className="text-[var(--text)] opacity-65 shrink-0" />
-              {f}
-            </li>
-          ))}
-        </ul>
-      </div>
-
       {/* Interval toggle */}
       <div className="flex items-center gap-1 bg-[var(--code-bg)] rounded-lg p-1 w-fit">
         {['monthly', 'yearly'].map(i => (
@@ -157,17 +179,17 @@ export default function PricingPage() {
         </p>
       )}
 
-      {/* Plan cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {filtered.map(plan => (
-          <PlanCard
-            key={plan.id}
-            plan={plan}
-            current={user}
+      {/* Side-by-side comparison cards */}
+      <div className="grid grid-cols-2 gap-4">
+        <FreeCard isCurrent={isFreeCurrent} />
+        {proPlan && (
+          <ProCard
+            plan={proPlan}
+            isCurrent={isProCurrent}
             onSelect={handleSelect}
             loading={loading}
           />
-        ))}
+        )}
       </div>
 
       <p className="text-xs text-[var(--text)] opacity-70 text-center">
