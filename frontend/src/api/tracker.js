@@ -55,6 +55,12 @@ export async function deleteBet(id) {
   return res.json()
 }
 
+export async function revokeSystemBet(id) {
+  const res = await apiFetch(`${BASE}/bets/${id}/revoke`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Revoke failed: ${res.status}`)
+  return res.json()
+}
+
 export async function deduplicateBets() {
   const res = await apiFetch(`${BASE}/bets/deduplicate`, { method: 'POST' })
   if (!res.ok) throw new Error(`Dedup failed: ${res.status}`)

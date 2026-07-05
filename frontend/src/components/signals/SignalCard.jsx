@@ -777,19 +777,6 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
             Tracked
           </span>
         )}
-        {!isContradiction && !isFinished && onTrackPick && (
-          <button
-            onClick={() => onTrackPick(signal)}
-            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-semibold transition-opacity ${
-              isTracked
-                ? 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)]'
-                : 'bg-[var(--accent)] text-white hover:opacity-90'
-            }`}
-          >
-            <Target size={12} />
-            {isAutoTracked ? 'Track Manually' : isTracked ? 'Track Again' : 'Track Pick'}
-          </button>
-        )}
       </div>
 
       {/* ── Explanation panel (inline, deterministic) ── */}

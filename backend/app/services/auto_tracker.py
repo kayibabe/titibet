@@ -1,5 +1,5 @@
 """
-auto_tracker.py — Backend auto-tracking of system signals.
+auto_tracker.py — Backend auto-tracking of system signals and ACCAs.
 
 Creates TrackedBet rows (user_id=None) for every qualifying signal on a date.
 Idempotent: existing rows are skipped.  Called from sync_and_compute() so
@@ -9,9 +9,17 @@ Signals page.
 Qualifying signals:
   - High confidence + Both agreement  (dual signal)
   - Home Over 0.5 + Poisson Only + rule_strong  (Poisson signal)
+
+ACCA auto-tracking (auto_track_acca_signals):
+  - Builds a signal-model ACCA from all qualifying candidates each sync cycle.
+  - On subsequent calls for the same day, only fixtures NOT already in an
+    earlier system_acca ticket are eligible — guaranteeing zero leg overlap
+    across multiple ACCA tickets for the same date.
+  - Minimum 2 unused candidates required; target odds 4.0, fallback 3.5, 3.0.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date
 
@@ -25,6 +33,7 @@ from app.core.config import (
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
     WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
 )
+from app.services.acca_builder import build_acca_candidates, build_accumulator
 
 logger = logging.getLogger("titibet.auto_tracker")
 
@@ -226,3 +235,114 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         logger.info("Auto-tracker: inserted %d system bets for %s", inserted, run_date)
 
     return inserted
+
+
+_ACCA_TARGET_TIERS = [4.0, 3.5, 3.0]
+_ACCA_MIN_CANDIDATES = 2
+
+
+async def auto_track_acca_signals(db: AsyncSession, run_date: date) -> int:
+    """
+    Build and record a new system ACCA ticket from qualifying signal candidates,
+    ensuring no fixture leg appears in any previously auto-tracked system_acca
+    ticket for the same date.
+
+    Idempotent in the sense that a second call with the same pool of candidates
+    will produce no new ticket (all legs already used).  A new ticket is only
+    created when ≥2 candidates remain after excluding already-used fixtures.
+
+    Returns count of new TrackedBet rows inserted (0 or 1 combined row).
+    """
+    # Collect fixture_ids already used in system_acca tickets for this date.
+    existing_accas = list(
+        (await db.execute(
+            select(TrackedBet.notes)
+            .where(
+                TrackedBet.event_date == run_date,
+                TrackedBet.source_rule_key == "system_acca",
+                TrackedBet.user_id.is_(None),
+            )
+        )).scalars().all()
+    )
+
+    used_fixture_ids: set[int] = set()
+    for notes_json in existing_accas:
+        try:
+            data = json.loads(notes_json or "{}")
+            for leg in data.get("legs", []):
+                fid = leg.get("fixture_id")
+                if fid is not None:
+                    used_fixture_ids.add(int(fid))
+        except Exception:
+            pass
+
+    # Build candidate pool excluding already-used fixtures.
+    candidates = await build_acca_candidates(db, run_date, exclude_fixture_ids=used_fixture_ids)
+
+    if len(candidates) < _ACCA_MIN_CANDIDATES:
+        logger.info(
+            "Auto-ACCA %s: only %d unused candidates (need %d) — skipping",
+            run_date, len(candidates), _ACCA_MIN_CANDIDATES,
+        )
+        return 0
+
+    # Try target tiers from highest to lowest; take the first that produces ≥2 legs.
+    chosen: dict | None = None
+    for tier in _ACCA_TARGET_TIERS:
+        acca = build_accumulator(candidates, tier)
+        if acca["leg_count"] >= _ACCA_MIN_CANDIDATES:
+            chosen = acca
+            break
+
+    if not chosen:
+        logger.info("Auto-ACCA %s: could not build ≥2-leg ticket from %d candidates", run_date, len(candidates))
+        return 0
+
+    legs      = chosen["legs"]
+    combined  = chosen["combined_odds"]
+    leg_count = chosen["leg_count"]
+
+    leg_summary = "\n".join(
+        f"{i+1}. {leg.get('home_team','')} vs {leg.get('away_team','')} · "
+        f"{leg.get('market','')} @ {float(leg.get('odd') or leg.get('fair_odds') or 0):.2f}"
+        for i, leg in enumerate(legs)
+    )
+
+    # Dedup: don't insert if an identical leg set already exists (same fixture_ids in same order).
+    fingerprint = ",".join(str(leg["fixture_id"]) for leg in legs)
+    fp_tag      = f"system_acca|{fingerprint}"
+    already     = await db.scalar(
+        select(TrackedBet.id).where(
+            TrackedBet.source_rule_key == "system_acca",
+            TrackedBet.event_date == run_date,
+            TrackedBet.user_id.is_(None),
+            TrackedBet.selection_name == fp_tag,
+        )
+    )
+    if already:
+        logger.debug("Auto-ACCA %s: identical ticket already tracked — skipping", run_date)
+        return 0
+
+    db.add(TrackedBet(
+        user_id=None,
+        fixture_id=None,
+        bookmaker="System Acca",
+        event_date=run_date,
+        match_name=f"AI Acca · {leg_count} leg{'s' if leg_count != 1 else ''}",
+        league=None,
+        market_type="Accumulator",
+        selection_name=fp_tag,
+        odds=combined,
+        stake=FLAT_STAKE,
+        source_rule_key="system_acca",
+        source_rule_label="System ACCA",
+        result_status="Pending",
+        notes=json.dumps({"legs": legs, "leg_summary": leg_summary}),
+    ))
+
+    await db.commit()
+    logger.info(
+        "Auto-ACCA %s: inserted %d-leg ticket @ %.2f combined odds",
+        run_date, leg_count, combined,
+    )
+    return 1

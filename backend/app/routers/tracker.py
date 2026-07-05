@@ -407,7 +407,7 @@ async def list_bets(
         sub_queries.append(_apply_filters(
             base.where(
                 TrackedBet.user_id.is_(None),
-                TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+                TrackedBet.source_rule_key.in_(["system_auto", "system_dual", "system_acca"]),
             )
         ))
     else:
@@ -460,10 +460,17 @@ async def update_bet(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _SYSTEM_KEYS = ["system_auto", "system_dual", "system_acca"]
     bet = await db.scalar(
         select(TrackedBet).where(
             TrackedBet.id == bet_id,
-            TrackedBet.user_id == current_user.id,
+            or_(
+                TrackedBet.user_id == current_user.id,
+                and_(
+                    TrackedBet.user_id.is_(None),
+                    TrackedBet.source_rule_key.in_(_SYSTEM_KEYS),
+                ),
+            ),
         )
     )
     if not bet:
@@ -567,10 +574,17 @@ async def delete_bet(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _SYSTEM_KEYS = ["system_auto", "system_dual", "system_acca"]
     result = await db.execute(
         select(TrackedBet).where(
             TrackedBet.id == bet_id,
-            TrackedBet.user_id == current_user.id,
+            or_(
+                TrackedBet.user_id == current_user.id,
+                and_(
+                    TrackedBet.user_id.is_(None),
+                    TrackedBet.source_rule_key.in_(_SYSTEM_KEYS),
+                ),
+            ),
         )
     )
     bet = result.scalar_one_or_none()
@@ -579,6 +593,27 @@ async def delete_bet(
     await db.delete(bet)
     await db.commit()
     return {"deleted": True}
+
+
+@router.delete("/bets/{bet_id}/revoke")
+async def revoke_system_bet(
+    bet_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove a system auto-tracked pick from the tracker. Any authenticated user may revoke."""
+    bet = await db.scalar(
+        select(TrackedBet).where(
+            TrackedBet.id == bet_id,
+            TrackedBet.user_id.is_(None),
+            TrackedBet.source_rule_key.in_(["system_auto", "system_dual", "system_acca"]),
+        )
+    )
+    if not bet:
+        raise HTTPException(404, "System pick not found")
+    await db.delete(bet)
+    await db.commit()
+    return {"revoked": True}
 
 
 @router.post("/bets/normalize-stakes")

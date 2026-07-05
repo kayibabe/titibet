@@ -567,7 +567,7 @@ function UnifiedDateGroupedBets({ bets, onRefresh }) {
             </div>
             <div className="rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
               {groupBets.map(bet =>
-                bet.source_rule_key === 'acca_advisory'
+                bet.source_rule_key === 'acca_advisory' || bet.source_rule_key === 'system_acca'
                   ? <AccaRow key={bet.id} bet={bet} onRefresh={onRefresh} />
                   : <BetRow  key={bet.id} bet={bet} onRefresh={onRefresh} />
               )}
@@ -588,7 +588,7 @@ export default function BetTable({ bets, isPro = true, onUpgrade, onRefresh }) {
         </div>
         <p className="text-sm font-semibold text-[var(--text-h)]">No picks tracked yet</p>
         <p className="text-xs text-[var(--text)] opacity-75 max-w-xs">
-          Go to <span className="font-semibold text-[var(--accent)]">Signals</span>, open a signal card, and tap <span className="font-semibold">Track Pick</span> to add bets here.
+          Single picks are tracked automatically each sync. To add an ACCA, go to the <span className="font-semibold text-[var(--accent)]">Value Bets</span> tab and tap <span className="font-semibold">Track Acca</span>.
         </p>
       </div>
     )
