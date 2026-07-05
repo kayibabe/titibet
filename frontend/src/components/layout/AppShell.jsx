@@ -107,7 +107,7 @@ export default function AppShell({ activePage, onNavigate, children }) {
         </button>
 
         {/* Brand logo — always visible */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           <div className="shrink-0 w-9 h-9">
             <img
               src="/falcon.png"
