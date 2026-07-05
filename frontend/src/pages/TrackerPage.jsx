@@ -53,7 +53,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
 
   const betFilters = { date_from: dateFrom || undefined, date_to: dateTo || undefined, result_status: statusFilter || undefined }
 
-  const isSystemPick = b => b.source_rule_key === 'system_auto' || b.source_rule_key === 'system_dual'
+  const isSystemPick = b => b.market_type !== 'Accumulator'
 
   // Client-side source filter (system picks vs manual)
   const filteredBets = useMemo(() => {

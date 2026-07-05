@@ -28,7 +28,7 @@ def _base_query(current_user: Optional[User]):
                 TrackedBet.user_id == current_user.id,
                 and_(
                     TrackedBet.user_id.is_(None),
-                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual", "system_acca"]),
                 ),
             )
         )
@@ -309,14 +309,9 @@ async def full(
     if result_status:
         q = q.where(TrackedBet.result_status == result_status)
     if source == "system":
-        q = q.where(TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]))
+        q = q.where(TrackedBet.market_type != "Accumulator")
     elif source == "manual":
-        q = q.where(
-            or_(
-                TrackedBet.source_rule_key.is_(None),
-                TrackedBet.source_rule_key.notin_(["system_auto", "system_dual"]),
-            )
-        )
+        q = q.where(TrackedBet.market_type == "Accumulator")
     rows = await db.execute(q)
     bets = list(rows.scalars().all())
     return build_analytics(bets)
@@ -385,7 +380,7 @@ async def probability_calibration(
                 TrackedBet.user_id == current_user.id,
                 and_(
                     TrackedBet.user_id.is_(None),
-                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual", "system_acca"]),
                 ),
             )
         )

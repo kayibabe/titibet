@@ -317,7 +317,7 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
     fetchBets({ date_from: today, date_to: today })
       .then(bets => {
         setTrackedKeys(new Set(bets.map(b => `${b.fixture_id}:${b.market_type}`)))
-        const sys = bets.filter(b => b.source_rule_key === 'system_auto' || b.source_rule_key === 'system_dual')
+        const sys = bets.filter(b => b.market_type !== 'Accumulator')
         setSystemTrackedKeys(new Set(sys.map(b => `${b.fixture_id}:${b.market_type}`)))
         if (sys.length > 0) {
           const won     = sys.filter(b => b.result_status === 'Won').length
