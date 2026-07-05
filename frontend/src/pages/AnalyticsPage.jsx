@@ -3,6 +3,7 @@ import { Brain, Activity, BarChart2, Layers, TrendingUp, Zap, TrendingDown, Refr
 import { fetchAnalytics, fetchAnalyticsIntelligence, fetchStakingSimulation, fetchProbabilityCalibration } from '../api/analytics'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Cell } from 'recharts'
 import LossAnalysisDashboard from '../components/analytics/LossAnalysisDashboard'
+import BriefingPanel from '../components/analytics/BriefingPanel'
 import ModelIntelligenceDashboard from '../components/analytics/ModelIntelligenceDashboard'
 import ParameterHub from '../components/analytics/ParameterHub'
 import KPIRow from '../components/analytics/KPIRow'
@@ -708,6 +709,11 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
             View Signals →
           </button>
         </div>
+      )}
+
+      {/* ── Intelligence Briefing ── */}
+      {!loading && data && !noData && (
+        <BriefingPanel data={data} />
       )}
 
       {/* ── Tab bar ── */}
