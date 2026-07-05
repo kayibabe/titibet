@@ -199,8 +199,8 @@ export default function BriefingPanel({ data }) {
         <div className="flex items-center gap-2.5">
           <Sparkles size={14} className="text-indigo-400" />
           <span className="text-sm font-semibold text-[var(--text-h)]">Intelligence Briefing</span>
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 tracking-wide uppercase">
-            {insights.length} insight{insights.length !== 1 ? 's' : ''}
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+            {insights.length} insights
           </span>
         </div>
         {open
