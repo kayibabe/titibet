@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { RefreshCw, Download, Calendar, Sparkles, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle } from 'lucide-react'
+import { RefreshCw, Download, Calendar, Sparkles, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle, ChevronDown, ChevronUp, Radio, Search } from 'lucide-react'
 import { useSignals } from '../store/useSignals'
 import { computeSignals, fetchSignals } from '../api/signals'
 import { syncData, fetchBets } from '../api/tracker'
@@ -222,8 +222,10 @@ function ValueBetsTab({ date, isPro, onUpgrade }) {
 
           {/* Legs */}
           {currentAcc.legs.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-2 text-center">
-              <span className="text-3xl">📡</span>
+            <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-3 text-center">
+              <div className="w-12 h-12 rounded-full bg-[var(--code-bg)] flex items-center justify-center">
+                <Radio size={22} className="text-[var(--text)] opacity-40" />
+              </div>
               <p className="text-sm font-semibold text-[var(--text-h)]">No qualifying picks for this tier</p>
               <p className="text-xs text-[var(--text)] opacity-70 max-w-xs">
                 Try a lower odds target, or sync fresh data.
@@ -653,8 +655,8 @@ const reload = () => load(params)
               </button>
             )}
             {activeFilterCount === 0 && (
-              <span className="ml-auto text-[10px] text-[var(--text)] opacity-65">
-                {filtersOpen ? '▲' : '▼'}
+              <span className="ml-auto text-[var(--text)] opacity-50">
+                {filtersOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
               </span>
             )}
           </button>
@@ -798,9 +800,22 @@ const reload = () => load(params)
         </div>
 
         {loading && signals.length === 0 && (
-          <div className="grid gap-4">
+          <div className="grid gap-3">
             {[...Array(5)].map((_, i) => (
-              <div key={i} className="rounded-xl border border-white/8 bg-white/4 h-32 animate-pulse" />
+              <div key={i} className="rounded-xl border border-[var(--border)] bg-[var(--code-bg)] animate-pulse overflow-hidden">
+                <div className="px-4 py-3 space-y-3">
+                  <div className="h-4 w-2/3 rounded-full bg-[var(--border)]" />
+                  <div className="flex items-center gap-3">
+                    <div className="h-3 w-28 rounded-full bg-[var(--border)]" />
+                    <div className="h-2 w-20 rounded-full bg-[var(--border)]" />
+                    <div className="h-3 w-10 rounded-full bg-[var(--border)]" />
+                  </div>
+                </div>
+                <div className="border-t border-[var(--border)] px-4 py-2.5 flex items-center gap-2">
+                  <div className="h-2.5 w-24 rounded-full bg-[var(--border)]" />
+                  <div className="ml-auto h-6 w-20 rounded-lg bg-[var(--border)]" />
+                </div>
+              </div>
             ))}
           </div>
         )}
@@ -830,8 +845,10 @@ const reload = () => load(params)
         {!loading && !error && displayedSignals.length === 0 && (
           signals.length > 0 ? (
             /* Filters are active but nothing passes — invite the user to loosen them */
-            <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-2 text-center">
-              <span className="text-4xl">🔍</span>
+            <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-3 text-center">
+              <div className="w-12 h-12 rounded-full bg-[var(--code-bg)] flex items-center justify-center">
+                <Search size={22} className="text-[var(--text)] opacity-40" />
+              </div>
               <p className="text-sm font-semibold text-[var(--text-h)]">No signals match these filters</p>
               <p className="text-xs text-[var(--text)] opacity-75 max-w-xs">
                 Try adjusting the <span className="font-semibold text-[var(--accent)]">Min Prob%</span> threshold, changing the confidence filter, or{' '}
@@ -841,7 +858,9 @@ const reload = () => load(params)
           ) : (
             /* No signals at all for this date */
             <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-3 text-center">
-              <span className="text-4xl">📡</span>
+              <div className="w-12 h-12 rounded-full bg-[var(--code-bg)] flex items-center justify-center">
+                <Radio size={22} className="text-[var(--text)] opacity-40" />
+              </div>
               <p className="text-sm font-semibold text-[var(--text-h)]">No qualifying signals for {fmtDate(date)}</p>
               <p className="text-xs text-[var(--text)] opacity-75 max-w-sm">
                 Our dual-model gate requires both the Bayesian and Poisson engines to agree at High confidence.

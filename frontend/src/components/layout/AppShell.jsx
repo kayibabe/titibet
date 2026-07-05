@@ -107,15 +107,15 @@ export default function AppShell({ activePage, onNavigate, children }) {
         </button>
 
         {/* Brand logo — always visible */}
-        <div className="flex items-center gap-0">
-          <div className="shrink-0 -my-3" style={{ width: '75px', height: '75px' }}>
+        <div className="flex items-center gap-2">
+          <div className="shrink-0 w-9 h-9">
             <img
               src="/falcon.png"
               alt="TiTiBet"
               className="w-full h-full object-contain"
             />
           </div>
-          <div className="leading-none -ml-2">
+          <div className="leading-none">
             <span className="text-base font-bold text-[var(--text-h)] tracking-tight">TiTiBet</span>
             <span className="block text-[10px] text-[var(--accent)] font-semibold tracking-widest uppercase mt-0.5 opacity-80">
               Intelligence Platform
@@ -161,7 +161,7 @@ export default function AppShell({ activePage, onNavigate, children }) {
 
         {/* Main content */}
         <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-          <main className="flex-1 px-4 py-5 lg:px-6 lg:py-6 w-full max-w-5xl space-y-5 pb-24 lg:pb-6">
+          <main className="flex-1 px-4 py-5 lg:px-6 lg:py-6 w-full max-w-5xl mx-auto space-y-5 pb-24 lg:pb-6">
             {pageTitle && (
               <h1 className="hidden lg:block text-base font-bold text-[var(--text-h)] tracking-tight pb-4 border-b border-[var(--border)] mb-2">
                 {pageTitle}

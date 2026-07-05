@@ -1,5 +1,5 @@
 ﻿import { useState } from 'react'
-import { Download, Lock, Ticket, Bot, Pencil, Trash2, X, Clock, CheckCircle, AlertTriangle, MinusCircle } from 'lucide-react'
+import { Download, Lock, Ticket, Bot, Pencil, Trash2, X, Clock, CheckCircle, AlertTriangle, MinusCircle, ClipboardList } from 'lucide-react'
 import { fmtK, fmtPL, fmtPLCompact } from '../../utils/format'
 import { updateBet, deleteBet } from '../../api/tracker'
 
@@ -325,8 +325,8 @@ function BetRow({ bet, onRefresh }) {
     : isPending
       ? 'bg-[var(--code-bg)] border border-[var(--border)]'
       : isVoid
-        ? 'bg-slate-500'
-        : 'bg-[#6b21a8]'
+        ? 'bg-slate-600'
+        : 'bg-red-700'
   const badgeText = isWon ? 'text-white' : isPending ? 'text-[var(--text)]' : 'text-white'
   const plText    = isPending ? '-' : fmtPLCompact(pl)
   const matchName = bet.home_team && bet.away_team
@@ -438,7 +438,7 @@ function AccaRow({ bet, onRefresh }) {
   const isWon     = status === 'Won'
   const isVoid    = status === 'Void'
 
-  const badgeBg   = isWon ? 'bg-green-600' : isPending ? 'bg-[var(--code-bg)] border border-[var(--border)]' : isVoid ? 'bg-slate-500' : 'bg-[#6b21a8]'
+  const badgeBg   = isWon ? 'bg-green-600' : isPending ? 'bg-[var(--code-bg)] border border-[var(--border)]' : isVoid ? 'bg-slate-600' : 'bg-red-700'
   const badgeText = isWon ? 'text-white' : isPending ? 'text-[var(--text)]' : 'text-white'
 
   // Parse legs from JSON notes
@@ -582,11 +582,13 @@ function UnifiedDateGroupedBets({ bets, onRefresh }) {
 export default function BetTable({ bets, isPro = true, onUpgrade, onRefresh }) {
   if (!bets.length) {
     return (
-      <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-2 text-center">
-        <span className="text-4xl">-</span>
+      <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-3 text-center">
+        <div className="w-12 h-12 rounded-full bg-[var(--code-bg)] flex items-center justify-center">
+          <ClipboardList size={22} className="text-[var(--text)] opacity-40" />
+        </div>
         <p className="text-sm font-semibold text-[var(--text-h)]">No picks tracked yet</p>
         <p className="text-xs text-[var(--text)] opacity-75 max-w-xs">
-          Go to <span className="font-semibold text-[var(--accent)]">Value Signals</span>, open a signal card, and tap <span className="font-semibold">Track Pick</span> to add bets here.
+          Go to <span className="font-semibold text-[var(--accent)]">Signals</span>, open a signal card, and tap <span className="font-semibold">Track Pick</span> to add bets here.
         </p>
       </div>
     )

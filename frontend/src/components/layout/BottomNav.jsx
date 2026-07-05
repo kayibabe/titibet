@@ -31,7 +31,10 @@ export default function BottomNav({ activePage, onNavigate }) {
   }
 
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--bg)] border-t border-[var(--border)] flex items-stretch">
+    <nav
+      className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--bg)] border-t border-[var(--border)] flex items-stretch"
+      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+    >
       {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
         const active = activePage === id
         const badgeCount = badges[id] ?? 0
@@ -41,21 +44,21 @@ export default function BottomNav({ activePage, onNavigate }) {
             onClick={() => onNavigate(id)}
             aria-label={label}
             aria-current={active ? 'page' : undefined}
-            className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2.5 text-[10px] transition-colors ${
+            className={`flex-1 flex flex-col items-center justify-center gap-0.5 min-h-[56px] py-2 text-[10px] transition-colors ${
               active
                 ? 'text-[var(--accent)] font-semibold'
                 : 'font-medium text-[var(--text)] opacity-70 hover:opacity-100'
             }`}
           >
             <div className="relative">
-              <Icon size={18} className="shrink-0" />
+              <Icon size={20} className="shrink-0" />
               {badgeCount > 0 && (
-                <span className="absolute -top-1 -right-1.5 min-w-[16px] h-4 rounded-full bg-indigo-500 text-[10px] font-bold text-white flex items-center justify-center px-1 leading-none">
+                <span className="absolute -top-1 -right-1.5 min-w-[16px] h-4 rounded-full bg-[var(--accent)] text-[10px] font-bold text-white flex items-center justify-center px-1 leading-none">
                   {badgeCount > 99 ? '99+' : badgeCount}
                 </span>
               )}
             </div>
-            {label}
+            <span className="text-[10px] leading-tight">{label}</span>
           </button>
         )
       })}
