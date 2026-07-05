@@ -486,22 +486,21 @@ def _kickoff_label_cat(kickoff_at: Any, now_utc: datetime) -> str:
 
 
 # Number of matches randomly revealed in clear text on the Free channel;
-# everything else (and the whole Acca ticket) is spoiler-blurred. Kept as a
+# everything else is replaced with a non-revealable placeholder. Kept as a
 # module-level default so every Free push uses the same count unless overridden.
 FREE_REVEAL_COUNT = 2
 
-# Shown at the end of every Free-channel message — sells the upgrade on
-# speed/convenience (no tapping, no randomness) rather than "you can't see this",
-# since a tg-spoiler is one tap away from fully unblurred anyway.
+# Placeholder used for hidden match names in the Free channel. Unlike
+# <tg-spoiler>, this cannot be revealed by tapping — the real names simply
+# aren't in the message.
+_FREE_HIDDEN_MATCH = "▒▒▒▒▒ vs ▒▒▒▒▒"
+_FREE_HIDDEN_ACCA  = "▒▒▒▒▒ vs ▒▒▒▒▒"
+
+# Shown at the end of every Free-channel message.
 FREE_UPGRADE_CTA = (
-    "\n<i>👀 Tap any blurred match to peek — or skip the tapping entirely: "
-    "upgrade to Pro for every pick shown in clear, instantly, no randomness.</i>"
+    "\n<i>🔒 Some matches are hidden — upgrade to Pro to see every pick "
+    "instantly, in full, with no restrictions.</i>"
 )
-
-
-def _spoiler(text_: str) -> str:
-    """Wrap text in a Telegram spoiler entity — rendered blurred until tapped."""
-    return f"<tg-spoiler>{text_}</tg-spoiler>"
 
 
 def _pick_reveal_fixture_ids(rows: list[tuple[Signal, Fixture]], count: int) -> set[int]:
@@ -527,16 +526,17 @@ def build_signal_digest(
     channel_type: str = "pro",
     now: datetime | None = None,
     reveal_fixture_ids: set[int] | None = None,
+    acca: dict | None = None,
 ) -> str:
     """
     Build a 'tonight + overnight' digest. `rows` is already deduped and ordered
     by the caller (chronological). `now` is used to label each kickoff
     Today/Tomorrow in CAT.
 
-    channel_type="pro"  — every match shown in clear text.
-    channel_type="free" — identical content and full list, but only fixtures
-    in `reveal_fixture_ids` show real team names; the rest have their team
-    names spoiler-blurred (market/odds/confidence/league stay visible either way).
+    channel_type="pro"  — every match shown in clear text, acca included.
+    channel_type="free" — only fixtures in `reveal_fixture_ids` show real team
+    names; hidden matches and all acca legs use a non-revealable placeholder
+    so content cannot be exposed by tapping.
     """
     is_free = channel_type == "free"
     reveal_fixture_ids = reveal_fixture_ids or set()
@@ -552,14 +552,39 @@ def build_signal_digest(
         ko = _kickoff_label_cat(fix.kickoff_at, now)
         league_line = f"{_esc(fix.country)} · {_esc(fix.league)}" if fix.country else _esc(fix.league or "")
         conf_tag = {"High": "🔥", "Medium": "📊", "Low": "📉"}.get(sig.dual_confidence or "", "•")
-        match_name = f"{_esc(fix.home_team)} vs {_esc(fix.away_team)}"
-        if is_free and fix.id not in reveal_fixture_ids:
-            match_name = _spoiler(match_name)
+        match_name = (
+            _FREE_HIDDEN_MATCH
+            if is_free and fix.id not in reveal_fixture_ids
+            else f"{_esc(fix.home_team)} vs {_esc(fix.away_team)}"
+        )
         parts.append(
             f"\n<b>{i}. {match_name}</b>{(' · ' + ko) if ko else ''}\n"
             f"   🏆 {league_line}\n"
             f"   📌 {_esc(_verbose_market(sig.market))} · {_pct(primary)} {conf_tag}"
         )
+
+    legs = (acca or {}).get("legs") or []
+    combined_odds = (acca or {}).get("combined_odds")
+    if legs and combined_odds:
+        parts.append("\n" + "─" * 24)
+        parts.append(f"\n🎟️ <b>AI Acca of the Day</b> — combined @ {combined_odds}")
+        for i, leg in enumerate(legs, 1):
+            match = (
+                _FREE_HIDDEN_ACCA if is_free
+                else (
+                    f"{_esc(leg.get('home_team'))} vs {_esc(leg.get('away_team'))}"
+                    if leg.get("home_team") and leg.get("away_team") else "—"
+                )
+            )
+            odd = leg.get("odd")
+            odd_str = f"{float(odd):.2f}" if odd is not None else "?"
+            parts.append(
+                f"\n   {i}. <b>{match}</b> — {_esc(leg.get('market'))} @ {odd_str}"
+            )
+        rationale = (acca or {}).get("rationale")
+        if rationale and not is_free:
+            parts.append(f"\n<i>{_esc(rationale)}</i>")
+
     if is_free:
         parts.append(FREE_UPGRADE_CTA)
     parts.append(f"\n<a href=\"{settings.app_url}\">{settings.app_url}</a>")
@@ -695,9 +720,11 @@ def build_tomorrow_message(
         ko = _kickoff_str_cat(fix.kickoff_at)
         league_line = f"{_esc(fix.country)} · {_esc(fix.league)}" if fix.country else _esc(fix.league or "")
         conf_tag = {"High": "🔥", "Medium": "📊", "Low": "📉"}.get(sig.dual_confidence or "", "•")
-        match_name = f"{_esc(fix.home_team)} vs {_esc(fix.away_team)}"
-        if is_free and fix.id not in reveal_fixture_ids:
-            match_name = _spoiler(match_name)
+        match_name = (
+            _FREE_HIDDEN_MATCH
+            if is_free and fix.id not in reveal_fixture_ids
+            else f"{_esc(fix.home_team)} vs {_esc(fix.away_team)}"
+        )
         parts.append(
             f"\n<b>{i}. {match_name}</b>{(' · ' + ko) if ko else ''}\n"
             f"   🏆 {league_line}\n"
@@ -711,18 +738,19 @@ def build_tomorrow_message(
         parts.append(f"\n🎟️ <b>AI Acca of the Day</b> — combined @ {combined_odds}")
         for i, leg in enumerate(legs, 1):
             match = (
-                f"{_esc(leg.get('home_team'))} vs {_esc(leg.get('away_team'))}"
-                if leg.get("home_team") and leg.get("away_team") else "—"
+                _FREE_HIDDEN_ACCA if is_free
+                else (
+                    f"{_esc(leg.get('home_team'))} vs {_esc(leg.get('away_team'))}"
+                    if leg.get("home_team") and leg.get("away_team") else "—"
+                )
             )
-            if is_free:
-                match = _spoiler(match)
             odd = leg.get("odd")
             odd_str = f"{float(odd):.2f}" if odd is not None else "?"
             parts.append(
                 f"\n   {i}. <b>{match}</b> — {_esc(leg.get('market'))} @ {odd_str}"
             )
         rationale = (acca or {}).get("rationale")
-        if rationale:
+        if rationale and not is_free:
             parts.append(f"\n<i>{_esc(rationale)}</i>")
 
     if is_free:
@@ -1085,12 +1113,20 @@ async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_RE
     by_rank = sorted(deduped, key=lambda r: _system_rank(r[0], r[1]), reverse=True)
     reveal_fixture_ids = _pick_reveal_fixture_ids(by_rank, free_reveal_count)
 
+    acca = None
+    try:
+        from app.services.advisor_service import get_advisor_insights
+        insights = await get_advisor_insights(db, today, current_user=None, force=False)
+        acca = insights.get("accumulator")
+    except Exception:
+        logger.exception("Morning digest: failed to fetch AI Advisory acca — sending singles only")
+
     sent = 0
     for chat_id, channel_type in targets:
         if channel_type == "free":
-            text = build_signal_digest(by_rank, channel_type="free", now=now, reveal_fixture_ids=reveal_fixture_ids)
+            text = build_signal_digest(by_rank, channel_type="free", now=now, reveal_fixture_ids=reveal_fixture_ids, acca=acca)
         else:
-            text = build_signal_digest(by_rank, channel_type=channel_type, now=now)
+            text = build_signal_digest(by_rank, channel_type=channel_type, now=now, acca=acca)
         # Override title line to say "Today's Picks" instead of "Tonight & Overnight"
         text = text.replace("Tonight &amp; Overnight", "Today's Picks")
         text = text.replace("Tonight &amp; after-midnight kickoffs", "Today's signal picks")
