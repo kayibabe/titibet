@@ -547,14 +547,29 @@ async def _load_recent_analyses(
     db: AsyncSession,
     lookback_days: int = 30,
 ) -> list[LossAnalysis]:
-    """Load recent LossAnalysis rows for pattern detection."""
+    """Load recent LossAnalysis rows for pattern detection.
+
+    Deduplicates by (match_name, market_type, event_date) — the same fixture
+    can produce two TrackedBet rows (system pick + manual track), which would
+    otherwise show as duplicate cards. We keep the row with the highest id
+    (most recently written, more likely to have LLM narrative).
+    """
     cutoff = date.today() - timedelta(days=lookback_days)
     result = await db.execute(
         select(LossAnalysis)
         .where(LossAnalysis.event_date >= cutoff)
         .order_by(LossAnalysis.event_date.desc())
     )
-    return list(result.scalars().all())
+    rows = list(result.scalars().all())
+
+    # Deduplicate: keep only the highest-id row per (match, market, date) triple
+    seen: dict[tuple, LossAnalysis] = {}
+    for row in sorted(rows, key=lambda r: r.id, reverse=True):
+        key = (row.match_name, row.market_type, row.event_date)
+        if key not in seen:
+            seen[key] = row
+
+    return sorted(seen.values(), key=lambda r: r.event_date, reverse=True)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
