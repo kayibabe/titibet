@@ -46,6 +46,7 @@ class UserOut(BaseModel):
     subscription_expires_at: datetime | None
     timezone: str
     created_at: datetime
+    is_admin: bool = False
 
     model_config = {"from_attributes": True}
 

@@ -198,6 +198,18 @@ export default function AdminPage() {
             <div className="flex items-center gap-3 flex-wrap">
               <EditableCell value={u.tier} options={TIER_OPTIONS} onSave={v => handleUpdate(u.id, { tier: v })} />
               <EditableCell value={u.subscription_status} options={STATUS_OPTIONS} onSave={v => handleUpdate(u.id, { subscription_status: v })} />
+              <button
+                title={u.is_admin ? 'Revoke admin' : 'Grant admin'}
+                onClick={() => handleUpdate(u.id, { is_admin: !u.is_admin })}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[10px] font-semibold transition-colors ${
+                  u.is_admin
+                    ? 'border-amber-500/50 bg-amber-500/15 text-amber-400'
+                    : 'border-[var(--border)] text-[var(--text)] opacity-40 hover:opacity-80'
+                }`}
+              >
+                <Shield size={10} />
+                {u.is_admin ? 'Admin' : 'Admin'}
+              </button>
               <span className="text-xs text-[var(--text)] opacity-80 ml-auto">{fmtDate(u.created_at)}</span>
             </div>
             <div className="flex items-center gap-1 text-[11px] text-[var(--text)] opacity-60">
@@ -243,6 +255,7 @@ export default function AdminPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--text)] opacity-75">Joined</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--text)] opacity-75">Last Active</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--text)] opacity-75">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--text)] opacity-75">Admin</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -268,6 +281,19 @@ export default function AdminPage() {
                       ? <span className="text-xs text-green-400">Active</span>
                       : <span className="text-xs text-red-400">Deactivated</span>
                     }
+                  </td>
+                  <td className="px-4 py-3">
+                    <button
+                      title={u.is_admin ? 'Revoke admin' : 'Grant admin'}
+                      onClick={() => handleUpdate(u.id, { is_admin: !u.is_admin })}
+                      className={`flex items-center justify-center w-7 h-7 rounded-md border transition-colors ${
+                        u.is_admin
+                          ? 'border-amber-500/50 bg-amber-500/15 text-amber-400 hover:bg-amber-500/25'
+                          : 'border-[var(--border)] text-[var(--text)] opacity-40 hover:opacity-80 hover:border-amber-500/40 hover:text-amber-400'
+                      }`}
+                    >
+                      <Shield size={12} />
+                    </button>
                   </td>
                   <td className="px-4 py-3 text-right">
                     {u.is_active && (

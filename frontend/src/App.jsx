@@ -106,7 +106,7 @@ export default function App() {
       case 'pricing':
         return <PricingPage />
       case 'admin':
-        return user?.tier === 'elite' ? <AdminPage /> : null
+        return user?.is_admin ? <AdminPage /> : null
       default:
         return null
     }

@@ -37,11 +37,13 @@ PLANS: list[dict] = [
         "tier": "pro",
         "label": "Pro",
         "interval": "monthly",
-        "price_mwk": 20000,
+        "price_mwk": 50000,
         "features": [
             "All value signals (19 markets)",
             "Bet tracker with CLV tracking",
             "Analytics & backtest",
+            "AI betting advisor (Groq-powered)",
+            "Priority signal alerts",
         ],
     },
     {
@@ -49,10 +51,10 @@ PLANS: list[dict] = [
         "tier": "pro",
         "label": "Pro",
         "interval": "yearly",
-        "price_mwk": 240000,
+        "price_mwk": 540000,
         "features": [
             "Everything in Pro Monthly",
-            "2 months free (vs monthly)",
+            "10% discount (vs monthly)",
         ],
     },
     {
