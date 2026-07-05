@@ -76,7 +76,7 @@ export default function Sidebar({ activePage, onNavigate }) {
               `}
             >
               <ShieldCheck size={16} className="shrink-0" />
-              User Panel
+              Admin
             </button>
           </>
         )}
