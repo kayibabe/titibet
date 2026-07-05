@@ -44,7 +44,7 @@ function computeInsights(data) {
   const byMarket     = (data.byMarket     ?? []).filter(m => (m.bets  ?? 0) >= 5)
   const byConfidence = (data.byConfidence ?? []).filter(c => (c.bets  ?? 0) >= 5)
   const byAgreement  = (data.byAgreement  ?? []).filter(a => (a.bets  ?? 0) >= 5)
-  const byLeague     = (data.byLeague     ?? []).filter(l => (l.bets  ?? 0) >= 8)
+  const byLeague     = (data.byLeague     ?? []).filter(l => (l.bets  ?? 0) >= 8 && l.league !== 'Unknown')
   const trend        = data.trend ?? []
 
   // 1 — Overall ROI
