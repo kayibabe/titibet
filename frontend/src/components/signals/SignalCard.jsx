@@ -4,7 +4,7 @@ import { ConfidenceBadge, AgreementBadge } from './SignalBadge'
 import EngineBreakdown from './EngineBreakdown'
 import ContradictionAlert from './ContradictionAlert'
 import OddsDisplay from '../shared/OddsDisplay'
-import { fmtKickoff } from '../../utils/format'
+import { fmtKickoff, marketColor } from '../../utils/format'
 import { fetchSignalExplanation } from '../../api/signals'
 
 const FINAL_STATUSES = new Set(['FT', 'AET', 'PEN'])
@@ -373,7 +373,7 @@ function ProbabilityLine({ market, confidence, prob, odd, bookmaker }) {
   return (
     <div className="flex items-center gap-3">
       <div className="flex items-center gap-2 min-w-0 shrink-0">
-        <span className="text-sm text-[var(--text-h)] font-medium truncate">{market}</span>
+        <span className={`text-sm font-medium truncate ${marketColor(market)}`}>{market}</span>
         {showConfPill && (
           <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold text-white ${confColor}`}>
             {confidence}

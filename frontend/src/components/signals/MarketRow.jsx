@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { ConfidenceBadge, AgreementBadge } from './SignalBadge'
 import OddsDisplay from '../shared/OddsDisplay'
+import { marketColor } from '../../utils/format'
 
 // Bookmaker short-names for display
 const BOOKIE_LABELS = {
@@ -63,7 +64,7 @@ export default function MarketRow({ signal, onTrack }) {
   return (
     <>
       <tr className="border-t border-[var(--border)] hover:bg-[var(--code-bg)] transition-colors">
-        <td className="px-3 py-2 text-sm text-[var(--text-h)] font-medium">{signal.market}</td>
+        <td className={`px-3 py-2 text-sm font-medium ${marketColor(signal.market)}`}>{signal.market}</td>
         <td className="px-3 py-2"><ConfidenceBadge confidence={signal.dual_confidence} /></td>
         <td className="px-3 py-2"><AgreementBadge agreement={signal.dual_agreement} /></td>
 

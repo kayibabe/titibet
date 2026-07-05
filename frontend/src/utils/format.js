@@ -130,6 +130,22 @@ export function fmtKickoff(isoString) {
 }
 
 /**
+ * Returns a Tailwind text-color class for a given market name so each market
+ * family is visually distinct at a glance.
+ */
+export function marketColor(market) {
+  if (!market) return 'text-[var(--text-h)]'
+  if (/^(Home|Away) Over/.test(market))  return 'text-orange-400'
+  if (/^Over \d/.test(market))           return 'text-rose-400'
+  if (/^(Home|Away) Under/.test(market)) return 'text-teal-400'
+  if (/^Under \d/.test(market))          return 'text-sky-400'
+  if (market.startsWith('BTTS'))         return 'text-violet-400'
+  if (/^(1X|X2|12)\b/.test(market))     return 'text-blue-400'
+  if (/^(Home Win|Away Win|Draw)$/.test(market)) return 'text-emerald-400'
+  return 'text-[var(--text-h)]'
+}
+
+/**
  * Returns milliseconds until the given ISO datetime (stored as UTC).
  * Negative if already past.
  */
