@@ -79,7 +79,7 @@ export async function fetchTelegramPreview() {
 
 /** Push today's signals to all configured Telegram channels immediately. */
 export async function pushTelegramSignals() {
-  const res = await apiFetch('/api/admin/telegram/push', { method: 'POST' })
+  const res = await apiFetch('/api/admin/telegram/push-digest', { method: 'POST' })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.detail || 'Telegram push failed')
