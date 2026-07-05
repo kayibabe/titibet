@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Signal, Fixture, TrackedBet
+from app.models.learning_proposal import LearningProposal
 from app.models.user import User as _User  # noqa: F401 — registers users table in SA metadata
 from app.core.config import (
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
@@ -28,6 +29,35 @@ from app.core.config import (
 logger = logging.getLogger("titibet.auto_tracker")
 
 FLAT_STAKE = 50_000.0
+
+# Minimum probability both engines must reach for a Both+High pick to be
+# auto-tracked. Both+High signals near the 0.70 floor show weaker edge
+# (market already fairly priced); raising the bar to 0.73 filters these out.
+DUAL_HIGH_MIN_PROB = 0.73
+
+
+async def _load_kelly_multipliers(db: AsyncSession) -> dict[str, float]:
+    """
+    Returns active kelly_fraction_adj multipliers keyed by dual_confidence target.
+    E.g. {"High": 0.5} means Both+High stakes are halved before tracking.
+    Falls back to {} (no adjustment) on any error.
+    """
+    try:
+        result = await db.execute(
+            select(LearningProposal).where(
+                LearningProposal.change_type == "kelly_fraction_adj",
+                LearningProposal.is_active == True,  # noqa: E712
+            )
+        )
+        proposals = result.scalars().all()
+        return {
+            p.target: float(p.proposed_value)
+            for p in proposals
+            if p.proposed_value is not None and 0.1 <= float(p.proposed_value) <= 1.0
+        }
+    except Exception:
+        logger.warning("_load_kelly_multipliers: could not load proposals — using 1.0×")
+        return {}
 
 
 def _grade(q: float | None) -> str | None:
@@ -75,6 +105,9 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
     if not rows:
         return 0
 
+    # Load active kelly_fraction_adj multipliers from learning proposals.
+    kelly_mults = await _load_kelly_multipliers(db)
+
     # Load existing bets for this date to avoid duplicates.
     # Check on (fixture_id, market_type) only — bookmaker varies between the
     # old per-user strategy-tracker rows and the new system_auto rows, so
@@ -115,6 +148,22 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             continue
 
+        # Both+High minimum probability gate — both engines must clear 0.73.
+        # Picks near the 0.70 floor tend to be fairly priced by the market;
+        # the extra 3pp screens out low-edge dual signals.
+        if (
+            signal.dual_confidence == "High"
+            and signal.dual_agreement == "Both"
+        ):
+            b_prob = signal.bayesian_prob or 0.0
+            p_prob = signal.poisson_prob or 0.0
+            if min(b_prob, p_prob) < DUAL_HIGH_MIN_PROB:
+                logger.debug(
+                    "auto_track: skip %s %s — Both+High probs %.3f/%.3f < %.2f gate",
+                    fixture.home_team, signal.market, b_prob, p_prob, DUAL_HIGH_MIN_PROB,
+                )
+                continue
+
         # Skip women's league over-goals picks — models calibrated on men's
         # football systematically overestimate scoring in women's fixtures.
         if (
@@ -138,6 +187,17 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         is_dual = signal.dual_confidence == "High" and signal.dual_agreement == "Both"
         match_name = f"{fixture.home_team} vs {fixture.away_team}"
 
+        # Apply active kelly_fraction_adj multiplier (from learning proposals).
+        # E.g. a 0.5× multiplier for "High" confidence halves the dual stake.
+        conf = signal.dual_confidence or "Medium"
+        kelly_mult = kelly_mults.get(conf, 1.0)
+        stake = round(FLAT_STAKE * kelly_mult)
+        if stake != FLAT_STAKE:
+            logger.debug(
+                "auto_track: stake for %s %s confidence = %.0f (%.2f× of %.0f)",
+                signal.market, conf, stake, kelly_mult, FLAT_STAKE,
+            )
+
         bet = TrackedBet(
             user_id=None,
             fixture_id=signal.fixture_id,
@@ -148,7 +208,7 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
             market_type=signal.market,
             selection_name=signal.market,
             odds=odds,
-            stake=FLAT_STAKE,
+            stake=stake,
             recommended_stake_pct=signal.dual_recommended_stake_pct,
             source_rule_key="system_dual" if is_dual else "system_auto",
             source_rule_label="Dual Signal (High+Both)" if is_dual else "System Auto-Pick",
