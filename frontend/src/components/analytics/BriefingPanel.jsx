@@ -170,8 +170,8 @@ function computeInsights(data) {
         type: severity > 0.7 ? 'danger' : severity > 0.3 ? 'warning' : 'neutral',
         Icon: ArrowDownCircle,
         text: current > 0.5
-          ? `Current drawdown: −${current.toFixed(1)} units (max was −${drawdown.toFixed(1)})`
-          : `Drawdown fully recovered — max was −${drawdown.toFixed(1)} units`,
+          ? `Current drawdown: −${current.toLocaleString(undefined, { maximumFractionDigits: 1 })} profit/loss (max was −${drawdown.toLocaleString(undefined, { maximumFractionDigits: 1 })})`
+          : `Drawdown fully recovered — max was −${drawdown.toLocaleString(undefined, { maximumFractionDigits: 1 })} profit/loss`,
         sub: current > 0.5
           ? severity > 0.7
             ? 'Near period low. Do not increase stake sizes until you recover ground — protect the bankroll first.'
@@ -207,8 +207,8 @@ function computeInsights(data) {
         Icon: Activity,
         text: improving ? 'Form is trending upward this week' : 'Form has dipped over the last 7 days',
         sub: improving
-          ? `Last 7 days: ${recent7 >= 0 ? '+' : ''}${recent7.toFixed(1)} units vs prior week: ${prev7 >= 0 ? '+' : ''}${prev7.toFixed(1)} units.`
-          : `Last 7 days: ${recent7.toFixed(1)} units vs prior week: ${prev7 >= 0 ? '+' : ''}${prev7.toFixed(1)} units. Review recent losses in the Strategy tab.`,
+          ? `Last 7 days: ${recent7 >= 0 ? '+' : ''}${recent7.toLocaleString(undefined, { maximumFractionDigits: 1 })} profit/loss vs prior week: ${prev7 >= 0 ? '+' : ''}${prev7.toLocaleString(undefined, { maximumFractionDigits: 1 })} profit/loss.`
+          : `Last 7 days: ${recent7.toLocaleString(undefined, { maximumFractionDigits: 1 })} profit/loss vs prior week: ${prev7 >= 0 ? '+' : ''}${prev7.toLocaleString(undefined, { maximumFractionDigits: 1 })} profit/loss. Review recent losses in the Strategy tab.`,
       })
     }
   }
