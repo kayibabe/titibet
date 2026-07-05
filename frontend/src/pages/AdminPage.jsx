@@ -6,13 +6,12 @@ import TelegramPanel from '../components/admin/TelegramPanel'
 import QuotaWidget from '../components/admin/QuotaWidget'
 import LearningProposalsPanel from '../components/admin/LearningProposalsPanel'
 
-const TIER_OPTIONS = ['free', 'pro', 'elite']
+const TIER_OPTIONS = ['free', 'pro']
 const STATUS_OPTIONS = ['inactive', 'active', 'cancelled', 'past_due']
 
 const TIER_STYLE = {
   free:  'bg-slate-500/15 text-slate-400 border-slate-500/30',
-  pro:   'bg-blue-500/15 text-blue-400 border-blue-500/30',
-  elite: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+  pro: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
 }
 const STATUS_STYLE = {
   active:     'bg-green-500/15 text-green-400 border-green-500/30',
@@ -133,7 +132,6 @@ export default function AdminPage() {
           <StatCard label="Total Users" value={stats.total_users} icon={Users} color="bg-[var(--accent)]" />
           <StatCard label="Active Subs" value={stats.active_subscriptions} icon={CheckCircle} color="bg-green-600" />
           <StatCard label="Pro" value={stats.pro_users} icon={Shield} color="bg-blue-600" />
-          <StatCard label="Elite" value={stats.elite_users} icon={Shield} color="bg-amber-600" />
         </div>
       )}
 

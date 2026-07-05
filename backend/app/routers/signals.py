@@ -442,10 +442,10 @@ async def list_signals(
             mkt_capped.append(r)
         results = mkt_capped
 
-    # Enforce free-tier signal limit — pro/elite users see all signals
+    # Enforce free-tier signal limit — pro users see all signals
     is_pro = (
         current_user is not None
-        and current_user.tier in ("pro", "elite")
+        and current_user.tier == "pro"
         and current_user.subscription_status == "active"
     )
     if not is_pro:

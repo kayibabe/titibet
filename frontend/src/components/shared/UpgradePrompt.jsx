@@ -9,7 +9,7 @@ import { Lock, Zap, Shield } from 'lucide-react'
  *   "blur"   — renders children blurred with lock overlay. Use for partial blurs.
  *
  * Props:
- *   required     — 'pro' | 'elite'
+ *   required     — 'pro'
  *   feature      — short description shown in the gate copy
  *   onUpgrade    — callback for the "View Plans" button
  *   children     — rendered content (for variant="blur" only)
@@ -23,14 +23,6 @@ const STYLE = {
     btn:    'bg-blue-600 hover:bg-blue-500',
     icon:   Zap,
     label:  'Pro',
-  },
-  elite: {
-    color:  'text-amber-400',
-    border: 'border-amber-500/30',
-    bg:     'bg-amber-500/8',
-    btn:    'bg-amber-600 hover:bg-amber-500',
-    icon:   Shield,
-    label:  'Elite',
   },
 }
 

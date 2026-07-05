@@ -60,7 +60,6 @@ class AdminStats(BaseModel):
     active_subscriptions: int
     free_users: int
     pro_users: int
-    elite_users: int
 
 
 @router.get("/stats", response_model=AdminStats)
@@ -75,7 +74,6 @@ async def admin_stats(
         active_subscriptions=sum(1 for u in users if u.subscription_status == "active"),
         free_users=sum(1 for u in users if u.tier == "free"),
         pro_users=sum(1 for u in users if u.tier == "pro"),
-        elite_users=sum(1 for u in users if u.tier == "elite"),
     )
 
 
@@ -124,7 +122,7 @@ async def update_user(
     if not user:
         raise HTTPException(404, "User not found")
 
-    VALID_TIERS = {"free", "pro", "elite"}
+    VALID_TIERS = {"free", "pro"}
     VALID_STATUSES = {"inactive", "active", "cancelled", "past_due"}
 
     if body.tier is not None:

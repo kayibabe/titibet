@@ -22,7 +22,6 @@ const NAV_ITEMS = [
 const TIER_BADGE = {
   free:  { label: 'Free',  color: 'text-slate-400',  upgradeable: true  },
   pro:   { label: 'Pro',   color: 'text-blue-400',   upgradeable: false },
-  elite: { label: 'Elite', color: 'text-amber-400',  upgradeable: false },
 }
 
 export default function Sidebar({ activePage, onNavigate }) {
@@ -59,8 +58,8 @@ export default function Sidebar({ activePage, onNavigate }) {
           )
         })}
 
-        {/* Admin — elite only */}
-        {user?.tier === 'elite' && (
+        {/* Admin — system admins only */}
+        {user?.is_admin && (
           <>
             <div className="pt-3 pb-1 px-3">
               <span className="text-[10px] font-semibold text-[var(--text)] opacity-65 tracking-widest uppercase">Admin</span>

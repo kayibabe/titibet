@@ -114,8 +114,6 @@ class Settings(BaseSettings):
     # Paystack plan codes — create these in your Paystack dashboard first
     paystack_plan_pro_monthly: str = ""
     paystack_plan_pro_yearly: str = ""
-    paystack_plan_elite_monthly: str = ""
-    paystack_plan_elite_yearly: str = ""
     # Currency — Paystack uses MWK for Malawi
     paystack_currency: str = "MWK"
 

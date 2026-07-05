@@ -57,30 +57,6 @@ PLANS: list[dict] = [
             "10% discount (vs monthly)",
         ],
     },
-    {
-        "id": "elite_monthly",
-        "tier": "elite",
-        "label": "Elite",
-        "interval": "monthly",
-        "price_mwk": 30000,
-        "features": [
-            "Everything in Pro",
-            "AI betting advisor (Groq-powered)",
-            "Admin user panel",
-            "Priority signal alerts",
-        ],
-    },
-    {
-        "id": "elite_yearly",
-        "tier": "elite",
-        "label": "Elite",
-        "interval": "yearly",
-        "price_mwk": 360000,
-        "features": [
-            "Everything in Elite Monthly",
-            "2 months free (vs monthly)",
-        ],
-    },
 ]
 
 # Map plan id → Paystack plan code (filled from settings at runtime)
@@ -89,8 +65,6 @@ def _plan_code(plan_id: str) -> str:
     return {
         "pro_monthly":    s.paystack_plan_pro_monthly,
         "pro_yearly":     s.paystack_plan_pro_yearly,
-        "elite_monthly":  s.paystack_plan_elite_monthly,
-        "elite_yearly":   s.paystack_plan_elite_yearly,
     }.get(plan_id, "")
 
 

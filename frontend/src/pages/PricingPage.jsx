@@ -4,10 +4,9 @@ import { fetchPlans, initializePayment } from '../api/payments'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../utils/format'
 
-const TIER_ICON = { pro: Zap, elite: Shield }
+const TIER_ICON = { pro: Zap }
 const TIER_COLOR = {
-  pro:   { accent: 'text-blue-400',  border: 'border-blue-500/30',  bg: 'bg-blue-500/10',  btn: 'bg-blue-600 hover:bg-blue-500' },
-  elite: { accent: 'text-amber-400', border: 'border-amber-500/30', bg: 'bg-amber-500/10', btn: 'bg-amber-600 hover:bg-amber-500' },
+  pro: { accent: 'text-blue-400', border: 'border-blue-500/30', bg: 'bg-blue-500/10', btn: 'bg-blue-600 hover:bg-blue-500' },
 }
 
 function fmtMWK(tambala) {

@@ -13,7 +13,7 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255))
     name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
 
-    # Tier: free / pro / elite
+    # Tier: free / pro
     tier: Mapped[str] = mapped_column(String(20), default="free", index=True)
     # Subscription: inactive / active / cancelled / past_due
     subscription_status: Mapped[str] = mapped_column(String(20), default="inactive")
@@ -44,8 +44,4 @@ class User(Base):
 
     @property
     def is_pro(self) -> bool:
-        return self.tier in ("pro", "elite") and self._subscription_valid()
-
-    @property
-    def is_elite(self) -> bool:
-        return self.tier == "elite" and self._subscription_valid()
+        return self.tier == "pro" and self._subscription_valid()

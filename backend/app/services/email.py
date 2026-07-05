@@ -94,7 +94,7 @@ async def send_welcome(to: str, name: str) -> None:
         explore value signals, track bets, and run backtests.
       </p>
       <p style="color:#94a3b8;line-height:1.6;margin-top:12px">
-        When you're ready for full analytics and AI analysis, upgrade to Pro or Elite from the
+        When you're ready for full analytics and AI analysis, upgrade to Pro from the
         <strong style="color:#e2e8f0">Plans</strong> page inside the app.
       </p>
       <a href="{s.app_url}" style="display:inline-block;margin-top:24px;padding:12px 28px;

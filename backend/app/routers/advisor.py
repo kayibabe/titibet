@@ -23,12 +23,12 @@ _last_force_at: dict[int, float] = {}
 def _require_pro(current_user: Optional[User]) -> User:
     if (
         current_user is None
-        or current_user.tier not in ("pro", "elite")
+        or current_user.tier != "pro"
         or current_user.subscription_status != "active"
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="AI Advisory requires a Pro or Elite subscription.",
+            detail="AI Advisory requires an active Pro subscription.",
         )
     return current_user
 

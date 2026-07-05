@@ -104,7 +104,6 @@ export default function AccountPage() {
   const TIER_STYLE = {
     free:  'text-slate-400',
     pro:   'text-blue-400',
-    elite: 'text-amber-400',
   }
 
   return (

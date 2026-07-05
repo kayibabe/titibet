@@ -1031,10 +1031,10 @@ async def get_advisor_insights(
     if current_user is not None:
         tier   = getattr(current_user, "tier", None)
         status = getattr(current_user, "subscription_status", None)
-        if tier not in ("pro", "elite") or status != "active":
+        if tier != "pro" or status != "active":
             return {
                 "error":   "subscription_required",
-                "message": "AI Advisor requires an active Pro or Elite subscription.",
+                "message": "AI Advisor requires an active Pro subscription.",
             }
 
     settings = get_settings()

@@ -7,7 +7,7 @@ async function throwApiError(res, fallback) {
     detail = body?.detail || ''
   } catch (_) { /* non-JSON error body */ }
   if (res.status === 429) throw new Error(detail || 'Rate-limited — try again in a minute.')
-  if (res.status === 403) throw new Error(detail || 'AI Advisory requires a Pro or Elite subscription.')
+  if (res.status === 403) throw new Error(detail || 'AI Advisory requires an active Pro subscription.')
   throw new Error(detail || `${fallback} (${res.status}).`)
 }
 
