@@ -560,10 +560,10 @@ async def _call_openai_compat(
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
         body   = exc.response.text.lower()
-        if status >= 500 or status in (404, 400):
-            # 400 from Groq/Cerebras typically means the model name is invalid
-            # (deprecated or renamed) — fall back to the next provider rather than
-            # hard-failing so a single stale model name doesn't break the chain.
+        if status >= 500 or status in (404, 400, 401, 403):
+            # 400 — invalid model name (deprecated/renamed); fall through to next provider
+            # 401/403 — key missing or invalid; fall through silently rather than
+            #            surfacing a raw auth error to the user
             logger.info("%s %s for %s — falling back (%s)", provider, status, advisor["id"], exc.response.text[:120])
             return None
         if _is_quota_error(body):
