@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     # Currency — Paystack uses MWK for Malawi
     paystack_currency: str = "MWK"
 
+    # Telegram public invite link for the Free channel — shown in welcome email
+    # and onboarding. Generate from Telegram: channel → Manage → Invite Links.
+    telegram_free_invite_url: str = ""
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

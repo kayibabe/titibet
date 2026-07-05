@@ -87,6 +87,25 @@ def _base_html(title: str, body: str) -> str:
 async def send_welcome(to: str, name: str) -> None:
     display = name or to.split("@")[0]
     s = get_settings()
+
+    telegram_block = ""
+    telegram_text  = ""
+    if s.telegram_free_invite_url:
+        telegram_block = f"""
+      <div style="margin-top:24px;padding:16px 20px;background:#0f172a;border:1px solid #1e3a5f;border-radius:8px">
+        <p style="color:#e2e8f0;font-weight:600;margin:0 0 6px">📲 Get free daily picks on Telegram</p>
+        <p style="color:#94a3b8;font-size:13px;margin:0 0 14px;line-height:1.5">
+          Join <strong style="color:#e2e8f0">TiTiBet Free</strong> on Telegram to receive today's
+          top picks every morning — straight to your phone.
+        </p>
+        <a href="{s.telegram_free_invite_url}"
+           style="display:inline-block;padding:10px 22px;background:#229ED9;color:#fff;
+                  border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">
+          Join TiTiBet Free on Telegram →
+        </a>
+      </div>"""
+        telegram_text = f"\n\nJoin TiTiBet Free on Telegram for daily picks: {s.telegram_free_invite_url}"
+
     body_html = f"""
       <h2 style="color:#e2e8f0;margin:0 0 16px">Welcome, {display}! 🎯</h2>
       <p style="color:#94a3b8;line-height:1.6">
@@ -96,13 +115,13 @@ async def send_welcome(to: str, name: str) -> None:
       <p style="color:#94a3b8;line-height:1.6;margin-top:12px">
         When you're ready for full analytics and AI analysis, upgrade to Pro from the
         <strong style="color:#e2e8f0">Plans</strong> page inside the app.
-      </p>
+      </p>{telegram_block}
       <a href="{s.app_url}" style="display:inline-block;margin-top:24px;padding:12px 28px;
          background:#4f46e5;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">
         Open TiTiBet
       </a>
     """
-    body_text = f"Welcome to TiTiBet, {display}!\n\nYour account is ready. Visit {s.app_url} to get started."
+    body_text = f"Welcome to TiTiBet, {display}!\n\nYour account is ready. Visit {s.app_url} to get started.{telegram_text}"
     html = _base_html("Welcome to TiTiBet", body_html).replace("{email}", to)
     await send_email(to, "Welcome to TiTiBet 🎯", html, body_text)
 

@@ -4,6 +4,9 @@ WORKDIR /build/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
+# Build-time env vars (VITE_ prefix makes them available inside React)
+ARG VITE_TELEGRAM_FREE_URL=""
+ENV VITE_TELEGRAM_FREE_URL=$VITE_TELEGRAM_FREE_URL
 RUN npm run build
 
 # ── Stage 2: Python backend ───────────────────────────────────────────────────

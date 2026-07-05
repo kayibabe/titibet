@@ -1,7 +1,9 @@
 ﻿import { useState } from 'react'
-import { TrendingUp, BarChart2, CheckCircle, X } from 'lucide-react'
+import { TrendingUp, BarChart2, CheckCircle, Send, X } from 'lucide-react'
 
-const STEPS = [
+const TG_URL = import.meta.env.VITE_TELEGRAM_FREE_URL
+
+const BASE_STEPS = [
   {
     icon: TrendingUp,
     title: 'Welcome to TiTiBet',
@@ -24,6 +26,17 @@ const STEPS = [
     iconBg: 'bg-blue-500/15 border-blue-500/30',
   },
 ]
+
+const TG_STEP = {
+  icon: Send,
+  title: 'Get Picks on Telegram',
+  body: "Join TiTiBet Free on Telegram and receive today's top picks every morning — straight to your phone, before kickoff.",
+  iconColor: 'text-sky-400',
+  iconBg: 'bg-sky-500/15 border-sky-500/30',
+  telegramUrl: TG_URL,
+}
+
+const STEPS = TG_URL ? [...BASE_STEPS, TG_STEP] : BASE_STEPS
 
 export default function OnboardingModal({ onComplete }) {
   const [step, setStep] = useState(0)
@@ -75,6 +88,19 @@ export default function OnboardingModal({ onComplete }) {
           <p className="text-sm text-[var(--text)] opacity-80 leading-relaxed max-w-sm">
             {current.body}
           </p>
+
+          {/* Telegram CTA — only on the Telegram step */}
+          {current.telegramUrl && (
+            <a
+              href={current.telegramUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-sky-500/15 border border-sky-500/30 text-sky-400 text-sm font-semibold hover:bg-sky-500/25 transition-colors -mt-1"
+            >
+              <Send size={14} />
+              Join TiTiBet Free on Telegram
+            </a>
+          )}
 
           {/* Step dots */}
           <div className="flex items-center gap-2 mt-1">
