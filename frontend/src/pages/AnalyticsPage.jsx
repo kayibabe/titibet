@@ -713,7 +713,7 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
 
       {/* ── Intelligence Briefing ── */}
       {!loading && data && !noData && (
-        <BriefingPanel data={data} />
+        <BriefingPanel data={data} onApplySignalFilter={onApplySignalFilter} />
       )}
 
       {/* ── Tab bar ── */}
