@@ -104,6 +104,7 @@ async def get_accumulators(
     all_suppressed = bad_leagues | DISABLED_LEAGUES
     if all_suppressed:
         query = query.where(func.lower(func.trim(Fixture.league)).notin_(all_suppressed))
+        query = query.where(~func.lower(func.trim(Fixture.league)).contains("friendlies"))
     if DISABLED_MARKETS:
         query = query.where(Signal.market.notin_(list(DISABLED_MARKETS)))
     if OVER_GOALS_SUPPRESSED_LEAGUES:

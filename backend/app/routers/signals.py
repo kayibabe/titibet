@@ -313,6 +313,9 @@ async def list_signals(
     all_suppressed_leagues = bad_leagues | DISABLED_LEAGUES
     if all_suppressed_leagues:
         query = query.where(func.lower(func.trim(Fixture.league)).notin_(all_suppressed_leagues))
+        # Substring block for "friendlies" variants — API-Football uses "Friendlies Clubs"
+        # and "Friendlies International" which are not exact-matched by the notin_ above.
+        query = query.where(~func.lower(func.trim(Fixture.league)).contains("friendlies"))
     if DISABLED_MARKETS:
         query = query.where(Signal.market.notin_(list(DISABLED_MARKETS)))
 
@@ -490,6 +493,7 @@ async def stat_driven_picks(
     all_suppressed = bad_leagues | DISABLED_LEAGUES
     if all_suppressed:
         query = query.where(func.lower(func.trim(Fixture.league)).notin_(all_suppressed))
+        query = query.where(~func.lower(func.trim(Fixture.league)).contains("friendlies"))
     if OVER_GOALS_SUPPRESSED_LEAGUES:
         for _lk in OVER_GOALS_SUPPRESSED_LEAGUES:
             query = query.where(

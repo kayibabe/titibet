@@ -486,7 +486,11 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         if _fixture_idx % 10 == 0:
             await asyncio.sleep(0)
         # Skip fixtures from suppressed leagues (poor ROI or hard-disabled).
-        if all_suppressed_leagues and (fixture.league or "").lower().strip() in all_suppressed_leagues:
+        # Uses _league_matches_suppression (substring for long keys, word-boundary
+        # regex for short keys) so that e.g. "Friendlies Clubs" is caught by
+        # "friendlies" and any Regionalliga variant by "regionalliga".
+        _league_lower_check = (fixture.league or "").lower().strip()
+        if all_suppressed_leagues and _league_matches_suppression(_league_lower_check, all_suppressed_leagues):
             continue
 
         # Skip youth / reserve fixtures — structurally unpredictable scoring.

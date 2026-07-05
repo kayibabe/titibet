@@ -122,7 +122,11 @@ async def run_backtest(
     for fixture in fixtures:
         if fixture.home_score is None or fixture.away_score is None:
             continue
-        if all_suppressed_leagues and (fixture.league or "").lower().strip() in all_suppressed_leagues:
+        _bt_league_lower = (fixture.league or "").lower().strip()
+        if all_suppressed_leagues and (
+            _bt_league_lower in all_suppressed_leagues
+            or "friendlies" in _bt_league_lower
+        ):
             continue
 
         _league_lower_bt = (fixture.league or "").lower()

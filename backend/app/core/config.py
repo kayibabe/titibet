@@ -353,7 +353,9 @@ DISABLED_LEAGUES: frozenset = frozenset({
     "regionalliga - west",            # Austrian Regionalliga West (disabled 2026-06-16)
     "esiliiga",      # Estonian top/second flight — 0% WR on 3 bets
     "ykkösliiga",    # Finnish Div 2 — 25% WR on 4 bets
-    "friendlies",    # International/pre-season friendlies — rotation-heavy
+    "friendlies",              # International/pre-season friendlies — rotation-heavy
+    "friendlies clubs",        # API-Football name for club friendlies (exact-match fix)
+    "friendlies international", # API-Football name for international friendlies
     # ── Disabled 2026-06-16 (poor analytics performance) ──────────────────────
     "primera división",               # Bolivia + Chile top-flight — 33% WR, -57k P&L on 3 bets
     "primera división femenina",

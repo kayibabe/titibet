@@ -383,6 +383,7 @@ async def _query_all_rows(db: AsyncSession, run_date: date) -> list[tuple[Signal
         query = query.where(
             func.lower(func.trim(Fixture.league)).notin_(all_suppressed)
         )
+        query = query.where(~func.lower(func.trim(Fixture.league)).contains("friendlies"))
     if DISABLED_MARKETS:
         query = query.where(Signal.market.notin_(list(DISABLED_MARKETS)))
     if OVER_GOALS_SUPPRESSED_LEAGUES:
