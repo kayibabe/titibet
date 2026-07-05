@@ -13,7 +13,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWTError as JWTError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import get_settings
