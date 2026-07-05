@@ -103,12 +103,10 @@ ADVISORS: list[dict] = [
         "role":  "Signal validation & match context",
         "emoji": "🔭",
         "models": {
-            # Scout does the most complex per-match statistical reasoning — use the
-            # same quality tier as Strategist/Skeptic.
             "claude":   "claude-sonnet-5",
             "gemini":   "gemini-2.0-flash",
             "cerebras": "llama3.3-70b",
-            "groq":     "llama-3.3-70b-versatile",
+            "groq":     "llama-3.1-8b-instant",          # same pool as Skeptic — 70b-versatile quota exhausts first
             "mistral":  "mistral-small-latest",
         },
         "system": (
@@ -136,9 +134,9 @@ ADVISORS: list[dict] = [
         "emoji": "♟️",
         "models": {
             "claude":   "claude-sonnet-5",
-            "gemini":   "gemini-2.0-flash",            # stronger reasoning
+            "gemini":   "gemini-2.0-flash",
             "cerebras": "llama3.3-70b",
-            "groq":     "llama-3.3-70b-versatile",
+            "groq":     "llama-3.1-8b-instant",          # same pool as Skeptic — 70b-versatile quota exhausts first
             "mistral":  "mistral-small-latest",
         },
         "system": (
