@@ -53,3 +53,23 @@ backend/.cache/
 backend/fix_*.py
 backend/settle_now.py
 commitmsg.txt
+
+# One-off maintenance and backfill scripts
+backend/backfill_*.py
+backend/bulk_*.py
+backend/check_*.py
+backend/debug_*.py
+backend/analyse_*.py
+backend/diagnose_*.py
+backend/recompute_*.py
+backend/restake_*.py
+backend/resync_*.py
+backend/run_*.py
+backend/dedup*.py
+backend/compute_*.py
+backend/promote_*.py
+backend/smoke_test.py
+backend/compare_gates.py
+backend/*_report.json
+backend/scripts/
+backend/tools/
