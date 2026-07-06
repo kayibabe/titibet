@@ -1,6 +1,6 @@
 ﻿import { useState } from 'react'
 import { Download, Lock, Ticket, Bot, Pencil, Trash2, X, Clock, CheckCircle, AlertTriangle, MinusCircle, ClipboardList } from 'lucide-react'
-import { fmtK, fmtPL, fmtPLCompact } from '../../utils/format'
+import { fmtK, fmtPL, fmtPLCompact, marketColor } from '../../utils/format'
 import { updateBet, deleteBet } from '../../api/tracker'
 
 function fmtLegKickoff(isoStr) {
@@ -370,7 +370,7 @@ function BetRow({ bet, onRefresh }) {
               System
             </span>
           )}
-          <span>{bet.market_type}</span>
+          <span className={`font-medium ${marketColor(bet.market_type)}`}>{bet.market_type}</span>
           <span>·</span>
           <span>{bet.league}</span>
           <span>·</span>
