@@ -27,7 +27,6 @@ router = APIRouter(prefix="/api/tracker", tags=["tracker"])
 # Includes auto-tracked model picks, ACCA tickets, and AI advisory shadow picks.
 _SYSTEM_PICK_KEYS = [
     "system_auto", "system_dual", "system_acca",
-    "acca_advisory_system",
     "scout_pick", "strategist_pick", "skeptic_pick",
 ]
 
