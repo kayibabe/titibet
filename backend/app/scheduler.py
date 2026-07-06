@@ -31,7 +31,7 @@ from app.core.database import AsyncSessionLocal
 from app.models import TrackedBet, Fixture
 from app.services import ingestion
 from app.services.signal_engine import compute_signals_for_date
-from app.services.auto_tracker import auto_track_date, auto_track_acca_signals
+from app.services.auto_tracker import auto_track_date
 from app.services.settlement import settle_bets_for_date, FINAL_STATUSES
 from app.services.loss_analysis_agent import run_loss_analysis_pipeline
 from app.services.strategy_pipeline import run_strategy_pipeline, check_suppression_reactivations
@@ -184,13 +184,10 @@ async def sync_and_compute(run_date: date | None = None) -> None:
                         logger.info("Auto-tracker: %d new system bet(s) for %s", n_tracked, run_date)
                 except Exception:
                     logger.exception("Auto-tracker failed for %s — continuing normally", run_date)
-                # Auto-track a signal-model ACCA for this date (no-overlap with prior tickets).
-                try:
-                    n_acca = await auto_track_acca_signals(db, run_date)
-                    if n_acca:
-                        logger.info("Auto-ACCA: inserted %d ticket(s) for %s", n_acca, run_date)
-                except Exception:
-                    logger.exception("Auto-ACCA failed for %s — continuing normally", run_date)
+                # ACCA tracking is handled exclusively by the advisory cache job (08:30 UTC)
+                # and the presync job (18:00 UTC) — both write acca_advisory_system rows.
+                # The signal-model fallback (system_acca) is disabled: it ran before the
+                # 08:30 advisory job and produced a duplicate ticket every morning.
                 # Settle every pending bet with a final fixture (any event_date), not only run_date.
                 n_settled = (await settle_bets_for_date(db, None))["settled"]
                 logger.info(
