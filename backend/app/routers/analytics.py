@@ -19,15 +19,14 @@ from app.services.performance_intelligence import compute_performance_weights
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
-_SYSTEM_PICK_KEYS = [
-    "system_auto", "system_dual", "system_acca",
-    "scout_pick", "strategist_pick", "skeptic_pick",
-]
+_CORE_SYSTEM_KEYS = ["system_auto", "system_dual", "system_acca"]
 _ADVISORY_KEYS = ["scout_pick", "strategist_pick", "skeptic_pick"]
+_SYSTEM_PICK_KEYS = _CORE_SYSTEM_KEYS + _ADVISORY_KEYS  # kept for CLV/revoke compat
 
 
 def _base_query(current_user: Optional[User]):
-    """Start a TrackedBet query scoped to the current user + system picks."""
+    """Start a TrackedBet query scoped to the current user + core system picks.
+    Advisory picks are excluded here — they only appear via source='advisory'."""
     q = select(TrackedBet)
     if current_user:
         q = q.where(
@@ -35,12 +34,15 @@ def _base_query(current_user: Optional[User]):
                 TrackedBet.user_id == current_user.id,
                 and_(
                     TrackedBet.user_id.is_(None),
-                    TrackedBet.source_rule_key.in_(_SYSTEM_PICK_KEYS),
+                    TrackedBet.source_rule_key.in_(_CORE_SYSTEM_KEYS),
                 ),
             )
         )
     else:
-        q = q.where(TrackedBet.user_id.is_(None))
+        q = q.where(
+            TrackedBet.user_id.is_(None),
+            TrackedBet.source_rule_key.in_(_CORE_SYSTEM_KEYS),
+        )
     return q
 
 
@@ -389,12 +391,15 @@ async def probability_calibration(
                 TrackedBet.user_id == current_user.id,
                 and_(
                     TrackedBet.user_id.is_(None),
-                    TrackedBet.source_rule_key.in_(_SYSTEM_PICK_KEYS),
+                    TrackedBet.source_rule_key.in_(_CORE_SYSTEM_KEYS),
                 ),
             )
         )
     else:
-        q = q.where(TrackedBet.user_id.is_(None))
+        q = q.where(
+            TrackedBet.user_id.is_(None),
+            TrackedBet.source_rule_key.in_(_CORE_SYSTEM_KEYS),
+        )
     if date_from:
         q = q.where(TrackedBet.event_date >= date.fromisoformat(date_from))
     if date_to:
