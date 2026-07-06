@@ -23,7 +23,7 @@ import json
 import logging
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Signal, Fixture, TrackedBet
@@ -247,12 +247,29 @@ async def auto_track_acca_signals(db: AsyncSession, run_date: date) -> int:
     ensuring no fixture leg appears in any previously auto-tracked system_acca
     ticket for the same date.
 
-    Idempotent in the sense that a second call with the same pool of candidates
-    will produce no new ticket (all legs already used).  A new ticket is only
-    created when ≥2 candidates remain after excluding already-used fixtures.
+    Defers entirely to the advisor-path ACCA (acca_leg_system / acca_advisory_system)
+    when those tickets already exist for run_date — the presync and advisory-cache
+    jobs take priority and this function is a fallback for dates they haven't covered.
 
     Returns count of new TrackedBet rows inserted (0 or 1 combined row).
     """
+    # If the advisor path (presync 18:00 UTC prior day or advisory-cache 08:30 UTC)
+    # has already built ACCA legs for this date, don't create a competing signal-model
+    # ticket — the advisor tickets are the canonical source for the day.
+    advisor_leg_count = await db.scalar(
+        select(func.count()).select_from(TrackedBet).where(
+            TrackedBet.event_date == run_date,
+            TrackedBet.source_rule_key == "acca_leg_system",
+            TrackedBet.user_id.is_(None),
+        )
+    )
+    if advisor_leg_count:
+        logger.info(
+            "Auto-ACCA %s: advisor-path ACCA already has %d leg(s) — skipping signal-model ticket",
+            run_date, advisor_leg_count,
+        )
+        return 0
+
     # Collect fixture_ids already used in system_acca tickets for this date.
     existing_accas = list(
         (await db.execute(

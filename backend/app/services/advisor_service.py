@@ -626,6 +626,125 @@ async def _call_advisor(
     return "none", _err("no_provider", "All configured AI providers are at quota. Add more keys to .env.")
 
 
+# ── Advisory pick tracking ────────────────────────────────────────────────────
+
+_ADVISOR_RULE_KEYS: dict[str, tuple[str, str]] = {
+    "scout":      ("scout_pick",      "The Scout"),
+    "strategist": ("strategist_pick", "The Strategist"),
+    "skeptic":    ("skeptic_pick",    "The Skeptic"),
+}
+_ALL_ADVISORY_KEYS = [rk for rk, _ in _ADVISOR_RULE_KEYS.values()]
+
+
+async def auto_track_advisor_picks(
+    db:              AsyncSession,
+    advisor_outputs: list[tuple[str, dict]],
+    advisor_defs:    list[dict],
+    rows:            list,
+    target_date:     date,
+) -> int:
+    """
+    Create zero-stake shadow TrackedBet rows for each advisor's top_picks so their
+    performance can be tracked over time.  Idempotent: skips picks already present
+    for this date.  Returns the number of new rows inserted.
+
+    rows — list of (Signal, Fixture) tuples from the current advisory signal pool.
+    These are used to resolve team names → fixture_id + odds without any LLM calls.
+    """
+    from app.models.bet import TrackedBet
+
+    def _norm(s: str | None) -> str:
+        return (s or "").strip().lower()
+
+    pool_by_names: dict[tuple[str, str], tuple] = {
+        (_norm(fix.home_team), _norm(fix.away_team)): (sig, fix)
+        for sig, fix in rows
+    }
+
+    existing_rows_q = (await db.execute(
+        select(TrackedBet.fixture_id, TrackedBet.market_type, TrackedBet.source_rule_key)
+        .where(
+            TrackedBet.event_date == target_date,
+            TrackedBet.user_id.is_(None),
+            TrackedBet.source_rule_key.in_(_ALL_ADVISORY_KEYS),
+        )
+    )).all()
+    existing_keys: set[tuple] = {
+        (r.fixture_id, r.market_type, r.source_rule_key) for r in existing_rows_q
+    }
+
+    inserted = 0
+    for adv_def, (model_label, result) in zip(advisor_defs, advisor_outputs):
+        adv_id = adv_def["id"]
+        if adv_id not in _ADVISOR_RULE_KEYS or result.get("error"):
+            continue
+        rule_key, rule_label = _ADVISOR_RULE_KEYS[adv_id]
+
+        for pick in result.get("top_picks", []):
+            home   = _norm(pick.get("home_team"))
+            away   = _norm(pick.get("away_team"))
+            market = (pick.get("market") or "").strip()
+            if not home or not away or not market:
+                continue
+
+            pair = pool_by_names.get((home, away))
+            if pair is None:
+                logger.debug(
+                    "auto_track_advisor_picks: no signal for %s vs %s (%s) — skipping",
+                    pick.get("home_team"), pick.get("away_team"), adv_id,
+                )
+                continue
+
+            sig, fix = pair
+            odds = sig.bayesian_best_odd
+            if not odds or odds <= 1.0:
+                prob = sig.bayesian_prob or sig.poisson_prob
+                if prob and 0.0 < prob < 1.0:
+                    odds = round(1.0 / prob, 3)
+                else:
+                    continue
+
+            key = (fix.id, market, rule_key)
+            if key in existing_keys:
+                continue
+
+            db.add(TrackedBet(
+                user_id=None,
+                fixture_id=fix.id,
+                bookmaker="AI Advisory",
+                event_date=target_date,
+                match_name=f"{fix.home_team} vs {fix.away_team}",
+                league=fix.league,
+                market_type=market,
+                selection_name=market,
+                odds=odds,
+                stake=0.0,
+                source_rule_key=rule_key,
+                source_rule_label=rule_label,
+                dual_confidence=sig.dual_confidence,
+                dual_agreement=sig.dual_agreement,
+                result_status="Pending",
+                notes=json.dumps({"reason": pick.get("reason", ""), "model": model_label}),
+            ))
+            existing_keys.add(key)
+            inserted += 1
+
+    if inserted:
+        try:
+            await db.commit()
+            logger.info(
+                "auto_track_advisor_picks: %d pick rows for %s", inserted, target_date,
+            )
+        except Exception:
+            await db.rollback()
+            logger.warning(
+                "auto_track_advisor_picks: commit failed for %s", target_date, exc_info=True,
+            )
+            return 0
+
+    return inserted
+
+
 # ── Acca tracking helpers ─────────────────────────────────────────────────────
 
 def _acca_fingerprint(legs: list[dict]) -> str:
@@ -1588,6 +1707,17 @@ async def get_advisor_insights(
             await _set_advisory_cache(db, target_date, cacheable)
         except Exception as exc:
             logger.warning("Failed to write advisory cache: %s", exc)
+        # Shadow-track each advisor's top_picks as zero-stake bets for performance measurement.
+        try:
+            n_picks = await auto_track_advisor_picks(
+                db, list(advisor_outputs), ADVISORS, list(rows), target_date,
+            )
+            if n_picks:
+                logger.info(
+                    "Advisory picks tracked: %d rows for %s", n_picks, target_date,
+                )
+        except Exception:
+            logger.exception("auto_track_advisor_picks failed for %s — continuing", target_date)
     elif fixture_ids is None:
         logger.info("Advisory result not cached — advisor/acca errors present; next request retries live")
 

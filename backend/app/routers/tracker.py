@@ -23,6 +23,13 @@ from app.services.performance_intelligence import compute_performance_weights
 
 router = APIRouter(prefix="/api/tracker", tags=["tracker"])
 
+# System-generated pick keys visible to all authenticated users in their tracker.
+# Includes auto-tracked model picks, ACCA tickets, and AI advisory shadow picks.
+_SYSTEM_PICK_KEYS = [
+    "system_auto", "system_dual", "system_acca",
+    "scout_pick", "strategist_pick", "skeptic_pick",
+]
+
 
 def _require_user(current_user: Optional[User]) -> User:
     if current_user is None:
@@ -407,7 +414,7 @@ async def list_bets(
         sub_queries.append(_apply_filters(
             base.where(
                 TrackedBet.user_id.is_(None),
-                TrackedBet.source_rule_key.in_(["system_auto", "system_dual", "system_acca"]),
+                TrackedBet.source_rule_key.in_(_SYSTEM_PICK_KEYS),
             )
         ))
     else:
@@ -460,7 +467,6 @@ async def update_bet(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _SYSTEM_KEYS = ["system_auto", "system_dual", "system_acca"]
     bet = await db.scalar(
         select(TrackedBet).where(
             TrackedBet.id == bet_id,
@@ -468,7 +474,7 @@ async def update_bet(
                 TrackedBet.user_id == current_user.id,
                 and_(
                     TrackedBet.user_id.is_(None),
-                    TrackedBet.source_rule_key.in_(_SYSTEM_KEYS),
+                    TrackedBet.source_rule_key.in_(_SYSTEM_PICK_KEYS),
                 ),
             ),
         )
@@ -574,7 +580,6 @@ async def delete_bet(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _SYSTEM_KEYS = ["system_auto", "system_dual", "system_acca"]
     result = await db.execute(
         select(TrackedBet).where(
             TrackedBet.id == bet_id,
@@ -582,7 +587,7 @@ async def delete_bet(
                 TrackedBet.user_id == current_user.id,
                 and_(
                     TrackedBet.user_id.is_(None),
-                    TrackedBet.source_rule_key.in_(_SYSTEM_KEYS),
+                    TrackedBet.source_rule_key.in_(_SYSTEM_PICK_KEYS),
                 ),
             ),
         )
@@ -606,7 +611,7 @@ async def revoke_system_bet(
         select(TrackedBet).where(
             TrackedBet.id == bet_id,
             TrackedBet.user_id.is_(None),
-            TrackedBet.source_rule_key.in_(["system_auto", "system_dual", "system_acca"]),
+            TrackedBet.source_rule_key.in_(_SYSTEM_PICK_KEYS),
         )
     )
     if not bet:
@@ -792,7 +797,7 @@ async def analytics(
                 TrackedBet.user_id == current_user.id,
                 and_(
                     TrackedBet.user_id.is_(None),
-                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+                    TrackedBet.source_rule_key.in_(_SYSTEM_PICK_KEYS),
                 ),
             )
         )

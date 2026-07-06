@@ -19,6 +19,13 @@ from app.services.performance_intelligence import compute_performance_weights
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
+_SYSTEM_PICK_KEYS = [
+    "system_auto", "system_dual", "system_acca",
+    "scout_pick", "strategist_pick", "skeptic_pick",
+]
+_ADVISORY_KEYS = ["scout_pick", "strategist_pick", "skeptic_pick"]
+
+
 def _base_query(current_user: Optional[User]):
     """Start a TrackedBet query scoped to the current user + system picks."""
     q = select(TrackedBet)
@@ -28,7 +35,7 @@ def _base_query(current_user: Optional[User]):
                 TrackedBet.user_id == current_user.id,
                 and_(
                     TrackedBet.user_id.is_(None),
-                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual", "system_acca"]),
+                    TrackedBet.source_rule_key.in_(_SYSTEM_PICK_KEYS),
                 ),
             )
         )
@@ -312,6 +319,8 @@ async def full(
         q = q.where(TrackedBet.market_type != "Accumulator")
     elif source == "manual":
         q = q.where(TrackedBet.market_type == "Accumulator")
+    elif source == "advisory":
+        q = q.where(TrackedBet.source_rule_key.in_(_ADVISORY_KEYS))
     rows = await db.execute(q)
     bets = list(rows.scalars().all())
     return build_analytics(bets)
@@ -380,7 +389,7 @@ async def probability_calibration(
                 TrackedBet.user_id == current_user.id,
                 and_(
                     TrackedBet.user_id.is_(None),
-                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual", "system_acca"]),
+                    TrackedBet.source_rule_key.in_(_SYSTEM_PICK_KEYS),
                 ),
             )
         )

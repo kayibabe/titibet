@@ -14,10 +14,19 @@ import { fmtK } from '../utils/format'
 import useTier from '../hooks/useTier'
 
 const STATUS_OPTIONS = ['', 'Pending', 'Won', 'Lost', 'Void']
+
+const ADVISORY_KEYS = ['scout_pick', 'strategist_pick', 'skeptic_pick']
+const ADVISOR_META = {
+  scout_pick:      { label: 'The Scout',      emoji: '🔭', color: 'blue'   },
+  strategist_pick: { label: 'The Strategist', emoji: '♟️', color: 'violet' },
+  skeptic_pick:    { label: 'The Skeptic',    emoji: '🧐', color: 'amber'  },
+}
+
 const SOURCE_OPTIONS = [
-  { value: '',       label: 'All Picks',    icon: null },
-  { value: 'system', label: 'System Picks', icon: Bot  },
-  { value: 'manual', label: 'Manual Picks', icon: User },
+  { value: '',         label: 'All Picks',    icon: null },
+  { value: 'system',   label: 'System Picks', icon: Bot  },
+  { value: 'advisory', label: 'AI Advisory',  icon: Bot  },
+  { value: 'manual',   label: 'Manual Picks', icon: User },
 ]
 
 const DATE_PRESETS = [
@@ -39,6 +48,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const [activePreset, setActivePreset] = useState('All')
   const [statusFilter, setStatusFilter] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
+  const [advisorFilter, setAdvisorFilter] = useState('')
   const [syncing, setSyncing]           = useState(false)
   const [settling, setSettling]         = useState(false)
   const [settleResult, setSettleResult] = useState(null)
@@ -66,14 +76,19 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
 
   const betFilters = { date_from: dateFrom || undefined, date_to: dateTo || undefined, result_status: statusFilter || undefined }
 
-  const isSystemPick = b => b.market_type !== 'Accumulator'
+  const isAdvisoryPick = b => ADVISORY_KEYS.includes(b.source_rule_key)
+  const isSystemPick   = b => !isAdvisoryPick(b) && b.market_type !== 'Accumulator'
 
-  // Client-side source filter (system picks vs manual)
+  // Client-side source filter
   const filteredBets = useMemo(() => {
-    if (!sourceFilter) return bets
+    if (sourceFilter === 'advisory') {
+      const advisory = bets.filter(isAdvisoryPick)
+      return advisorFilter ? advisory.filter(b => b.source_rule_key === advisorFilter) : advisory
+    }
     if (sourceFilter === 'system') return bets.filter(isSystemPick)
-    return bets.filter(b => !isSystemPick(b))
-  }, [bets, sourceFilter])
+    if (sourceFilter === 'manual') return bets.filter(b => !isSystemPick(b) && !isAdvisoryPick(b))
+    return bets
+  }, [bets, sourceFilter, advisorFilter]) // eslint-disable-line
 
   // Analytics summary for the currently filtered view — same backend
   // build_analytics() implementation the Analytics page uses, scoped with
@@ -379,6 +394,67 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
         </div>
       )}
 
+      {/* AI Advisory performance card */}
+      {(sourceFilter === 'advisory' || sourceFilter === '') && (() => {
+        const advisoryBets = bets.filter(isAdvisoryPick)
+        if (advisoryBets.length === 0) return null
+        return (
+          <div className="rounded-xl border border-blue-500/25 bg-blue-500/5 px-4 py-3 space-y-3">
+            <div className="flex items-center gap-2">
+              <Bot size={13} className="text-blue-400 shrink-0" />
+              <span className="text-xs font-semibold text-blue-300">AI Advisory Performance</span>
+              <span className="ml-auto text-xs text-[var(--text)] opacity-60">{advisoryBets.length} shadow picks</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {ADVISORY_KEYS.map(key => {
+                const meta    = ADVISOR_META[key]
+                const picks   = advisoryBets.filter(b => b.source_rule_key === key)
+                const settled = picks.filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
+                const wins    = settled.filter(b => b.result_status === 'Won')
+                const pending = picks.filter(b => b.result_status === 'Pending').length
+                const hitRate = settled.length > 0 ? Math.round(wins.length / settled.length * 100) : null
+                // Yield: theoretical return per 1-unit flat stake across settled picks
+                const yieldPct = settled.length > 0
+                  ? Math.round(((wins.reduce((s, b) => s + (b.odds - 1), 0) - (settled.length - wins.length)) / settled.length) * 100)
+                  : null
+                const colorMap = { blue: 'text-blue-400 border-blue-500/30', violet: 'text-violet-400 border-violet-500/30', amber: 'text-amber-400 border-amber-500/30' }
+                const clr = colorMap[meta.color] || 'text-slate-400 border-slate-500/30'
+                return (
+                  <button
+                    key={key}
+                    onClick={() => { setSourceFilter('advisory'); setAdvisorFilter(advisorFilter === key ? '' : key) }}
+                    className={`rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-white/5 ${advisorFilter === key ? 'bg-white/8 ' + clr : 'border-[var(--border)]'}`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <span className="text-base leading-none">{meta.emoji}</span>
+                      <span className={`text-xs font-semibold ${advisorFilter === key ? clr.split(' ')[0] : 'text-[var(--text-h)]'}`}>{meta.label}</span>
+                    </div>
+                    <div className="flex items-end gap-3 flex-wrap text-xs">
+                      <div className="flex flex-col">
+                        <span className={`text-lg font-bold tabular-nums ${hitRate === null ? 'text-[var(--text-h)]' : hitRate >= 55 ? 'text-green-400' : hitRate >= 45 ? 'text-amber-400' : 'text-red-400'}`}>
+                          {hitRate !== null ? `${hitRate}%` : '—'}
+                        </span>
+                        <span className="text-[var(--text)] opacity-60">Hit Rate</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className={`text-lg font-bold tabular-nums ${yieldPct === null ? 'text-[var(--text-h)]' : yieldPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {yieldPct !== null ? `${yieldPct >= 0 ? '+' : ''}${yieldPct}%` : '—'}
+                        </span>
+                        <span className="text-[var(--text)] opacity-60">Yield</span>
+                      </div>
+                      <div className="flex flex-col ml-auto text-right">
+                        <span className="text-[var(--text-h)] font-semibold tabular-nums">{wins.length}W · {settled.length - wins.length}L{pending > 0 ? ` · ${pending}P` : ''}</span>
+                        <span className="text-[var(--text)] opacity-60">{picks.length} picks</span>
+                      </div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Filter bar */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--code-bg)] px-4 py-3 space-y-3">
         <div className="flex flex-wrap items-end gap-3">
@@ -414,7 +490,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           {SOURCE_OPTIONS.map(({ value, label, icon: Icon }) => (
             <button
               key={value}
-              onClick={() => setSourceFilter(value)}
+              onClick={() => { setSourceFilter(value); if (value !== 'advisory') setAdvisorFilter('') }}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
                 sourceFilter === value
                   ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
