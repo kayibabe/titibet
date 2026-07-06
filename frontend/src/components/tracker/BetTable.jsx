@@ -685,7 +685,7 @@ export default function BetTable({ bets, summary, isPro = true, onUpgrade, onRef
           ))}
         </div>
 
-        {betsWithCLV.length > 0 && (
+        {avgCLV != null && (
           <div className={`px-5 py-2.5 border-t border-[var(--border)] text-xs flex items-center gap-2 ${
             avgCLV != null && avgCLV >= 0
               ? 'bg-green-500/5 text-green-400'
