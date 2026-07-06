@@ -87,7 +87,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     }
     if (sourceFilter === 'system') return bets.filter(isSystemPick)
     if (sourceFilter === 'manual') return bets.filter(b => !isSystemPick(b) && !isAdvisoryPick(b))
-    return bets
+    return bets.filter(b => !isAdvisoryPick(b))
   }, [bets, sourceFilter, advisorFilter]) // eslint-disable-line
 
   // Analytics summary for the currently filtered view — same backend
