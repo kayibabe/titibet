@@ -579,7 +579,7 @@ function UnifiedDateGroupedBets({ bets, onRefresh }) {
   )
 }
 
-export default function BetTable({ bets, isPro = true, onUpgrade, onRefresh }) {
+export default function BetTable({ bets, summary, isPro = true, onUpgrade, onRefresh }) {
   if (!bets.length) {
     return (
       <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-3 text-center">
@@ -594,20 +594,31 @@ export default function BetTable({ bets, isPro = true, onUpgrade, onRefresh }) {
     )
   }
 
-  const settled = bets.filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
-  const wins = settled.filter(b => b.result_status === 'Won')
-  const netPL = settled.reduce((sum, bet) => sum + (bet.profit_loss ?? 0), 0)
-  const totalStake = bets.reduce((sum, bet) => sum + (bet.stake ?? 0), 0)
-  const strikeRate = settled.length ? (wins.length / settled.length) * 100 : 0
-  const avgOdds = bets.length ? bets.reduce((sum, bet) => sum + (bet.odds ?? 0), 0) / bets.length : 0
-  const profitPerPick = settled.length ? netPL / settled.length : 0
+  // Use backend summary when provided — same build_analytics() formula as the Analytics page.
+  // Falls back to client-side so the ledger still renders while the summary is loading.
+  const localSettled = bets.filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
+  const localWins    = localSettled.filter(b => b.result_status === 'Won')
+
+  const picksCount    = summary ? summary.total_bets    : bets.length
+  const settledCount  = summary ? summary.settled_bets  : localSettled.length
+  const netPL         = summary ? (summary.total_profit_loss ?? 0) : localSettled.reduce((s, b) => s + (b.profit_loss ?? 0), 0)
+  const totalStake    = summary ? (summary.total_stake   ?? 0) : bets.reduce((s, b) => s + (b.stake ?? 0), 0)
+  const strikeRate    = summary ? (summary.win_rate      ?? 0) : localSettled.length ? (localWins.length / localSettled.length) * 100 : 0
+  const avgOdds       = summary ? (summary.avg_odds      ?? 0) : bets.length ? bets.reduce((s, b) => s + (b.odds ?? 0), 0) / bets.length : 0
+  const profitPerPick = settledCount ? netPL / settledCount : 0
 
   const betsWithCLV = bets.filter(b => b.clv_pct != null)
-  const avgCLV = betsWithCLV.length
-    ? betsWithCLV.reduce((sum, bet) => sum + bet.clv_pct, 0) / betsWithCLV.length
-    : null
-  const positiveCLV = betsWithCLV.filter(b => b.clv_pct >= 0).length
-  const clvCoverage = bets.length ? Math.round((betsWithCLV.length / bets.length) * 100) : 0
+  const avgCLV      = summary ? summary.avg_clv
+    : betsWithCLV.length ? betsWithCLV.reduce((s, b) => s + b.clv_pct, 0) / betsWithCLV.length : null
+  const clvBetsCount = summary
+    ? Math.round((summary.clv_coverage_pct ?? 0) / 100 * (summary.settled_bets ?? 0))
+    : betsWithCLV.length
+  const positiveCLV = summary
+    ? Math.round((summary.positive_clv_pct ?? 0) / 100 * clvBetsCount)
+    : betsWithCLV.filter(b => b.clv_pct >= 0).length
+  const clvCoverage = summary
+    ? Math.round(summary.clv_coverage_pct ?? 0)
+    : bets.length ? Math.round((betsWithCLV.length / bets.length) * 100) : 0
 
   const plColor = netPL > 0 ? 'text-green-500' : netPL < 0 ? 'text-red-500' : 'text-[var(--text-h)]'
   const clvColor = avgCLV == null ? 'text-[var(--text-h)]' : avgCLV >= 0 ? 'text-green-400' : 'text-red-400'
@@ -646,8 +657,8 @@ export default function BetTable({ bets, isPro = true, onUpgrade, onRefresh }) {
         <div className="grid grid-cols-2 sm:grid-cols-6 divide-y sm:divide-y-0 sm:divide-x divide-[var(--border)]">
           {[
             { label: 'Net P / L', value: fmtPLCompact(netPL), full: fmtPL(netPL), color: plColor },
-            { label: 'Picks', value: bets.length, color: 'text-[var(--text-h)]' },
-            { label: 'Settled', value: settled.length, color: 'text-[var(--text-h)]' },
+            { label: 'Picks', value: picksCount, color: 'text-[var(--text-h)]' },
+            { label: 'Settled', value: settledCount, color: 'text-[var(--text-h)]' },
             { label: 'Stake', value: fmtK(totalStake), color: 'text-[var(--text-h)]' },
             {
               label: 'Strike Rate',
@@ -659,8 +670,8 @@ export default function BetTable({ bets, isPro = true, onUpgrade, onRefresh }) {
               label: 'Avg CLV',
               value: avgCLV != null ? `${avgCLV >= 0 ? '+' : ''}${avgCLV.toFixed(1)}%` : '-',
               color: clvColor,
-              subtitle: betsWithCLV.length
-                ? `${positiveCLV}/${betsWithCLV.length} beat close`
+              subtitle: clvBetsCount > 0
+                ? `${positiveCLV}/${clvBetsCount} beat close`
                 : `${clvCoverage}% coverage`,
             },
           ].map(({ label, value, full, color, subtitle }) => (

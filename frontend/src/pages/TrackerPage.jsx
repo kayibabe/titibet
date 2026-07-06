@@ -361,6 +361,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           <div className="flex items-center gap-2">
             <Bot size={13} className="text-violet-400 shrink-0" />
             <span className="text-xs font-semibold text-violet-300">System Performance</span>
+            <span className="text-[10px] font-medium text-[var(--text)] opacity-50 bg-[var(--code-bg)] px-1.5 py-0.5 rounded">All-time</span>
             <span className="ml-auto text-xs text-[var(--text)] opacity-60">{systemSummary.total_bets} total picks</span>
           </div>
           <div className="flex items-center gap-5 flex-wrap text-xs">
@@ -533,7 +534,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           </button>
         </div>
       )}
-      {!loading && <BetTable bets={filteredBets} isPro={isPro} onUpgrade={onUpgrade} onRefresh={() => { invalidate(); loadBets(betFilters) }} />}
+      {!loading && <BetTable bets={filteredBets} summary={analyticsSummary} isPro={isPro} onUpgrade={onUpgrade} onRefresh={() => { invalidate(); loadBets(betFilters) }} />}
 
       {/* Import CSV modal */}
       {showImport && (

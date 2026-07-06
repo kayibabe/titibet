@@ -745,7 +745,7 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
           ══════════════════════════════════════════════════════════════════ */}
           {analyticsTab === 'overview' && (
             <div className="space-y-5">
-              <Section icon={Activity} title="Your Performance" subtitle="period summary">
+              <Section icon={Activity} title="Your Performance" subtitle={activePreset === 'All' ? 'All-time' : activePreset ? `Last ${activePreset}` : dateFrom && dateTo ? formatPeriodLabel(dateFrom, dateTo) : 'period summary'}>
                 <div className="space-y-4">
                   <KPIRow summary={data.summary} />
                   <div className="pt-2 border-t border-[var(--border)]">
