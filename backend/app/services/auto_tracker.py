@@ -253,22 +253,48 @@ async def auto_track_acca_signals(db: AsyncSession, run_date: date) -> int:
 
     Returns count of new TrackedBet rows inserted (0 or 1 combined row).
     """
-    # If the advisor path (presync 18:00 UTC prior day or advisory-cache 08:30 UTC)
-    # has already built ACCA legs for this date, don't create a competing signal-model
-    # ticket — the advisor tickets are the canonical source for the day.
-    advisor_leg_count = await db.scalar(
+    # Defer to the advisor path if it has already run OR is scheduled to run.
+    # Check 1: acca_advisory_system rows already exist (08:30 cache job already ran).
+    advisor_acca_count = await db.scalar(
         select(func.count()).select_from(TrackedBet).where(
             TrackedBet.event_date == run_date,
-            TrackedBet.source_rule_key == "acca_leg_system",
+            TrackedBet.source_rule_key == "acca_advisory_system",
             TrackedBet.user_id.is_(None),
         )
     )
-    if advisor_leg_count:
+    if advisor_acca_count:
         logger.info(
-            "Auto-ACCA %s: advisor-path ACCA already has %d leg(s) — skipping signal-model ticket",
-            run_date, advisor_leg_count,
+            "Auto-ACCA %s: advisor-path ACCA already exists (%d row(s)) — skipping signal-model ticket",
+            run_date, advisor_acca_count,
         )
         return 0
+
+    # Check 2: advisory cache in system_settings has an accumulator for this date.
+    # The 08:30 cache job will create acca_advisory_system rows later — we should
+    # not create a competing system_acca now when the advisory is already planned.
+    from sqlalchemy import text as _text
+    import json as _json
+    cache_row = await db.scalar(
+        _text("SELECT value FROM system_settings WHERE key = :k"),
+        {"k": f"advisory_cache_{run_date}"},
+    )
+    if cache_row:
+        try:
+            cached = _json.loads(cache_row)
+            has_acca = bool(
+                cached.get("accumulator") or
+                cached.get("acca_of_the_day") or
+                cached.get("accumulators") or
+                cached.get("acca")
+            )
+            if has_acca:
+                logger.info(
+                    "Auto-ACCA %s: advisory cache has an accumulator — deferring to advisor path",
+                    run_date,
+                )
+                return 0
+        except Exception:
+            pass  # malformed cache — fall through to signal-model
 
     # Collect fixture_ids already used in system_acca tickets for this date.
     existing_accas = list(
