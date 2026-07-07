@@ -164,6 +164,12 @@ async def build_acca_candidates(
         and (fix.league_tier or 3) >= 3
     )]
 
+    # Bayesian Only ACCA gate: exclude single-engine Bayesian-only signals.
+    # The Poisson goal model provides independent mathematical confirmation;
+    # without it the ACCA leg rests on bookmaker-consensus price alone.
+    # Per-leg errors compound — the bar for evidence is higher than for singles.
+    rows = [(sig, fix) for sig, fix in rows if sig.dual_agreement != "Bayesian Only"]
+
     # Best signal per fixture
     best: dict[int, tuple[Signal, Fixture]] = {}
     for sig, fix in rows:
