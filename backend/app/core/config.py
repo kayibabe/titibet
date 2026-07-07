@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     # Scheduler sync times (HH:MM UTC, comma-separated)
-    sync_times: str = "04:00,18:00,22:05"
+    sync_times: str = "04:00,18:00,22:30"
 
     # Bayesian engine thresholds
     # (min_value_edge removed 2026-07-02 — EV/edge gating retired from pipeline)
