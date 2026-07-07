@@ -251,18 +251,34 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                 # Runs after signals are confirmed computed — no timing gap needed.
                 if morning_extras:
                     try:
+                        from sqlalchemy import select, func as sqlfunc
+                        from app.models.bet import TrackedBet as _TB
                         from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
                         result = await get_advisor_insights(db, run_date, current_user=None, force=True)
                         logger.info("Advisory cache: %d matches analysed for %s", result.get("matches_analysed", 0), run_date)
-                        tickets = result.get("accumulators") or []
-                        if not tickets:
-                            acca = result.get("accumulator", {})
-                            if acca.get("legs") and not acca.get("error"):
-                                tickets = [acca]
-                        if tickets:
-                            n_tracked = await auto_track_acca_legs(db, tickets, run_date)
-                            if n_tracked:
-                                logger.info("Advisory cache: auto-tracked %d acca rows for %s", n_tracked, run_date)
+                        # Check if evening_extras already pre-tracked ACCA legs for today.
+                        # If so, skip — the idempotency guard in auto_track_acca_legs
+                        # would handle it anyway, but checking first avoids a redundant
+                        # LLM call for acca candidates.
+                        existing_acca = (await db.execute(
+                            select(sqlfunc.count()).where(
+                                _TB.source_rule_key == "acca_leg_system",
+                                _TB.event_date == run_date,
+                                _TB.user_id.is_(None),
+                            )
+                        )).scalar() or 0
+                        if existing_acca:
+                            logger.info("Morning extras: ACCA already pre-tracked for %s (%d rows) — skipping", run_date, existing_acca)
+                        else:
+                            tickets = result.get("accumulators") or []
+                            if not tickets:
+                                acca = result.get("accumulator", {})
+                                if acca.get("legs") and not acca.get("error"):
+                                    tickets = [acca]
+                            if tickets:
+                                n_tracked = await auto_track_acca_legs(db, tickets, run_date)
+                                if n_tracked:
+                                    logger.info("Advisory cache: auto-tracked %d acca rows for %s", n_tracked, run_date)
                     except Exception:
                         logger.exception("Advisory cache/ACCA failed — continuing normally")
                     try:
@@ -287,12 +303,25 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                     except Exception:
                         logger.exception("Tomorrow pre-sync failed — skipping tomorrow advisory")
                     try:
-                        from app.services.advisor_service import get_advisor_insights
+                        from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
                         t_result = await get_advisor_insights(db, tomorrow, current_user=None, force=True)
                         logger.info("Tomorrow advisory cache: %d matches for %s", t_result.get("matches_analysed", 0), tomorrow)
-                        # No ACCA tracking here — morning_extras handles that the following day.
+                        # Track tomorrow's ACCA legs now (16:00 UTC / 18:00 CAT) so that
+                        # games starting after midnight UTC (02:00+ CAT) are captured before
+                        # the morning sync runs — those games would have already kicked off
+                        # by 04:00 UTC.  The kickoff guard in auto_track_acca_legs filters
+                        # any leg that starts within 30 min of write time.
+                        t_tickets = t_result.get("accumulators") or []
+                        if not t_tickets:
+                            t_acca = t_result.get("accumulator", {})
+                            if t_acca.get("legs") and not t_acca.get("error"):
+                                t_tickets = [t_acca]
+                        if t_tickets:
+                            n_t_tracked = await auto_track_acca_legs(db, t_tickets, tomorrow)
+                            if n_t_tracked:
+                                logger.info("Evening extras: auto-tracked %d acca leg(s) for tomorrow %s", n_t_tracked, tomorrow)
                     except Exception:
-                        logger.exception("Tomorrow advisory cache failed — continuing normally")
+                        logger.exception("Tomorrow advisory cache/ACCA failed — continuing normally")
                     try:
                         n_sent = await push_tomorrow_digest(db, tomorrow)
                         if n_sent:

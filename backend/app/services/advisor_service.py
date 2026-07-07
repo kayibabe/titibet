@@ -19,7 +19,7 @@ import hashlib
 import json
 import logging
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import anthropic
@@ -934,6 +934,19 @@ async def auto_track_acca_legs(
             odd = float(leg.get("odd") or 0)
             if odd <= 1.0:
                 continue
+            # Skip legs that have already kicked off or kick off within 30 min.
+            # Prevents writing stale bets when evening_extras tracks tomorrow's
+            # after-midnight (UTC) games that in CAT time are already in progress.
+            kickoff_str = leg.get("kickoff_at")
+            if kickoff_str:
+                try:
+                    ko = datetime.fromisoformat(kickoff_str)
+                    if ko.tzinfo is None:
+                        ko = ko.replace(tzinfo=timezone.utc)
+                    if ko < datetime.now(timezone.utc) + timedelta(minutes=30):
+                        continue
+                except (ValueError, TypeError):
+                    pass
             match_name = (
                 f"{leg.get('home_team', '')} vs {leg.get('away_team', '')}"
                 if leg.get("home_team") else "Unknown"
