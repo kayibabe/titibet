@@ -684,6 +684,11 @@ async def auto_track_advisor_picks(
             home   = _norm(pick.get("home_team"))
             away   = _norm(pick.get("away_team"))
             market = (pick.get("market") or "").strip()
+            # Normalize LLM-generated labels to canonical market names
+            if market.endswith(" Goals") and not market.startswith("Exactly"):
+                market = market[: -len(" Goals")].strip()
+            market = market.replace("Home Team Over ", "Home Over ").replace("Home Team Under ", "Home Under ")
+            market = market.replace("Away Team Over ", "Away Over ").replace("Away Team Under ", "Away Under ")
             if not home or not away or not market:
                 continue
 
