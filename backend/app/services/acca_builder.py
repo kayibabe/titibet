@@ -164,6 +164,16 @@ async def build_acca_candidates(
         and (fix.league_tier or 3) >= 3
     )]
 
+    # Over 2.5 Tier 3 ACCA gate: exclude Over 2.5 legs from Tier 3 leagues.
+    # Loss audit (Jul 2026): Norway 1. Division (Tier 3) Over 2.5 @1.57 failed.
+    # Tier 3 competitions have thin market coverage and volatile scoring patterns —
+    # the goal-scoring models lose calibration on data-sparse lower leagues.
+    # In ACCA context the risk compounds across legs; require Tier 1 or Tier 2.
+    rows = [(sig, fix) for sig, fix in rows if not (
+        sig.market == "Over 2.5"
+        and (fix.league_tier or 3) >= 3
+    )]
+
     # Bayesian Only ACCA gate: exclude single-engine Bayesian-only signals.
     # The Poisson goal model provides independent mathematical confirmation;
     # without it the ACCA leg rests on bookmaker-consensus price alone.
