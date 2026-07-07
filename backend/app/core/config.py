@@ -716,6 +716,22 @@ LEAGUE_WATCHLIST: dict[str, dict] = {
         "recover_roi_pct":  -15.0,
         "note": "Multiple Segunda División competitions showing 0% WR on 3 early bets; sample building.",
     },
+    "superettan": {
+        "min_bets_warn":    5,
+        "min_bets_act":     10,
+        "warn_roi_pct":     -10.0,
+        "suppress_roi_pct": -20.0,
+        "recover_roi_pct":  -5.0,
+        "note": "Promoted to Tier 2 on good early record; Jun 22 0-0 loss flagged. Watching for structural HO0.5 reliability issues.",
+    },
+    "veikkausliiga": {
+        "min_bets_warn":    5,
+        "min_bets_act":     10,
+        "warn_roi_pct":     -10.0,
+        "suppress_roi_pct": -20.0,
+        "recover_roi_pct":  -5.0,
+        "note": "Finnish top flight Tier 2; Jun 23 0-0 loss. Watching for pattern before any suppression.",
+    },
     "hnl": {
         "min_bets_warn":    5,
         "min_bets_act":     10,
