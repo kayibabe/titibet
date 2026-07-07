@@ -362,8 +362,8 @@ async def _kickoff_alert_job() -> None:
 
 async def _advisory_cache_job() -> None:
     """
-    Pre-warm AI advisory cache — runs 08:30 UTC (10:30 CAT), 30 min after the
-    08:00 sync so today's signals are in the DB.
+    Pre-warm AI advisory cache — runs 06:30 UTC (08:30 CAT), 2.5h after the
+    04:00 sync so today's signals are in the DB.
 
     Calls the full advisory pipeline once (no user context → no acca tracking)
     and writes the result to system_settings so every subsequent user request
@@ -399,11 +399,11 @@ async def _advisory_cache_job() -> None:
 
 async def _morning_digest_job() -> None:
     """
-    Morning digest — runs 07:30 UTC (09:30 CAT).
+    Morning digest — runs 05:30 UTC (07:30 CAT).
 
     Broadcasts today's ranked signal picks to all configured Telegram channels
     so subscribers see the day's full list at wake-up time. Runs 90 min after
-    the 06:00 UTC sync to guarantee signals are computed.
+    the 04:00 UTC sync to guarantee signals are computed.
     No-op when Telegram is not configured.
     """
     async with AsyncSessionLocal() as db:
@@ -416,26 +416,23 @@ async def _morning_digest_job() -> None:
 
 async def _tomorrow_presync_job() -> None:
     """
-    Tomorrow pre-sync — runs 18:00 UTC (20:00 CAT / 8pm Malawi local).
+    Tomorrow pre-sync — runs 16:00 UTC (18:00 CAT / 6pm Malawi local).
 
     Pulls fixtures + odds for tomorrow and computes signals so the user can
-    review and manually place bets tonight for all of tomorrow's matches,
+    review and manually place bets this evening for all of tomorrow's matches,
     well ahead of kickoff. Also pre-warms the AI advisory cache for tomorrow
     so Scout/Strategist/Skeptic and the Acca Builder are instant when checked
-    tonight instead of paying the 15-45s live-pipeline cost on first request,
+    this evening instead of paying the 15-45s live-pipeline cost on first request,
     then pushes tomorrow's full single-match slate + the AI Acca-of-the-Day to
     both TiTiBet Telegram channels — Pro sees everything in clear, Free sees a
-    couple of randomly revealed matches with the rest spoiler-blurred.
+    couple of randomly revealed matches with the rest spoiler-blurred. Also pushes
+    the 'tonight + overnight' digest in the same scheduler slot.
 
     Deliberately does NOT auto-track any bets here (singles or ACCA) — whatever
-    gets tracked first freezes the 8pm odds even after signals are recomputed
-    closer to kickoff. Singles are tracked by the normal sync cycle (06:00 etc.);
-    ACCA is tracked by the 08:30 UTC advisory cache job the following morning,
+    gets tracked first freezes the 6pm odds even after signals are recomputed
+    closer to kickoff. Singles are tracked by the normal sync cycle (04:00 etc.);
+    ACCA is tracked by the 06:30 UTC advisory cache job the following morning,
     both using the freshest available odds at time of tracking.
-
-    Best-effort: failures are logged; the 18:30 UTC nightly digest job re-runs
-    the same pre-sync as a fallback (sync_date's cooldown guard makes the
-    second call a no-op if this one already succeeded).
     """
     tomorrow = date.today() + timedelta(days=1)
     async with AsyncSessionLocal() as db:
@@ -445,7 +442,7 @@ async def _tomorrow_presync_job() -> None:
                 n_sig = await compute_signals_for_date(db, tomorrow)
                 await db.commit()
                 logger.info(
-                    "Tomorrow pre-sync (8pm local): %s — %d fixtures, %d signals",
+                    "Tomorrow pre-sync (6pm local): %s — %d fixtures, %d signals",
                     tomorrow, run.fixtures_pulled, n_sig,
                 )
             else:
@@ -458,9 +455,9 @@ async def _tomorrow_presync_job() -> None:
             result = await get_advisor_insights(db, tomorrow, current_user=None, force=True)
             n_matches = result.get("matches_analysed", 0)
             logger.info("Tomorrow advisory cache: %d matches analysed for %s", n_matches, tomorrow)
-            # Deliberately no auto_track_acca_legs here — tracking tomorrow's ACCA at 18:00 UTC
-            # locks in stale odds 12-18h before kickoff. The 08:30 UTC advisory cache job
-            # handles ACCA tracking the following morning with fresh post-06:00-sync odds.
+            # Deliberately no auto_track_acca_legs here — tracking tomorrow's ACCA at 16:00 UTC
+            # locks in stale odds 12-18h before kickoff. The 06:30 UTC advisory cache job
+            # handles ACCA tracking the following morning with fresh post-04:00-sync odds.
         except Exception:
             logger.exception("Tomorrow advisory pre-cache failed — users will fall back to live computation")
         try:
@@ -470,8 +467,8 @@ async def _tomorrow_presync_job() -> None:
         except Exception:
             logger.exception("Tomorrow digest push failed")
         # Also push the 'tonight + overnight' digest (matches kicking off in the
-        # next 12h). Folded here from the old nightly-digest job at 18:30 UTC so
-        # subscribers get both messages at 20:00 CAT in one scheduler slot.
+        # next 12h). Runs in the same 16:00 UTC slot so subscribers get both
+        # messages at 18:00 CAT together.
         try:
             n_sent = await push_signal_digest(db)
             if n_sent:
@@ -483,7 +480,7 @@ async def _tomorrow_presync_job() -> None:
 
 async def _nightly_results_job() -> None:
     """
-    02:00 UTC nightly sweep — push results for any date in the last 3 days
+    00:00 UTC nightly sweep — push results for any date in the last 3 days
     that is fully settled but hasn't been reported to Telegram yet.
     Catches late finishers that weren't picked up by the sync-cycle checks.
     """
@@ -498,7 +495,7 @@ async def _nightly_results_job() -> None:
 
 async def _weekly_calibration_job() -> None:
     """
-    Weekly calibration audit -- runs every Monday 07:00 UTC.
+    Weekly calibration audit -- runs every Monday 05:00 UTC.
     Computes Brier skill score, ECE, and per-market calibration gaps over the
     last 90 days of settled bets.  Saves a snapshot for trend tracking and logs
     a WARNING for every market that fails the health threshold (skill < +0.05).
@@ -537,82 +534,82 @@ def get_scheduler() -> AsyncIOScheduler:
                 replace_existing=True,
                 misfire_grace_time=300,
             )
-        # Pre-kickoff alert — runs every 60 min, 06:00–00:00 UTC (08:00–02:00 CAT).
+        # Pre-kickoff alert — runs every 60 min, 04:00–22:00 UTC (06:00–00:00 CAT).
         # Sends a compact Telegram message for High+Both signals kicking off
         # within 90 minutes that haven't already been alerted today.
         # No-op when TELEGRAM_BOT_TOKEN is not set.
         # After-midnight (CAT) matches are covered by the evening digest instead.
         _scheduler.add_job(
             _kickoff_alert_job,
-            CronTrigger(hour="0,6-23", minute="0"),
+            CronTrigger(hour="4-22", minute="0"),
             id="kickoff-alerts",
             replace_existing=True,
             misfire_grace_time=120,
         )
-        # Morning digest — 07:30 UTC (09:30 CAT). Runs 90 min after the 06:00
+        # Morning digest — 05:30 UTC (07:30 CAT). Runs 90 min after the 04:00
         # sync so today's signals are computed. Pushes the day's ranked picks
         # so subscribers see them at wake-up time.
         _scheduler.add_job(
             _morning_digest_job,
-            CronTrigger(hour=7, minute=30),
+            CronTrigger(hour=5, minute=30),
             id="morning-digest",
             replace_existing=True,
             misfire_grace_time=1800,
         )
-        # AI advisory cache — 08:30 UTC (10:30 CAT). Runs 30 min after the
-        # 08:00 sync so today's signals are available.  Pre-computes the advisory
+        # AI advisory cache — 06:30 UTC (08:30 CAT). Runs 2.5h after the
+        # 04:00 sync so today's signals are available. Pre-computes the advisory
         # and writes it to system_settings so every user gets instant results
         # instead of waiting 15-45 s for the AI pipeline to complete.
         _scheduler.add_job(
             _advisory_cache_job,
-            CronTrigger(hour=8, minute=30),
+            CronTrigger(hour=6, minute=30),
             id="advisory-cache",
             replace_existing=True,
             misfire_grace_time=1800,
         )
-        # Tomorrow pre-sync — 18:00 UTC (20:00 CAT / 8pm Malawi local). Pulls
-        # tomorrow's fixtures + odds and computes signals so the user can place
-        # bets tonight for all of tomorrow's matches well ahead of kickoff.
+        # Tomorrow pre-sync — 16:00 UTC (18:00 CAT / 6pm Malawi local). Pulls
+        # tomorrow's fixtures + odds, computes signals, pushes tomorrow + overnight
+        # Telegram digests. No bet tracking — stakes commit off morning-sync odds.
         _scheduler.add_job(
             _tomorrow_presync_job,
-            CronTrigger(hour=18, minute=0),
+            CronTrigger(hour=16, minute=0),
             id="tomorrow-presync",
             replace_existing=True,
             misfire_grace_time=1800,
         )
-        # Nightly results sweep -- 02:00 UTC, catches late finishers from prior day.
+        # Nightly results sweep -- 00:00 UTC, catches late finishers from prior day.
         _scheduler.add_job(
             _nightly_results_job,
-            CronTrigger(hour=2, minute=0),
+            CronTrigger(hour=0, minute=0),
             id="nightly-results",
             replace_existing=True,
             misfire_grace_time=600,
         )
-        # Weekly calibration audit -- every Monday 07:00 UTC.
+        # Weekly calibration audit -- every Monday 05:00 UTC.
         # Computes Brier skill, ECE, per-market calibration gaps and flags any
         # market where skill < +0.05 or calibration gap > 7pp.
         # Saves a snapshot row for trend tracking; logs a summary with flagged markets.
         _scheduler.add_job(
             _weekly_calibration_job,
-            CronTrigger(day_of_week="mon", hour=7, minute=0),
+            CronTrigger(day_of_week="mon", hour=5, minute=0),
             id="weekly-calibration",
             replace_existing=True,
             misfire_grace_time=3600,
         )
-        # Weekly housekeeping -- every Wednesday 04:00 UTC.
+        # Weekly housekeeping -- every Wednesday 02:00 UTC.
         # Purges market_snapshots for fixtures >30 days old and deactivates
         # stale learning proposals whose targets are already hard-banned.
         _scheduler.add_job(
             _cleanup_old_snapshots,
-            CronTrigger(day_of_week="wed", hour=4, minute=0),
+            CronTrigger(day_of_week="wed", hour=2, minute=0),
             id="weekly-cleanup",
             replace_existing=True,
             misfire_grace_time=3600,
         )
         logger.info(
             "Scheduler configured for %d sync times + kickoff alerts every 60 min "
-            "(06:00-00:00 UTC) + morning digest 07:30 UTC + advisory cache 08:30 UTC "
-            "+ tomorrow presync+digest 18:00 UTC + nightly results 02:00 UTC",
+            "(04:00-22:00 UTC) + morning digest 05:30 UTC + advisory cache 06:30 UTC "
+            "+ tomorrow presync+digest 16:00 UTC + nightly results 00:00 UTC",
             len(settings.sync_times_list),
         )
     return _scheduler

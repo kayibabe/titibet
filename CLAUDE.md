@@ -177,9 +177,9 @@ Analyses ALL settled bets (wins + losses). Broader strategic rule changes.
 
 ## Scheduler schedule
 
-Default sync times (UTC): `06:00, 14:00, 18:00, 23:30`
+Default sync times (UTC): `04:00, 16:00, 21:30`
 
-A dedicated `tomorrow-presync` job also runs at 18:00 UTC (8pm Malawi local) — pulls tomorrow's fixtures/odds, computes signals, and pre-warms the AI Advisory cache for tomorrow. It deliberately does NOT auto-track system picks (that stays on the normal cycle below) so stakes commit off the freshest pre-kickoff data, not last night's odds.
+A dedicated `tomorrow-presync` job also runs at 16:00 UTC (6pm Malawi local) — pulls tomorrow's fixtures/odds, computes signals, pre-warms the AI Advisory cache for tomorrow, and pushes both the "tomorrow" and "tonight + overnight" Telegram digests. It deliberately does NOT auto-track any bets so stakes commit off the freshest pre-kickoff data. ACCA tracking is handled exclusively by the 06:30 UTC advisory cache job the following morning.
 
 Override with `SYNC_TIMES=HH:MM,HH:MM` in `backend/.env`.
 
