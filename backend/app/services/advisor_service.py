@@ -1320,6 +1320,31 @@ async def get_advisor_insights(
         )
     ]
 
+    # HO0.5 Tier 3 ACCA gate: mirrors build_acca_candidates gate.
+    # Home-team scoring rates are structurally unreliable in data-sparse lower leagues;
+    # the model is overconfident and every system ACCA loss in July 2026 traced back
+    # to a Tier 3 HO0.5 leg (Al Hikma/Lebanon, Argentino/Argentina).
+    acca_pool = [
+        (sig, fix) for sig, fix in acca_pool
+        if not (
+            sig.market == "Home Over 0.5"
+            and (fix.league_tier or 3) >= 3
+        )
+    ]
+
+    # Data-poor Both+High HO0.5 gate: mirrors build_acca_candidates gate.
+    from app.core.config import HO05_DATA_POOR_COUNTRIES
+    acca_pool = [
+        (sig, fix) for sig, fix in acca_pool
+        if not (
+            sig.market == "Home Over 0.5"
+            and sig.dual_confidence == "High"
+            and sig.dual_agreement == "Both"
+            and (fix.league_tier or 3) >= 3
+            and (fix.country or "").lower() in HO05_DATA_POOR_COUNTRIES
+        )
+    ]
+
     # Rank 5: Remove (confidence, market) slices with a confirmed poor track record.
     # Only fires once a slice accumulates ≥25 samples so we're not gate-keeping on noise.
     _PERF_GATE_MIN_SAMPLES = 25
