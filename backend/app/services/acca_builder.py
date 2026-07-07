@@ -20,8 +20,13 @@ from app.core.config import (
 )
 from app.services.signal_engine import _get_underperforming_leagues
 
-_MIN_PROB = 0.55
+_MIN_PROB = 0.62
 _ALLOWED_CONFIDENCE = {"Medium", "High"}
+# For Both+High ACCA legs both engines must individually clear this floor.
+# Mirrors the auto_tracker gate (DUAL_HIGH_MIN_PROB) so weak Both+High signals
+# that are barred from singles are also barred from ACCA legs — compounding
+# per-leg errors makes the threshold more important, not less, in ACCA context.
+_ACCA_DUAL_HIGH_MIN_PROB = 0.73
 
 
 def _primary_prob(sig: Signal) -> float:
@@ -133,6 +138,28 @@ async def build_acca_candidates(
 
     # Quality floor
     rows = [(sig, fix) for sig, fix in rows if _primary_prob(sig) >= _MIN_PROB]
+
+    # Both+High ACCA gate: both engines must individually clear the same floor
+    # applied by auto_tracker for singles. A Both+High signal at 0.65 primary_prob
+    # (which singles rejects) must not sneak into an ACCA leg via the lower _MIN_PROB.
+    rows = [
+        (sig, fix) for sig, fix in rows
+        if not (
+            sig.dual_confidence == "High"
+            and sig.dual_agreement == "Both"
+            and min(sig.bayesian_prob or 0.0, sig.poisson_prob or 0.0) < _ACCA_DUAL_HIGH_MIN_PROB
+        )
+    ]
+
+    # HO0.5 Tier 3 ACCA gate: exclude Home Over 0.5 legs from Tier 3 leagues.
+    # Loss audit (Jul 2026): every system loss came from HO0.5. The majority are
+    # Tier 3 fixtures where home-team scoring rates are structurally unreliable —
+    # the model is overconfident on data-sparse lower leagues. Compounding per-leg
+    # errors makes the tier gate more important in ACCA context than in singles.
+    rows = [(sig, fix) for sig, fix in rows if not (
+        sig.market == "Home Over 0.5"
+        and (fix.league_tier or 3) >= 3
+    )]
 
     # Best signal per fixture
     best: dict[int, tuple[Signal, Fixture]] = {}

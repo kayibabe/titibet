@@ -539,12 +539,19 @@ MARKET_MIN_ODDS: dict = {
 INTEGRITY_RISK_COUNTRIES = {
     "indonesia", "vietnam", "myanmar", "cambodia", "laos",
     "philippines", "bangladesh", "pakistan",
+    # "Premier League" is a generic name; these countries' competitions
+    # consistently produce Both+High losses and should not be Tier 1.
+    "ethiopia", "barbados",
 }
 
 WOMEN_LEAGUE_KEYWORDS = {
     "women", "woman", "ladies", "girls", "feminine", "femenina",
     "femmes", "dames", "frauen", "femminile", "feminino",
     "nwsl", "wsl", "liga f",
+    # Scandinavian women's top flights not covered by generic keywords.
+    # "damallsvenskan" would otherwise be classified Tier 2 via "allsvenskan" substring.
+    # "toppserien" is the Norwegian Women's Football League (men's top flight is "Eliteserien").
+    "damallsvenskan", "toppserien",
 }
 
 TIER_2_COUNTRIES = {
@@ -635,6 +642,9 @@ OVER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
     "regionalliga - ost",   # 0% hit rate on 17 Over bets (Home + Away Over 0.5); defensive Austrian/German regional
     "regionalliga - mitte", # 16.7% hit on 6 Away Over 0.5; same structural pattern as Ost
     "regionalliga - west",  # 50% hit rate but borderline — preemptive suppression to avoid further losses
+    # Jul 4-5 2026: 2 HO0.5 losses (0-0 @1.34, plus Jul 5 loss) in Argentine Tier 3.
+    # Already in AWAY_GOALS_SUPPRESSED_LEAGUES for away-scoring; extended here for home-scoring too.
+    "primera b metropolitana",
 })
 
 # Markets suppressed in women's leagues.
@@ -654,6 +664,11 @@ WOMEN_OVER_SUPPRESSED_MARKETS: frozenset[str] = frozenset({
 # produced Both+High HO0.5 losses at 0% hit rate (0/4 in those countries).
 HO05_DATA_POOR_COUNTRIES: frozenset[str] = frozenset({
     "ethiopia", "iraq", "mali", "uzbekistan",
+    # Jul 3 2026: 3 Irish losses (Premier Division 0-2, First Division 0-1) + 1 Lebanese loss
+    # (Al Hikma vs Al Nejmeh 0-1 @1.38). Both+High at Tier 3 consistently overestimates
+    # home-team scoring rates in these lower-quality domestic environments.
+    "ireland",
+    "lebanon",
 })
 
 # Leagues where away-scoring signals (Away Over 0.5/1.5) are surgically suppressed.

@@ -32,6 +32,7 @@ from app.models.user import User as _User  # noqa: F401 — registers users tabl
 from app.core.config import (
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
     WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
+    DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES,
 )
 from app.services.acca_builder import build_acca_candidates, build_accumulator
 
@@ -137,6 +138,16 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         key = (signal.fixture_id, signal.market)
         if key in existing_keys:
             continue
+
+        # Defense-in-depth: skip disabled leagues and over-goals-suppressed leagues.
+        # signal_engine already filters these at write time, but old signals in the
+        # DB (generated before a league was suppressed) can still reach this loop.
+        league_lower = (fixture.league or "").lower().strip()
+        if league_lower in DISABLED_LEAGUES or "friendlies" in league_lower:
+            continue
+        if signal.market in {"Home Over 0.5", "Away Over 0.5", "Over 1.5", "Over 2.5"}:
+            if any(k in league_lower for k in OVER_GOALS_SUPPRESSED_LEAGUES):
+                continue
 
         odds = signal.bayesian_best_odd
         if not odds or odds <= 1.01:
