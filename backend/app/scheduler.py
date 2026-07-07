@@ -185,9 +185,9 @@ async def sync_and_compute(run_date: date | None = None) -> None:
                 except Exception:
                     logger.exception("Auto-tracker failed for %s — continuing normally", run_date)
                 # ACCA tracking is handled exclusively by the advisory cache job (08:30 UTC)
-                # and the presync job (18:00 UTC) — both write acca_advisory_system rows.
-                # The signal-model fallback (system_acca) is disabled: it ran before the
-                # 08:30 advisory job and produced a duplicate ticket every morning.
+                # and the presync job (18:00 UTC) — both write acca_leg_system rows via
+                # auto_track_acca_legs(). The signal-model fallback (system_acca) is disabled:
+                # it ran before the 08:30 advisory job and produced a duplicate ticket every morning.
                 # Settle every pending bet with a final fixture (any event_date), not only run_date.
                 n_settled = (await settle_bets_for_date(db, None))["settled"]
                 logger.info(
@@ -427,12 +427,11 @@ async def _tomorrow_presync_job() -> None:
     both TiTiBet Telegram channels — Pro sees everything in clear, Free sees a
     couple of randomly revealed matches with the rest spoiler-blurred.
 
-    Deliberately does NOT auto-track system picks here — auto_track_date
-    dedups on (fixture_id, market_type), so whatever gets tracked first would
-    freeze the model's 8pm view even after odds/signals are recomputed closer
-    to kickoff. Auto-tracking stays on the normal sync cycle (06:00 etc.) so
-    stakes commit off the model's most current, closest-to-kickoff read —
-    consistent with the CLV/drift-rank logic the rest of the system relies on.
+    Deliberately does NOT auto-track any bets here (singles or ACCA) — whatever
+    gets tracked first freezes the 8pm odds even after signals are recomputed
+    closer to kickoff. Singles are tracked by the normal sync cycle (06:00 etc.);
+    ACCA is tracked by the 08:30 UTC advisory cache job the following morning,
+    both using the freshest available odds at time of tracking.
 
     Best-effort: failures are logged; the 18:30 UTC nightly digest job re-runs
     the same pre-sync as a fallback (sync_date's cooldown guard makes the
@@ -455,22 +454,13 @@ async def _tomorrow_presync_job() -> None:
             logger.exception("Tomorrow pre-sync failed — nightly digest job will retry")
             return
         try:
-            from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
+            from app.services.advisor_service import get_advisor_insights
             result = await get_advisor_insights(db, tomorrow, current_user=None, force=True)
             n_matches = result.get("matches_analysed", 0)
             logger.info("Tomorrow advisory cache: %d matches analysed for %s", n_matches, tomorrow)
-            tickets = result.get("accumulators") or []
-            if not tickets:
-                acca = result.get("accumulator", {})
-                if acca.get("legs") and not acca.get("error"):
-                    tickets = [acca]
-            if tickets:
-                n_tracked = await auto_track_acca_legs(db, tickets, tomorrow)
-                if n_tracked:
-                    logger.info(
-                        "Tomorrow pre-sync: auto-tracked %d acca rows (%d tickets) for %s",
-                        n_tracked, len(tickets), tomorrow,
-                    )
+            # Deliberately no auto_track_acca_legs here — tracking tomorrow's ACCA at 18:00 UTC
+            # locks in stale odds 12-18h before kickoff. The 08:30 UTC advisory cache job
+            # handles ACCA tracking the following morning with fresh post-06:00-sync odds.
         except Exception:
             logger.exception("Tomorrow advisory pre-cache failed — users will fall back to live computation")
         try:
