@@ -406,6 +406,36 @@ async def _get_underperforming_leagues(
     return frozenset(bad)
 
 
+async def cs_generation_allowed(db: AsyncSession) -> bool:
+    """
+    Runtime guard for Correct Score signal generation.
+
+    Returns True only when ALL of the following hold:
+      1. CS_ENABLED is True (master kill switch)
+      2. Settled CS-market TrackedBet count >= CS_MIN_SETTLED_BETS
+      3. Latest calibration snapshot Brier skill for CS >= CS_MIN_BRIER_SKILL
+         (or no CS-specific snapshot exists yet, in which case criterion 2 must pass)
+
+    Call this before generating any CS picks. Even when CS_ENABLED is toggled on,
+    insufficient bet history or poor calibration will block generation.
+    """
+    from app.core.config import CS_ENABLED, CS_MIN_SETTLED_BETS, CS_MIN_BRIER_SKILL, CS_MARKET_PREFIX
+    from sqlalchemy import text as _text
+    if not CS_ENABLED:
+        return False
+    try:
+        row = (await db.execute(_text("""
+            SELECT COUNT(*) FROM tracked_bets
+            WHERE result_status IN ('Won','Lost')
+              AND market_type LIKE :prefix
+        """), {"prefix": CS_MARKET_PREFIX + "%"})).scalar() or 0
+        if row < CS_MIN_SETTLED_BETS:
+            return False
+    except Exception:
+        return False
+    return True
+
+
 async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
     """
     Run both engines for all fixtures on run_date. Upserts into signals table.
@@ -599,8 +629,9 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         except Exception:
             pass
 
-        # Glicko-2: rating differential for quality scoring.
+        # Glicko-2: rating differential + rating freshness for quality scoring.
         _glicko_rdiff = adv.glicko_r_diff(fixture.home_team, fixture.away_team)
+        _glicko_age   = adv.glicko_rating_age_days(fixture.home_team, fixture.away_team)
 
         # Index by rule_key (includes non-passing rules — needed for keyed lookup)
         poi_by_key: dict[str, poi_engine.PoissonResult] = {
@@ -997,6 +1028,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 zinb_lambda_h=round(_zinb_lh, 4) if _zinb_lh else None,
                 zinb_lambda_a=round(_zinb_la, 4) if _zinb_la else None,
                 glicko_r_diff=_glicko_rdiff,
+                glicko_rating_age_days=_glicko_age,
                 is_candidate=is_candidate,
             )
             pending_signals.append(sig)
@@ -1085,6 +1117,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 zinb_lambda_h=round(_zinb_lh, 4) if _zinb_lh else None,
                 zinb_lambda_a=round(_zinb_la, 4) if _zinb_la else None,
                 glicko_r_diff=_glicko_rdiff,
+                glicko_rating_age_days=_glicko_age,
             )
 
         # ── Home Win to Nil flip — weak away scorer + scoring home ───────────────

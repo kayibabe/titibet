@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date
+from itertools import combinations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -480,4 +481,109 @@ async def get_model_intelligence(
         "active_count":   len(proposals),
         "active":         [_fmt(p) for p in proposals],
         "history":        [_fmt(p) for p in history],
+    }
+
+
+@router.get("/acca-performance")
+async def acca_performance(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    ACCA accumulator performance analytics for system-tracked legs.
+
+    Returns three breakdowns over all settled acca_leg_system bets:
+      - by_market:         leg hit rate / ROI per market type
+      - by_leg_count:      ticket-level hit rate by number of legs (ticket wins only if ALL legs win)
+      - two_market_combos: ticket hit rate for the most common two-market pairings
+    """
+    q = select(TrackedBet).where(
+        TrackedBet.source_rule_key == "acca_leg_system",
+        TrackedBet.result_status.in_(["Won", "Lost"]),
+        TrackedBet.user_id.is_(None),
+    )
+    bets = (await db.execute(q)).scalars().all()
+
+    if not bets:
+        return {"by_market": [], "by_leg_count": [], "two_market_combos": []}
+
+    # ── By market ──────────────────────────────────────────────────────────
+    mkt_stats: dict[str, dict] = defaultdict(lambda: {"wins": 0, "total": 0, "pl": 0.0, "stake": 0.0})
+    for bet in bets:
+        s = mkt_stats[bet.market_type]
+        s["wins"] += 1 if bet.result_status == "Won" else 0
+        s["total"] += 1
+        s["pl"] += bet.profit_loss or 0.0
+        s["stake"] += bet.stake or 0.0
+
+    by_market = sorted(
+        [
+            {
+                "market": mkt,
+                "legs": s["total"],
+                "wins": s["wins"],
+                "hit_rate": round(s["wins"] / s["total"] * 100, 1),
+                "roi": round(s["pl"] / s["stake"] * 100, 1) if s["stake"] else 0.0,
+            }
+            for mkt, s in mkt_stats.items()
+        ],
+        key=lambda x: -x["hit_rate"],
+    )
+
+    # ── By leg count ───────────────────────────────────────────────────────
+    # Group by event_date; a ticket is won only when every leg is Won.
+    date_legs: dict = defaultdict(list)
+    for bet in bets:
+        date_legs[bet.event_date].append(bet)
+
+    lc_stats: dict[int, dict] = defaultdict(lambda: {"tickets": 0, "wins": 0})
+    for legs in date_legs.values():
+        n = len(legs)
+        lc_stats[n]["tickets"] += 1
+        if all(lg.result_status == "Won" for lg in legs):
+            lc_stats[n]["wins"] += 1
+
+    by_leg_count = sorted(
+        [
+            {
+                "leg_count": n,
+                "tickets": s["tickets"],
+                "wins": s["wins"],
+                "hit_rate": round(s["wins"] / s["tickets"] * 100, 1),
+            }
+            for n, s in lc_stats.items()
+        ],
+        key=lambda x: x["leg_count"],
+    )
+
+    # ── Two-market combos ──────────────────────────────────────────────────
+    combo_stats: dict[tuple, dict] = defaultdict(lambda: {"tickets": 0, "wins": 0})
+    for legs in date_legs.values():
+        if len(legs) < 2:
+            continue
+        ticket_won = all(lg.result_status == "Won" for lg in legs)
+        markets = sorted({lg.market_type for lg in legs})
+        for mkt_a, mkt_b in combinations(markets, 2):
+            combo_stats[(mkt_a, mkt_b)]["tickets"] += 1
+            if ticket_won:
+                combo_stats[(mkt_a, mkt_b)]["wins"] += 1
+
+    two_market_combos = sorted(
+        [
+            {
+                "market_a": k[0],
+                "market_b": k[1],
+                "tickets": s["tickets"],
+                "wins": s["wins"],
+                "hit_rate": round(s["wins"] / s["tickets"] * 100, 1),
+            }
+            for k, s in combo_stats.items()
+            if s["tickets"] >= 2
+        ],
+        key=lambda x: -x["hit_rate"],
+    )[:10]
+
+    return {
+        "by_market": by_market,
+        "by_leg_count": by_leg_count,
+        "two_market_combos": two_market_combos,
     }

@@ -114,3 +114,9 @@ export async function fetchModelIntelligence() {
   if (!res.ok) throw new Error(`Model intelligence fetch failed: ${res.status}`)
   return res.json()
 }
+
+export async function fetchAccaPerformance() {
+  const res = await apiFetch(`${BASE}/acca-performance`)
+  if (!res.ok) throw new Error(`ACCA performance fetch failed: ${res.status}`)
+  return res.json()
+}

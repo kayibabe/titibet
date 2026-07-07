@@ -55,6 +55,8 @@ class AdvancedModelsOut(BaseModel):
 
     # Glicko-2 rating differential (home_r − away_r)
     glicko_r_diff: Optional[float] = None
+    # Days since the staler team's last match (>14 = stale; certainty is zeroed in ranking)
+    glicko_rating_age_days: Optional[int] = None
 
 
 

@@ -150,12 +150,31 @@ BACKTEST_FLAT_STAKE: float = 10_000.0
 # One pick max per fixture (highest-EV scoreline). Calibrated by run_cs_backtest.py.
 # =============================================================================
 
-# Calibration sweep 2026-07-02 (run_cs_backtest.py, 656 fixtures 2026-05-18..06-22):
-# every combo with n >= 100 lost 11-31% ROI. Model is calibrated on 2-8% cells but
-# overconfident on the 9-15% cells EV-picking selects (pred 0.115 -> actual 0.081),
-# and the CS board's ~40% overround + exec haircut swallows the calibrated bins.
-# Re-run the sweep when meaningfully more CS history has accumulated before enabling.
+"""
+Correct Score re-enable criteria (machine-checkable, do not remove).
+
+CS_ENABLED is the master kill switch. Even when True, CS generation is skipped
+unless BOTH runtime thresholds are met:
+
+  CS_MIN_SETTLED_BETS : int   — minimum settled TrackedBet rows where market_type
+                                starts with "Correct Score " before CS is allowed.
+                                Rationale: CS calibration is unreliable below ~500
+                                bets (backtest 2026-07-02: 656 fixtures, 11-31% ROI
+                                loss at every combo tested). Set back to True and
+                                accumulate this many bets before reenabling.
+
+  CS_MIN_BRIER_SKILL  : float — minimum Brier skill score (from calibration_snapshots)
+                                for the CS-market aggregate before CS is allowed.
+                                Rationale: CS predictions are overconfident on the
+                                9-15% probability cells that EV-picking selects.
+                                Positive skill means the model beats a naive base-rate.
+
+To re-enable: set CS_ENABLED=True in this file, ensure enough bets have settled,
+and confirm the calibration snapshot shows skill >= CS_MIN_BRIER_SKILL.
+"""
 CS_ENABLED: bool = False                 # kill switch for live CS signal generation
+CS_MIN_SETTLED_BETS: int = 500           # minimum settled CS bets before enabling
+CS_MIN_BRIER_SKILL: float = 0.03         # minimum Brier skill score before enabling
 CS_MARKET_PREFIX: str = "Correct Score "  # Signal.market = "Correct Score 2-1"
 CS_DC_RHO: float = -0.10                 # Dixon-Coles low-score correlation (rho)
 CS_MAX_GOALS: int = 6                    # score matrix grid size (0..6 per side)
@@ -438,6 +457,12 @@ def exec_odd_from(display_odd: float, market: str) -> float:
         return 0.0
     return max(1.01, round(display_odd * (1.0 - exec_haircut_for(market)), 4))
 
+
+# Minimum settled TrackedBet rows a league needs before it loses its "provisional"
+# status and is treated as a known quantity. Leagues below this threshold are
+# capped at 1 signal per day at serving time, preventing a data-sparse new league
+# from flooding the pool before a track record is established.
+PROVISIONAL_LEAGUE_MIN_BETS: int = 8
 
 # Maximum signals to surface from any single Tier 3 league per day.
 # Prevents catastrophic cluster losses when one lower-tier league misbehaves

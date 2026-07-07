@@ -240,6 +240,7 @@ class AdvancedModelsService:
                             away_team=r["away_team"],
                             home_goals=int(r["home_score"]),
                             away_goals=int(r["away_score"]),
+                            match_date=ev_d,
                         ))
                     except (TypeError, ValueError):
                         continue
@@ -366,6 +367,16 @@ class AdvancedModelsService:
             return None
         try:
             return self._glicko.rating_diff(home_team, away_team)
+        except Exception:
+            return None
+
+    def glicko_rating_age_days(self, home_team: str, away_team: str) -> Optional[int]:
+        """Days since the staler of the two teams' last match (>14 = stale). None if no data."""
+        if self._glicko is None:
+            return None
+        try:
+            from datetime import date as _d
+            return self._glicko.rating_age_days(home_team, away_team, _d.today())
         except Exception:
             return None
 

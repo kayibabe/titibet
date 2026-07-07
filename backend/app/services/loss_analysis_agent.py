@@ -360,16 +360,31 @@ async def _detect_patterns(loss_summaries: list[dict]) -> Optional[dict]:
     if not loss_summaries:
         return None
 
-    return await _call_groq(
+    from app.services.llm_client import call_llm
+    result = await call_llm(
         system=_PATTERN_SYSTEM,
         user=_PATTERN_TASK.format(
             n=len(loss_summaries),
             losses_json=json.dumps(loss_summaries, indent=2),
         ),
-        model="llama-3.3-70b-versatile",
-        temperature=0.1,
+        model_tier="smart",
+        response_format="json",
         timeout=40.0,
+        max_tokens=800,
     )
+    # Fall back to Groq-only if shared client returned nothing (legacy path)
+    if result is None:
+        result = await _call_groq(
+            system=_PATTERN_SYSTEM,
+            user=_PATTERN_TASK.format(
+                n=len(loss_summaries),
+                losses_json=json.dumps(loss_summaries, indent=2),
+            ),
+            model="llama-3.3-70b-versatile",
+            temperature=0.1,
+            timeout=40.0,
+        )
+    return result
 
 
 # ── Agent 3: Threshold Tuner — concrete parameter changes ────────────────────
@@ -412,13 +427,24 @@ Respond with:
 
 async def _tune_thresholds(patterns: dict) -> Optional[dict]:
     """Run the Threshold Tuner agent on detected patterns."""
-    return await _call_groq(
+    from app.services.llm_client import call_llm
+    result = await call_llm(
         system=_TUNER_SYSTEM,
         user=_TUNER_TASK.format(patterns_json=json.dumps(patterns, indent=2)),
-        model="llama-3.3-70b-versatile",
-        temperature=0.1,
+        model_tier="smart",
+        response_format="json",
         timeout=40.0,
+        max_tokens=800,
     )
+    if result is None:
+        result = await _call_groq(
+            system=_TUNER_SYSTEM,
+            user=_TUNER_TASK.format(patterns_json=json.dumps(patterns, indent=2)),
+            model="llama-3.3-70b-versatile",
+            temperature=0.1,
+            timeout=40.0,
+        )
+    return result
 
 
 # ── Agent 4: Backtester — validate proposals against history ─────────────────

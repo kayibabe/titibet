@@ -1163,3 +1163,30 @@ async def check_and_push_pending_results(db: AsyncSession) -> int:
     return pushed
 
 
+async def push_ingestion_alert(
+    db: AsyncSession,
+    run_date: date,
+    status: str,
+    error_message: str | None = None,
+) -> None:
+    """
+    Send a brief ops alert to the Pro channel when an ingestion run fails.
+    Fail-silent — never raises so it can't block the sync loop.
+    Sends only to the Pro channel (ops audience), not the Free channel.
+    """
+    if not settings.telegram_bot_token or not settings.telegram_pro_chat_id:
+        return
+    try:
+        date_str = run_date.isoformat()
+        msg_parts = [
+            f"⚠️ <b>Ingestion alert — {_esc(date_str)}</b>",
+            f"Status: <code>{_esc(status)}</code>",
+        ]
+        if error_message:
+            msg_parts.append(f"Error: {_esc(error_message[:300])}")
+        await _send_to(settings.telegram_pro_chat_id, "\n".join(msg_parts))
+        logger.info("Ingestion alert sent for %s (status=%s)", date_str, status)
+    except Exception as exc:
+        logger.warning("push_ingestion_alert failed (non-fatal): %s", exc)
+
+

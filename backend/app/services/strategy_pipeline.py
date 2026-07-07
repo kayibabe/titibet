@@ -304,6 +304,25 @@ Each proposal must have exactly these fields:
 
 Return: {{"proposals": [...]}}"""
 
+    from app.services.llm_client import call_llm
+    parsed = await call_llm(
+        system=_STRATEGY_SYSTEM,
+        user=user_msg,
+        model_tier="smart",
+        response_format="json",
+        timeout=25.0,
+        max_tokens=800,
+    )
+    if parsed is not None:
+        proposals = parsed.get("proposals", [])
+        logger.info("Strategy Agent generated %d proposals via llm_client", len(proposals))
+        return proposals if isinstance(proposals, list) else []
+
+    # Fallback: Groq-only direct call
+    if not settings.groq_api_key:
+        logger.info("Strategy Agent: no provider available — returning empty proposals")
+        return []
+
     payload = {
         "model": GROQ_MODEL,
         "messages": [
@@ -331,7 +350,7 @@ Return: {{"proposals": [...]}}"""
                 raw = resp.json()["choices"][0]["message"]["content"]
                 parsed = json.loads(raw)
                 proposals = parsed.get("proposals", [])
-                logger.info("Strategy Agent generated %d proposals", len(proposals))
+                logger.info("Strategy Agent generated %d proposals (Groq fallback)", len(proposals))
                 return proposals if isinstance(proposals, list) else []
         except Exception as exc:
             last_exc = exc

@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
-from typing import Sequence
+from dataclasses import dataclass, field
+from datetime import date as _date
+from typing import Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class MatchResult:
     home_goals: int
     away_goals: int
     home_advantage: float = 0.0
+    match_date: Optional[_date] = None
 
     @property
     def home_score(self) -> float:
@@ -159,6 +161,7 @@ class Glicko2System:
         self.tau = tau
         self.home_advantage_mu = home_advantage_pts / _SCALE
         self._ratings: dict[str, TeamRating] = {}
+        self._last_match_date: dict[str, _date] = {}
 
     def _get_or_create(self, name: str) -> TeamRating:
         if name not in self._ratings:
@@ -192,6 +195,11 @@ class Glicko2System:
                 (a_rating, r.home_score, self.home_advantage_mu))
             opponents.setdefault(r.away_team, []).append(
                 (h_rating, r.away_score, -self.home_advantage_mu))
+            if r.match_date is not None:
+                for team in (r.home_team, r.away_team):
+                    existing = self._last_match_date.get(team)
+                    if existing is None or r.match_date > existing:
+                        self._last_match_date[team] = r.match_date
 
         new_ratings: dict[str, TeamRating] = {}
         for name, opps in opponents.items():
@@ -220,6 +228,19 @@ class Glicko2System:
             "glicko_rd_sum":   h.rd + a.rd,
             "glicko_exp_home": exp_home,
         }
+
+    def rating_age_days(self, home: str, away: str, as_of: _date) -> Optional[int]:
+        """
+        Days since the staler of the two teams' last recorded match.
+        Returns None if no match date was tracked for either team.
+        Values > 14 indicate the rating differential may be stale.
+        """
+        h_date = self._last_match_date.get(home)
+        a_date = self._last_match_date.get(away)
+        if h_date is None and a_date is None:
+            return None
+        oldest = min(d for d in [h_date, a_date] if d is not None)
+        return max(0, (as_of - oldest).days)
 
     def top_ratings(self, n: int = 10) -> list[TeamRating]:
         return sorted(self._ratings.values(), key=lambda t: t.r, reverse=True)[:n]

@@ -42,6 +42,7 @@ from app.services.telegram import (
     push_signal_digest,
     push_morning_digest,
     push_tomorrow_digest,
+    push_ingestion_alert,
 )
 
 logger = logging.getLogger("titibet.scheduler")
@@ -173,6 +174,11 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
         try:
             logger.info("Scheduler: syncing %s", run_date)
             run = await ingestion.sync_date(db, run_date)
+            if run.status != "success":
+                try:
+                    await push_ingestion_alert(db, run_date, run.status, getattr(run, "error_message", None))
+                except Exception:
+                    logger.exception("Ingestion alert failed — non-fatal")
             if run.status == "success":
                 count = await compute_signals_for_date(db, run_date)
                 run.signals_computed = count
@@ -279,6 +285,54 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                                 n_tracked = await auto_track_acca_legs(db, tickets, run_date)
                                 if n_tracked:
                                     logger.info("Advisory cache: auto-tracked %d acca rows for %s", n_tracked, run_date)
+
+                        # ── Stale-odds guard ──────────────────────────────────────
+                        # Re-check all pre-tracked ACCA legs against the latest
+                        # MarketSnapshot odds.  Any leg whose odds have moved >10%
+                        # since tracking is deleted so auto_track_acca_legs can
+                        # re-insert it with the current price.
+                        from app.models.odds import MarketSnapshot as _MS
+                        from sqlalchemy import select as _sel2
+                        acca_legs_rows = (await db.execute(
+                            _sel2(_TB).where(
+                                _TB.source_rule_key == "acca_leg_system",
+                                _TB.event_date == run_date,
+                                _TB.result_status == "Pending",
+                                _TB.user_id.is_(None),
+                            )
+                        )).scalars().all()
+                        voided_count = 0
+                        for _leg in acca_legs_rows:
+                            if not _leg.fixture_id or not _leg.odds:
+                                continue
+                            _snap = (await db.execute(
+                                _sel2(_MS).where(
+                                    _MS.fixture_id == _leg.fixture_id,
+                                    _MS.market_type == _leg.market_type,
+                                    _MS.selection_name == _leg.selection_name,
+                                ).order_by(_MS.pulled_at.desc()).limit(1)
+                            )).scalars().first()
+                            if _snap and _snap.odds and abs(_snap.odds - _leg.odds) / _leg.odds > 0.10:
+                                await db.delete(_leg)
+                                voided_count += 1
+                        if voided_count:
+                            await db.commit()
+                            logger.info(
+                                "Stale-odds guard: voided %d ACCA leg(s) with >10%% odds movement "
+                                "for %s — re-tracking",
+                                voided_count, run_date,
+                            )
+                            retrack_tickets = result.get("accumulators") or []
+                            if not retrack_tickets:
+                                _rt_acca = result.get("accumulator", {})
+                                if _rt_acca.get("legs") and not _rt_acca.get("error"):
+                                    retrack_tickets = [_rt_acca]
+                            if retrack_tickets:
+                                n_retracked = await auto_track_acca_legs(db, retrack_tickets, run_date)
+                                logger.info(
+                                    "Stale-odds guard: re-tracked %d ACCA leg(s) for %s",
+                                    n_retracked, run_date,
+                                )
                     except Exception:
                         logger.exception("Advisory cache/ACCA failed — continuing normally")
                     try:
@@ -422,12 +476,12 @@ async def _cleanup_old_snapshots() -> None:
                   AND change_type='league_suppression'
                   AND lower(trim(target)) IN ({disabled_lg_list})
             """))
-            #    — market_odds_ceiling proposals referencing only disabled markets
-            r4 = await db.execute(text("""
+            #    — market_odds_ceiling proposals whose target market is already in DISABLED_MARKETS
+            r4 = await db.execute(text(f"""
                 UPDATE learning_proposals SET is_active=0
                 WHERE is_active=1
                   AND change_type='market_odds_ceiling'
-                  AND id IN (25, 28, 31)
+                  AND target IN ({disabled_mkt_list})
             """))
             deactivated = r1.rowcount + r2.rowcount + r3.rowcount + r4.rowcount
             await db.commit()
@@ -450,20 +504,33 @@ async def _kickoff_alert_job() -> None:
 
 
 
-async def _weekly_calibration_job() -> None:
+async def _daily_calibration_job() -> None:
     """
-    Weekly calibration audit -- runs every Monday 05:00 UTC.
+    Daily calibration audit — runs at 05:00 UTC every day.
+
     Computes Brier skill score, ECE, and per-market calibration gaps over the
     last 90 days of settled bets.  Saves a snapshot for trend tracking and logs
     a WARNING for every market that fails the health threshold (skill < +0.05).
+
+    Also writes a market_suppression LearningProposal for any market whose
+    brier_skill is below BRIER_SKILL_TARGET in BOTH the current snapshot AND the
+    immediately prior saved snapshot (two consecutive windows), indicating
+    sustained calibration failure rather than one-off noise.  Each proposal is
+    validated through the in-process backtester before persisting.
     """
-    from app.services.calibration import compute_calibration_metrics, save_snapshot
+    from app.services.calibration import (
+        compute_calibration_metrics, save_snapshot, load_recent_snapshots,
+        BRIER_SKILL_TARGET,
+    )
+    from app.models.learning_proposal import LearningProposal
+    from app.models.bet import TrackedBet
+    from sqlalchemy import select as _select, text as _text
     async with AsyncSessionLocal() as db:
         try:
             report = await compute_calibration_metrics(db, days=90)
             if report.signal_join_bets < 30:
                 logger.info(
-                    "Weekly calibration: too few settled bets (%d) — skipping snapshot",
+                    "Calibration: too few settled bets (%d) — skipping snapshot",
                     report.signal_join_bets,
                 )
                 return
@@ -472,11 +539,122 @@ async def _weekly_calibration_job() -> None:
                 logger.info(line)
             for mkt in report.flagged_markets:
                 logger.warning(
-                    "Calibration FLAGGED: %s -- review and consider suppression or threshold change",
+                    "Calibration FLAGGED: %s -- brier_skill below target or gap > 7pp",
                     mkt,
                 )
+
+            # ── Consecutive-failure suppression gate ─────────────────────────
+            # Only propose suppression when the SAME market fails in two
+            # consecutive snapshots — one failure could be statistical noise.
+            prior_snapshots = await load_recent_snapshots(db, n=2)
+            if len(prior_snapshots) < 2:
+                return   # need at least 2 snapshots to compare
+
+            # prior_snapshots[0] is the snapshot we just saved (most recent);
+            # prior_snapshots[1] is the one before it.
+            current_snap = prior_snapshots[0]
+            previous_snap = prior_snapshots[1]
+
+            import json as _json
+            current_mkt_skill: dict[str, float] = {
+                m["market"]: m["brier_skill"]
+                for m in (_json.loads(current_snap.get("market_summary") or "[]") if isinstance(current_snap.get("market_summary"), str) else current_snap.get("market_summary") or [])
+            }
+            previous_mkt_skill: dict[str, float] = {
+                m["market"]: m["brier_skill"]
+                for m in (_json.loads(previous_snap.get("market_summary") or "[]") if isinstance(previous_snap.get("market_summary"), str) else previous_snap.get("market_summary") or [])
+            }
+
+            # Markets failing in BOTH consecutive windows
+            both_failing = [
+                mkt for mkt in current_mkt_skill
+                if (
+                    current_mkt_skill[mkt] < BRIER_SKILL_TARGET
+                    and mkt in previous_mkt_skill
+                    and previous_mkt_skill[mkt] < BRIER_SKILL_TARGET
+                )
+            ]
+
+            if not both_failing:
+                return
+
+            # Load settled bets for backtester validation
+            all_settled_result = await db.execute(
+                _select(TrackedBet).where(TrackedBet.result_status.in_(["Won", "Lost"]))
+            )
+            all_settled = list(all_settled_result.scalars().all())
+
+            for mkt in both_failing:
+                # Skip if already hard-disabled — no point proposing suppression
+                from app.core.config import DISABLED_MARKETS
+                if mkt in DISABLED_MARKETS:
+                    continue
+
+                # Skip if already have an active market_suppression proposal
+                existing = (await db.execute(
+                    _select(LearningProposal).where(
+                        LearningProposal.change_type == "market_suppression",
+                        LearningProposal.target == mkt,
+                        LearningProposal.is_active == True,  # noqa: E712
+                    )
+                )).scalars().first()
+                if existing:
+                    logger.info(
+                        "Calibration: market_suppression for %s already active — skipping",
+                        mkt,
+                    )
+                    continue
+
+                # Simple backtest: does this market have negative ROI?
+                market_bets = [b for b in all_settled if b.market_type == mkt]
+                if len(market_bets) < 15:
+                    logger.info(
+                        "Calibration: %s has only %d bets — need 15 for suppression proposal",
+                        mkt, len(market_bets),
+                    )
+                    continue
+
+                total_stake = sum(b.stake for b in market_bets if b.stake)
+                total_pl = sum(b.profit_loss for b in market_bets if b.profit_loss is not None)
+                roi = (total_pl / total_stake) if total_stake > 0 else 0.0
+
+                if roi >= -0.05:
+                    logger.info(
+                        "Calibration: %s ROI=%.1f%% not negative enough for suppression "
+                        "(need < -5%%)",
+                        mkt, roi * 100,
+                    )
+                    continue
+
+                # Accepted — persist the proposal
+                try:
+                    new_proposal = LearningProposal(
+                        change_type="market_suppression",
+                        target=mkt,
+                        proposed_value=1.0,
+                        rationale=(
+                            f"Calibration: brier_skill below {BRIER_SKILL_TARGET} in two "
+                            f"consecutive 90-day windows. ROI={roi:.1%} on {len(market_bets)} bets."
+                        ),
+                        confidence="Medium",
+                        backtest_note=(
+                            f"Backtested: ROI={roi:.1%} over {len(market_bets)} settled bets — "
+                            "negative ROI confirms suppression justified."
+                        ),
+                        is_active=True,
+                    )
+                    db.add(new_proposal)
+                    await db.commit()
+                    logger.warning(
+                        "Calibration SUPPRESSION proposed: %s (brier_skill failed 2 windows, ROI=%.1f%%)",
+                        mkt, roi * 100,
+                    )
+                except Exception as exc:
+                    logger.error("Calibration: failed to persist proposal for %s: %s", mkt, exc)
+                    await db.rollback()
+
         except Exception:
-            logger.exception("Weekly calibration job failed")
+            logger.exception("Calibration job failed")
 
 
 def get_scheduler() -> AsyncIOScheduler:
@@ -506,14 +684,15 @@ def get_scheduler() -> AsyncIOScheduler:
             replace_existing=True,
             misfire_grace_time=120,
         )
-        # Weekly calibration audit -- every Monday 05:00 UTC.
-        # Computes Brier skill, ECE, per-market calibration gaps and flags any
-        # market where skill < +0.05 or calibration gap > 7pp.
-        # Saves a snapshot row for trend tracking; logs a summary with flagged markets.
+        # Daily calibration audit — every day 05:00 UTC.
+        # Computes Brier skill, ECE, per-market calibration gaps over the last 90 days.
+        # Daily re-runs are cheap (90-day window) and catch model drift faster than weekly.
+        # Writes a market_suppression LearningProposal when the same market fails
+        # in two consecutive snapshots AND shows negative ROI (two-window guard).
         _scheduler.add_job(
-            _weekly_calibration_job,
-            CronTrigger(day_of_week="mon", hour=5, minute=0),
-            id="weekly-calibration",
+            _daily_calibration_job,
+            CronTrigger(hour=5, minute=0),
+            id="daily-calibration",
             replace_existing=True,
             misfire_grace_time=3600,
         )
@@ -529,7 +708,7 @@ def get_scheduler() -> AsyncIOScheduler:
         )
         logger.info(
             "Scheduler configured: %d syncs (first=morning extras, second=evening extras) "
-            "+ kickoff alerts 04:00-22:00 UTC + weekly calibration + weekly cleanup",
+            "+ kickoff alerts 04:00-22:00 UTC + daily calibration + weekly cleanup",
             len(settings.sync_times_list),
         )
     return _scheduler

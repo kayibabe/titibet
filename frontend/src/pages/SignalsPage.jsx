@@ -365,7 +365,7 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
     leagueSearch,
   ].filter(Boolean).length
 const dateInputRef = useRef(null)
-  const { signals, loading, error, load, invalidate } = useSignals()
+  const { signals, hiddenHighConfidenceCount, loading, error, load, invalidate } = useSignals()
 const params = {
     date,
     confidence:  confidence || undefined,
@@ -965,11 +965,18 @@ const reload = () => load(params)
 
               {/* Upgrade banner */}
               {!isPro && allOrdered.length > freeSlice && (
-                <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/8 px-4 py-3 text-center text-sm">
-                  <span className="text-slate-300">Viewing <strong className="text-white">{freeSlice} of {allOrdered.length}</strong> signals. </span>
-                  <button onClick={onUpgrade} className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">
-                    Upgrade to Pro →
-                  </button>
+                <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/8 px-4 py-3 text-center text-sm space-y-1">
+                  <div>
+                    <span className="text-slate-300">Viewing <strong className="text-white">{freeSlice} of {allOrdered.length}</strong> signals. </span>
+                    <button onClick={onUpgrade} className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">
+                      Upgrade to Pro →
+                    </button>
+                  </div>
+                  {hiddenHighConfidenceCount > 0 && (
+                    <p className="text-[11px] text-emerald-400 font-medium">
+                      {hiddenHighConfidenceCount} High-confidence · Both-engines pick{hiddenHighConfidenceCount > 1 ? 's' : ''} hidden behind the paywall
+                    </p>
+                  )}
                 </div>
               )}
             </div>

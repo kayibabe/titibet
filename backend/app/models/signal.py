@@ -79,6 +79,9 @@ class Signal(Base):
     # home_rating − away_rating on the 1500-point Glicko-2 scale.
     # Positive = home team is rated higher. Magnitude reflects strength gap.
     glicko_r_diff: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Days since the staler of the two teams' last tracked match.
+    # >14 means the rating differential may not reflect current form.
+    glicko_rating_age_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Candidate signals are stored for backtesting but excluded from the live feed.
     # True for Over 1.5 / Over 2.5 Bayesian-only signals awaiting performance validation.

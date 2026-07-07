@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Brain, Activity, BarChart2, Layers, TrendingUp, Zap, TrendingDown, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, Target, Coins, Crosshair } from 'lucide-react'
-import { fetchAnalytics, fetchAnalyticsIntelligence, fetchStakingSimulation, fetchProbabilityCalibration } from '../api/analytics'
+import { fetchAnalytics, fetchAnalyticsIntelligence, fetchStakingSimulation, fetchProbabilityCalibration, fetchAccaPerformance } from '../api/analytics'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Cell } from 'recharts'
 import LossAnalysisDashboard from '../components/analytics/LossAnalysisDashboard'
 import BriefingPanel from '../components/analytics/BriefingPanel'
@@ -822,6 +822,10 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
                 </Section>
               )}
 
+              <Section icon={Layers} title="ACCA Performance" subtitle="leg hit rate and ticket hit rate by market and leg count">
+                <AccaPerformanceCard />
+              </Section>
+
             </div>
           )}
 
@@ -862,6 +866,151 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
           )}
 
         </>
+      )}
+    </div>
+  )
+}
+
+// ── ACCA Performance Card ─────────────────────────────────────────────────────
+function AccaPerformanceCard() {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [tab, setTab] = useState('market')
+
+  useEffect(() => {
+    setLoading(true)
+    fetchAccaPerformance()
+      .then(d => setData(d))
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="flex justify-center py-6"><LoadingSpinner /></div>
+  if (error) return <p className="text-sm text-red-400">{error}</p>
+
+  const { by_market = [], by_leg_count = [], two_market_combos = [] } = data || {}
+  const hasData = by_market.length > 0 || by_leg_count.length > 0
+
+  if (!hasData) {
+    return (
+      <p className="text-sm text-[var(--text)] opacity-75 py-4 text-center">
+        No settled ACCA legs yet — data appears after the first batch of ACCA tickets are resolved.
+      </p>
+    )
+  }
+
+  const TABS = [
+    { id: 'market',  label: 'By Market' },
+    { id: 'legs',    label: 'By Leg Count' },
+    { id: 'combos',  label: 'Combos' },
+  ]
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 border-b border-[var(--border)]">
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={'px-3 py-1.5 text-xs font-medium border-b-2 -mb-px transition-colors ' + (
+              tab === t.id
+                ? 'border-[var(--accent)] text-[var(--accent)]'
+                : 'border-transparent text-[var(--text)] opacity-70 hover:opacity-100'
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'market' && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-[var(--border)] text-[var(--text)] opacity-70">
+                <th className="px-3 py-2 text-left">Market</th>
+                <th className="px-3 py-2 text-right">Legs</th>
+                <th className="px-3 py-2 text-right">Hit Rate</th>
+                <th className="px-3 py-2 text-right">ROI</th>
+              </tr>
+            </thead>
+            <tbody>
+              {by_market.map((row, i) => {
+                const hrColor = row.hit_rate >= 60 ? 'text-green-400' : row.hit_rate >= 50 ? 'text-yellow-400' : 'text-[var(--text-h)]'
+                const roiColor = row.roi >= 5 ? 'text-green-400' : row.roi >= 0 ? 'text-[var(--text-h)]' : 'text-red-400'
+                return (
+                  <tr key={i} className="border-t border-[var(--border)] hover:bg-[var(--code-bg)]">
+                    <td className="px-3 py-2 font-medium text-[var(--text-h)]">{row.market}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[var(--text)]">{row.legs}</td>
+                    <td className={'px-3 py-2 text-right tabular-nums font-semibold ' + hrColor}>{row.hit_rate}%</td>
+                    <td className={'px-3 py-2 text-right tabular-nums font-semibold ' + roiColor}>{row.roi >= 0 ? '+' : ''}{row.roi}%</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab === 'legs' && (
+        <div className="space-y-2">
+          {by_leg_count.map((row, i) => {
+            const hrColor = row.hit_rate >= 40 ? 'text-green-400' : row.hit_rate >= 25 ? 'text-yellow-400' : 'text-red-400'
+            const pct = Math.max(4, row.hit_rate)
+            return (
+              <div key={i} className="rounded-lg border border-[var(--border)] bg-[var(--code-bg)] px-4 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-[var(--text-h)]">{row.leg_count}-leg ticket</span>
+                  <div className="flex items-center gap-3 text-[11px]">
+                    <span className="text-[var(--text)] opacity-80">{row.tickets} tickets · {row.wins}W</span>
+                    <span className={'font-mono font-semibold ' + hrColor}>{row.hit_rate}% hit</span>
+                  </div>
+                </div>
+                <div className="h-1.5 rounded-full bg-[var(--border)] overflow-hidden">
+                  <div className="h-full rounded-full bg-indigo-500 opacity-70" style={{ width: pct + '%' }} />
+                </div>
+              </div>
+            )
+          })}
+          <p className="text-[10px] text-[var(--text)] opacity-55 pt-1">
+            Ticket win = all legs win. Hit rate drops sharply with each added leg — expected.
+          </p>
+        </div>
+      )}
+
+      {tab === 'combos' && (
+        two_market_combos.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-[var(--border)] text-[var(--text)] opacity-70">
+                  <th className="px-3 py-2 text-left">Market A</th>
+                  <th className="px-3 py-2 text-left">Market B</th>
+                  <th className="px-3 py-2 text-right">Tickets</th>
+                  <th className="px-3 py-2 text-right">Hit Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {two_market_combos.map((row, i) => {
+                  const hrColor = row.hit_rate >= 40 ? 'text-green-400' : row.hit_rate >= 25 ? 'text-yellow-400' : 'text-[var(--text-h)]'
+                  return (
+                    <tr key={i} className="border-t border-[var(--border)] hover:bg-[var(--code-bg)]">
+                      <td className="px-3 py-2 text-[var(--text-h)]">{row.market_a}</td>
+                      <td className="px-3 py-2 text-[var(--text-h)]">{row.market_b}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-[var(--text)]">{row.tickets}</td>
+                      <td className={'px-3 py-2 text-right tabular-nums font-semibold ' + hrColor}>{row.hit_rate}%</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-xs text-[var(--text)] opacity-70 py-4 text-center">
+            Need at least 2 tickets with the same two-market pair to show combo data.
+          </p>
+        )
       )}
     </div>
   )

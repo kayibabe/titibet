@@ -15,13 +15,18 @@ from app.core.config import (
     OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
     MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING,
     WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
-    COPA_HO05_SUPPRESSED_LEAGUES,
+    COPA_HO05_SUPPRESSED_LEAGUES, PROVISIONAL_LEAGUE_MIN_BETS,
     is_womens_fixture,
 )
 from app.models import Signal, Fixture, TrackedBet
 from app.models.odds import MarketSnapshot
 from app.models.user import User
 from app.schemas.signal import SignalOut, BayesianOut, PoissonOut, AdvancedModelsOut, BookmakerOdds
+from pydantic import BaseModel as _BaseModel
+
+class SignalsResponse(_BaseModel):
+    signals: list[SignalOut]
+    hidden_high_confidence_count: int = 0
 from app.services.signal_engine import compute_signals_for_date, _get_underperforming_leagues
 from app.services.match_info import get_match_info
 from app.services.clv import _BET_TO_SELECTION, _MARKET_TYPE_SCOPE
@@ -57,6 +62,29 @@ async def _compute_clv_market_ranks(db: AsyncSession) -> dict[str, int]:
         if avg_clv is not None and avg_clv > 1.5 and pos_rate > 0.58:
             ranks[market] = 1
     return ranks
+
+
+async def _get_provisional_leagues(db: AsyncSession) -> frozenset[str]:
+    """
+    Returns the set of lowercased league names that have fewer than
+    PROVISIONAL_LEAGUE_MIN_BETS settled TrackedBet rows.  These leagues are
+    capped at 1 signal per day at serving time (applied before the Tier 3 cap).
+    Result is per-request; no cross-request caching needed given query is fast.
+    """
+    from sqlalchemy import text as _text
+    try:
+        rows = await db.execute(_text("""
+            SELECT lower(trim(league)) AS lg, COUNT(*) AS n
+            FROM tracked_bets
+            WHERE result_status IN ('Won','Lost')
+              AND league IS NOT NULL
+              AND league != ''
+            GROUP BY lower(trim(league))
+            HAVING COUNT(*) < :min_bets
+        """), {"min_bets": PROVISIONAL_LEAGUE_MIN_BETS})
+        return frozenset(r[0] for r in rows.all() if r[0])
+    except Exception:
+        return frozenset()
 
 
 def _system_rank(
@@ -126,7 +154,9 @@ def _system_rank(
     # Only acts as a late tie-breaker (position 9).
     glicko_certainty = 0.0
     if sig.glicko_r_diff is not None:
-        glicko_certainty = min(abs(sig.glicko_r_diff) / 400.0, 1.0)
+        age = getattr(sig, "glicko_rating_age_days", None)
+        if age is None or age <= 14:
+            glicko_certainty = min(abs(sig.glicko_r_diff) / 400.0, 1.0)
 
     return (
         poisson_medium_flag,
@@ -255,6 +285,7 @@ def _to_signal_out(
             zinb_lambda_h=sig.zinb_lambda_h,
             zinb_lambda_a=sig.zinb_lambda_a,
             glicko_r_diff=sig.glicko_r_diff,
+            glicko_rating_age_days=getattr(sig, "glicko_rating_age_days", None),
         )
 
     return SignalOut(
@@ -280,7 +311,7 @@ def _to_signal_out(
     )
 
 
-@router.get("", response_model=list[SignalOut])
+@router.get("", response_model=SignalsResponse)
 async def list_signals(
     date_str: Optional[str] = Query(None, alias="date"),
     confidence: Optional[str] = Query(None, description="Comma-separated: High,Medium"),
@@ -426,6 +457,23 @@ async def list_signals(
 
     results = [_to_signal_out(sig, fix) for sig, fix in rows]
 
+    # ── Provisional league cap (applied first, before Tier 3 cap) ──────────────
+    # Leagues with fewer than PROVISIONAL_LEAGUE_MIN_BETS settled bets are
+    # capped at 1 signal per day so data-sparse new leagues can't flood the pool.
+    provisional_leagues = await _get_provisional_leagues(db)
+    if provisional_leagues:
+        prov_counts: dict[str, int] = {}
+        prov_capped: list = []
+        for r in results:
+            lg_lower = (r.league or "").lower().strip()
+            if lg_lower in provisional_leagues:
+                n = prov_counts.get(lg_lower, 0)
+                if n >= 1:
+                    continue
+                prov_counts[lg_lower] = n + 1
+            prov_capped.append(r)
+        results = prov_capped
+
     # ── Diversity cap: max MAX_SIGNALS_PER_TIER3_LEAGUE picks per Tier 3 league ──
     # Prevents a single lower-division league flooding the list and causing
     # cluster losses when the whole league behaves defensively on one day.
@@ -462,10 +510,17 @@ async def list_signals(
         and current_user.tier == "pro"
         and current_user.subscription_status == "active"
     )
+    hidden_count = 0
     if not is_pro:
+        hidden = results[FREE_SIGNAL_LIMIT:]
+        hidden_count = sum(
+            1 for r in hidden
+            if getattr(r, "dual_confidence", None) == "High"
+            and getattr(r, "dual_agreement", None) == "Both"
+        )
         results = results[:FREE_SIGNAL_LIMIT]
 
-    return results
+    return SignalsResponse(signals=results, hidden_high_confidence_count=hidden_count)
 
 
 @router.get("/stat-picks")
