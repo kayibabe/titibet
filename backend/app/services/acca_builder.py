@@ -114,8 +114,10 @@ async def build_acca_candidates(
     rows = (await db.execute(query)).all()
 
     if DUAL_HIGH_ODDS_CEILING:
+        # In ACCA context gate ANY Both-agreement signal above the ceiling —
+        # per-leg errors compound so the stricter standard applies vs singles (High+Both only).
         rows = [(sig, fix) for sig, fix in rows if not (
-            sig.dual_confidence == "High" and sig.dual_agreement == "Both"
+            sig.dual_agreement == "Both"
             and sig.market in DUAL_HIGH_ODDS_CEILING
             and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
         )]

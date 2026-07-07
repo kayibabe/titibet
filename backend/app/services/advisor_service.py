@@ -27,7 +27,7 @@ import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
+from app.core.config import get_settings, DUAL_HIGH_ODDS_CEILING
 from app.models import Signal, Fixture
 from app.services.performance_intelligence import PerformanceWeights, compute_performance_weights
 
@@ -1218,6 +1218,7 @@ async def get_advisor_insights(
         select(Signal, Fixture)
         .join(Fixture, Signal.fixture_id == Fixture.id)
         .where(Fixture.event_date == target_date)
+        .where(Signal.is_candidate == False)  # noqa: E712 — exclude data-collection-only signals
         .where(Signal.dual_confidence.in_(["High", "Medium"]))
         .where(Signal.dual_agreement.in_(["Both", "Bayesian Only", "Poisson Only"]))
         .order_by(Signal.dual_quality_score.desc().nullslast())
@@ -1286,10 +1287,14 @@ async def get_advisor_insights(
         (sig, fix) for sig, fix in rows
         if sig.dual_agreement == "Both"
     ]
-    # Tier 4: any signal with max prob ≥ 0.60 (includes single-engine signals)
+    # Tier 4: any signal with max prob ≥ 0.60, excluding Bayesian Only.
+    # Bayesian Only means the Poisson goal model does not confirm — one unvalidated
+    # engine in an ACCA leg compounds across all legs, so single-engine agreement
+    # is not acceptable here even as a last resort.
     acca_t4 = [
         (sig, fix) for sig, fix in rows
         if _primary_prob(sig) >= 0.60
+        and sig.dual_agreement != "Bayesian Only"
     ]
 
     if len(acca_t1) >= 3:
@@ -1302,6 +1307,18 @@ async def get_advisor_insights(
         acca_pool = acca_t4
     else:
         acca_pool = list(rows)  # last resort: all signals
+
+    # ACCA ceiling: enforce DUAL_HIGH_ODDS_CEILING for ANY Both-agreement signal,
+    # not just High+Both (which is what the main list endpoint gates).
+    # In ACCA context per-leg errors compound, so the stricter standard applies.
+    acca_pool = [
+        (sig, fix) for sig, fix in acca_pool
+        if not (
+            sig.dual_agreement == "Both"
+            and sig.market in DUAL_HIGH_ODDS_CEILING
+            and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
+        )
+    ]
 
     # Rank 5: Remove (confidence, market) slices with a confirmed poor track record.
     # Only fires once a slice accumulates ≥25 samples so we're not gate-keeping on noise.
