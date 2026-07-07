@@ -177,7 +177,7 @@ Analyses ALL settled bets (wins + losses). Broader strategic rule changes.
 
 ## Scheduler schedule
 
-Default sync times (UTC): `04:00, 18:00, 22:30`
+Default sync times (UTC): `04:00, 18:00, 23:00`
 
 The 18:00 UTC sync (20:00 CAT) is the evening extras run — pulls tomorrow's fixtures/odds, computes signals, pre-warms the AI Advisory cache for tomorrow, pre-tracks tomorrow's ACCA legs (covers after-midnight UTC kickoffs that would be missed by the 04:00 UTC morning sync), and pushes both the "tomorrow" and "tonight + overnight" Telegram digests. The 18:00 UTC timing gives sharper odds (Asian/sharp money has moved by 20:00 CAT) while maintaining a comfortable 4h gap before the 22:05 sync.
 
