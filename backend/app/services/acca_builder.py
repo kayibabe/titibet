@@ -17,11 +17,17 @@ from app.core.config import (
     OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS,
     HO05_DATA_POOR_COUNTRIES, ACCA_OVER25_UNKNOWN_TIER_CEILING,
+    COPA_HO05_SUPPRESSED_LEAGUES,
     is_womens_fixture,
 )
 from app.services.signal_engine import _get_underperforming_leagues
 
 _MIN_PROB = 0.62
+# HO0.5 legs require higher conviction than other markets in ACCA context.
+# A Both+High HO0.5 at 0.65 primary_prob already passes the global floor but
+# the market's track record of 0-0 losses (especially Tier 2/3) means we need
+# the model to be meaningfully more confident before compounding the leg.
+_HO05_ACCA_MIN_PROB = 0.70
 _ALLOWED_CONFIDENCE = {"Medium", "High"}
 # For Both+High ACCA legs both engines must individually clear this floor.
 # Mirrors the auto_tracker gate (DUAL_HIGH_MIN_PROB) so weak Both+High signals
@@ -139,8 +145,13 @@ async def build_acca_candidates(
         and (sig.bayesian_best_odd or 0.0) >= ACCA_OVER25_UNKNOWN_TIER_CEILING
     )]
 
-    # Quality floor
-    rows = [(sig, fix) for sig, fix in rows if _primary_prob(sig) >= _MIN_PROB]
+    # Quality floor — HO0.5 legs use a stricter floor than other markets.
+    rows = [
+        (sig, fix) for sig, fix in rows
+        if _primary_prob(sig) >= (
+            _HO05_ACCA_MIN_PROB if sig.market == "Home Over 0.5" else _MIN_PROB
+        )
+    ]
 
     # Both+High ACCA gate: both engines must individually clear the same floor
     # applied by auto_tracker for singles. A Both+High signal at 0.65 primary_prob
@@ -173,6 +184,23 @@ async def build_acca_candidates(
         sig.market == "Over 2.5"
         and (fix.league_tier or 3) >= 3
     )]
+
+    # Over 1.5 Tier 3 ACCA gate: exclude Over 1.5 legs from Tier 3 leagues.
+    # Mirrors the Over 2.5 Tier 3 gate — the 1.5-goal bar gives false security
+    # in data-sparse lower leagues where 0-0 and 1-0 results are elevated.
+    # A Tier 3 fixture where one goal is at all uncertain should not be an ACCA leg.
+    rows = [(sig, fix) for sig, fix in rows if not (
+        sig.market == "Over 1.5"
+        and (fix.league_tier or 3) >= 3
+    )]
+
+    # Copa/cup gate: suppress Home Over 0.5 in South American cup competitions.
+    # Rotation/reserve line-ups and knockout incentives depress home scoring.
+    if COPA_HO05_SUPPRESSED_LEAGUES:
+        rows = [(sig, fix) for sig, fix in rows if not (
+            sig.market == "Home Over 0.5"
+            and any(kw in (fix.league or "").lower() for kw in COPA_HO05_SUPPRESSED_LEAGUES)
+        )]
 
     # Bayesian Only ACCA gate: exclude single-engine Bayesian-only signals.
     # The Poisson goal model provides independent mathematical confirmation;

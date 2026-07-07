@@ -15,6 +15,7 @@ from app.core.config import (
     OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
     MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING,
     WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
+    COPA_HO05_SUPPRESSED_LEAGUES,
     is_womens_fixture,
 )
 from app.models import Signal, Fixture, TrackedBet
@@ -391,6 +392,18 @@ async def list_signals(
             )
         ]
 
+    # Copa/cup gate: suppress Home Over 0.5 in South American cup competitions.
+    # Rotation/reserve line-ups + knockout incentives depress home-scoring rates.
+    if COPA_HO05_SUPPRESSED_LEAGUES:
+        _league_lower = lambda fix: (fix.league or "").lower()
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.market == "Home Over 0.5"
+                and any(kw in _league_lower(fix) for kw in COPA_HO05_SUPPRESSED_LEAGUES)
+            )
+        ]
+
     # CLV market ranks: one DB query, used for all signals in this response.
     # Only computed for the default "system" sort where the ranking matters most.
     clv_ranks: dict[str, int] = {}
@@ -542,6 +555,17 @@ async def stat_driven_picks(
                 and sig.dual_agreement == "Both"
                 and (fix.league_tier or 3) >= 3
                 and (fix.country or "").lower() in HO05_DATA_POOR_COUNTRIES
+            )
+        ]
+
+    # Copa/cup gate — mirrors main endpoint.
+    if COPA_HO05_SUPPRESSED_LEAGUES:
+        _league_lower = lambda fix: (fix.league or "").lower()
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.market == "Home Over 0.5"
+                and any(kw in _league_lower(fix) for kw in COPA_HO05_SUPPRESSED_LEAGUES)
             )
         ]
 

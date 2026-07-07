@@ -466,7 +466,11 @@ MARKET_MAX_ODDS: dict[str, float] = {
 # Backtest 2026-06-15: Home Over 0.5 ≥2.50 → 38.5% WR (+19.5% ROI);
 # <2.50 → 80.1% WR (+48.6% ROI). Hard cap at 2.49.
 POISSON_ONLY_MAX_ODDS: dict[str, float] = {
-    "Home Over 0.5": 2.49,
+    # Lowered 2.49 → 2.10 (Jul 2026): World Cup underdog fixtures (e.g. Guatemala,
+    # Vanuatu) caused the Poisson engine to emit Poisson-only HO0.5 signals at 2.20–2.49.
+    # These are near-50/50 propositions where one engine without Bayesian confirmation
+    # is insufficient. At odds ≥2.10 (implied ≤48%) the model's calibration degrades.
+    "Home Over 0.5": 2.10,
 }
 
 # Serving-time odds ceiling for Both+High signals where the market is most
@@ -662,6 +666,11 @@ OVER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
     # Jul 4-5 2026: 2 HO0.5 losses (0-0 @1.34, plus Jul 5 loss) in Argentine Tier 3.
     # Already in AWAY_GOALS_SUPPRESSED_LEAGUES for away-scoring; extended here for home-scoring too.
     "primera b metropolitana",
+    # Jul 7 2026: loss audit confirmed Baltic leagues produce structurally low-scoring matches.
+    # Suduva Marijampole 0-0 (A Lyga) and Atmosfera 0-1 (1 Lyga) both categorised
+    # tier3_exposure + zero_zero by the loss analysis pipeline.
+    "a lyga",
+    "1 lyga",
 })
 
 # Markets suppressed in women's leagues.
@@ -686,6 +695,22 @@ HO05_DATA_POOR_COUNTRIES: frozenset[str] = frozenset({
     # home-team scoring rates in these lower-quality domestic environments.
     "ireland",
     "lebanon",
+})
+
+# South American cup competition name substrings where Home Over 0.5 signals are suppressed.
+# Cup fixtures use rotation/reserve line-ups and single-leg knockout format
+# incentivises parking the bus — home-team scoring rates drop sharply vs. league games.
+# Unlike OVER_GOALS_SUPPRESSED_LEAGUES (which blocks all over markets), this is
+# surgical: Over 2.5 and Over 1.5 are unaffected since cup matches can still be
+# open; it's the home-scoring guarantee that fails in cup context.
+# Matched by substring against lower(trim(league)) at serving time.
+COPA_HO05_SUPPRESSED_LEAGUES: frozenset[str] = frozenset({
+    "copa argentina",
+    "copa colombia",
+    "copa chile",
+    "copa peru",
+    "copa do brasil",
+    "copa mx",
 })
 
 # Leagues where away-scoring signals (Away Over 0.5/1.5) are surgically suppressed.
