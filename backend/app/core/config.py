@@ -554,6 +554,23 @@ WOMEN_LEAGUE_KEYWORDS = {
     "damallsvenskan", "toppserien",
 }
 
+
+def is_womens_fixture(league: str | None, home_team: str | None = None, away_team: str | None = None) -> bool:
+    """Return True if this fixture is a women's match.
+
+    Checks league name keywords first, then falls back to team-name " W" suffix
+    (common in Nordic lower-division women's clubs whose league names are gender-neutral,
+    e.g. "Lilla Torg W" in "Division 2 - Södra Götaland").
+    """
+    league_lower = (league or "").lower()
+    if any(kw in league_lower for kw in WOMEN_LEAGUE_KEYWORDS):
+        return True
+    for team in (home_team or "", away_team or ""):
+        if team.strip().upper().endswith(" W"):
+            return True
+    return False
+
+
 TIER_2_COUNTRIES = {
     "egypt", "saudi arabia", "israel", "iran", "qatar",
     "uae", "united arab emirates", "morocco", "algeria", "tunisia",

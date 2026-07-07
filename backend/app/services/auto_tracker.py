@@ -33,6 +33,7 @@ from app.core.config import (
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
     WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
     DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES,
+    is_womens_fixture,
 )
 from app.services.acca_builder import build_acca_candidates, build_accumulator
 
@@ -188,7 +189,7 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         # football systematically overestimate scoring in women's fixtures.
         if (
             signal.market in WOMEN_OVER_SUPPRESSED_MARKETS
-            and any(kw in (fixture.league or "").lower() for kw in WOMEN_LEAGUE_KEYWORDS)
+            and is_womens_fixture(fixture.league, fixture.home_team, fixture.away_team)
         ):
             continue
 

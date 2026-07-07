@@ -17,6 +17,7 @@ from app.core.config import (
     OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS,
     HO05_DATA_POOR_COUNTRIES, ACCA_OVER25_UNKNOWN_TIER_CEILING,
+    is_womens_fixture,
 )
 from app.services.signal_engine import _get_underperforming_leagues
 
@@ -121,7 +122,7 @@ async def build_acca_candidates(
     if WOMEN_OVER_SUPPRESSED_MARKETS:
         rows = [(sig, fix) for sig, fix in rows if not (
             sig.market in WOMEN_OVER_SUPPRESSED_MARKETS
-            and any(kw in (fix.league or "").lower() for kw in WOMEN_LEAGUE_KEYWORDS)
+            and is_womens_fixture(fix.league, fix.home_team, fix.away_team)
         )]
     if HO05_DATA_POOR_COUNTRIES:
         rows = [(sig, fix) for sig, fix in rows if not (

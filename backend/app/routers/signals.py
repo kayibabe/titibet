@@ -15,6 +15,7 @@ from app.core.config import (
     OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
     MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING,
     WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
+    is_womens_fixture,
 )
 from app.models import Signal, Fixture, TrackedBet
 from app.models.odds import MarketSnapshot
@@ -371,7 +372,7 @@ async def list_signals(
             (sig, fix) for sig, fix in rows
             if not (
                 sig.market in WOMEN_OVER_SUPPRESSED_MARKETS
-                and any(kw in (fix.league or "").lower() for kw in WOMEN_LEAGUE_KEYWORDS)
+                and is_womens_fixture(fix.league, fix.home_team, fix.away_team)
             )
         ]
 
@@ -527,7 +528,7 @@ async def stat_driven_picks(
             (sig, fix) for sig, fix in rows
             if not (
                 sig.market in WOMEN_OVER_SUPPRESSED_MARKETS
-                and any(kw in (fix.league or "").lower() for kw in WOMEN_LEAGUE_KEYWORDS)
+                and is_womens_fixture(fix.league, fix.home_team, fix.away_team)
             )
         ]
 
