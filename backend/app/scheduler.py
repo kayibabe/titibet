@@ -166,7 +166,7 @@ async def catchup_past_dates() -> int:
         return n_settled
 
 
-async def sync_and_compute(run_date: date | None = None) -> None:
+async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool = False, evening_extras: bool = False) -> None:
     if run_date is None:
         run_date = date.today()
     async with AsyncSessionLocal() as db:
@@ -184,10 +184,9 @@ async def sync_and_compute(run_date: date | None = None) -> None:
                         logger.info("Auto-tracker: %d new system bet(s) for %s", n_tracked, run_date)
                 except Exception:
                     logger.exception("Auto-tracker failed for %s — continuing normally", run_date)
-                # ACCA tracking is handled exclusively by the advisory cache job (08:30 UTC)
-                # and the presync job (18:00 UTC) — both write acca_leg_system rows via
-                # auto_track_acca_legs(). The signal-model fallback (system_acca) is disabled:
-                # it ran before the 08:30 advisory job and produced a duplicate ticket every morning.
+                # ACCA tracking runs in morning_extras (first daily sync) via auto_track_acca_legs.
+                # The signal-model fallback (system_acca) is disabled — it produced duplicate
+                # tickets before the advisory cache was warmed.
                 # Settle every pending bet with a final fixture (any event_date), not only run_date.
                 n_settled = (await settle_bets_for_date(db, None))["settled"]
                 logger.info(
@@ -246,6 +245,67 @@ async def sync_and_compute(run_date: date | None = None) -> None:
                             logger.info("Watch guard recovered: '%s'  ROI=%+.1f%%", s.keyword, s.roi_pct)
                     except Exception:
                         logger.exception("League watch guard failed — continuing normally")
+
+                # ── Morning extras (first daily sync only) ────────────────────
+                # Advisory cache + ACCA tracking + morning Telegram digest.
+                # Runs after signals are confirmed computed — no timing gap needed.
+                if morning_extras:
+                    try:
+                        from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
+                        result = await get_advisor_insights(db, run_date, current_user=None, force=True)
+                        logger.info("Advisory cache: %d matches analysed for %s", result.get("matches_analysed", 0), run_date)
+                        tickets = result.get("accumulators") or []
+                        if not tickets:
+                            acca = result.get("accumulator", {})
+                            if acca.get("legs") and not acca.get("error"):
+                                tickets = [acca]
+                        if tickets:
+                            n_tracked = await auto_track_acca_legs(db, tickets, run_date)
+                            if n_tracked:
+                                logger.info("Advisory cache: auto-tracked %d acca rows for %s", n_tracked, run_date)
+                    except Exception:
+                        logger.exception("Advisory cache/ACCA failed — continuing normally")
+                    try:
+                        n_sent = await push_morning_digest(db)
+                        if n_sent:
+                            logger.info("Morning digest: sent to %d channel(s)", n_sent)
+                    except Exception:
+                        logger.exception("Morning digest failed — continuing normally")
+
+                # ── Evening extras (second daily sync only) ───────────────────
+                # Tomorrow pre-sync + advisory cache for tomorrow + Telegram digests.
+                if evening_extras:
+                    tomorrow = run_date + timedelta(days=1)
+                    try:
+                        t_run = await ingestion.sync_date(db, tomorrow)
+                        if t_run.status == "success":
+                            n_sig = await compute_signals_for_date(db, tomorrow)
+                            await db.commit()
+                            logger.info("Tomorrow pre-sync: %s — %d fixtures, %d signals", tomorrow, t_run.fixtures_pulled, n_sig)
+                        else:
+                            logger.warning("Tomorrow pre-sync: %s status=%s", tomorrow, t_run.status)
+                    except Exception:
+                        logger.exception("Tomorrow pre-sync failed — skipping tomorrow advisory")
+                    try:
+                        from app.services.advisor_service import get_advisor_insights
+                        t_result = await get_advisor_insights(db, tomorrow, current_user=None, force=True)
+                        logger.info("Tomorrow advisory cache: %d matches for %s", t_result.get("matches_analysed", 0), tomorrow)
+                        # No ACCA tracking here — morning_extras handles that the following day.
+                    except Exception:
+                        logger.exception("Tomorrow advisory cache failed — continuing normally")
+                    try:
+                        n_sent = await push_tomorrow_digest(db, tomorrow)
+                        if n_sent:
+                            logger.info("Tomorrow digest: sent to %d channel(s) for %s", n_sent, tomorrow)
+                    except Exception:
+                        logger.exception("Tomorrow digest push failed — continuing normally")
+                    try:
+                        n_sent = await push_signal_digest(db)
+                        if n_sent:
+                            logger.info("Overnight digest: sent to %d channel(s)", n_sent)
+                    except Exception:
+                        logger.exception("Overnight digest push failed — continuing normally")
+
         except Exception:
             logger.exception("Scheduler error for %s", run_date)
             raise
@@ -360,138 +420,6 @@ async def _kickoff_alert_job() -> None:
             logger.exception("Kickoff alert job failed — continuing normally")
 
 
-async def _advisory_cache_job() -> None:
-    """
-    Pre-warm AI advisory cache — runs 05:00 UTC (07:00 CAT), 60 min after the
-    04:00 sync so today's signals are in the DB.
-
-    Calls the full advisory pipeline once (no user context → no acca tracking)
-    and writes the result to system_settings so every subsequent user request
-    is served instantly from cache instead of waiting 15-45 s for AI calls.
-
-    No-op when no AI provider keys are configured.
-    """
-    from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
-    async with AsyncSessionLocal() as db:
-        try:
-            result = await get_advisor_insights(db, date.today(), current_user=None, force=True)
-            n_matches = result.get("matches_analysed", 0)
-            from_cache = result.get("accumulator", {}).get("from_cache", False)
-            logger.info(
-                "Advisory cache job: %d matches analysed, cached=%s",
-                n_matches, not from_cache,
-            )
-            tickets = result.get("accumulators") or []
-            if not tickets:
-                acca = result.get("accumulator", {})
-                if acca.get("legs") and not acca.get("error"):
-                    tickets = [acca]
-            if tickets:
-                n_tracked = await auto_track_acca_legs(db, tickets, date.today())
-                if n_tracked:
-                    logger.info(
-                        "Advisory cache job: auto-tracked %d acca rows (%d tickets) for %s",
-                        n_tracked, len(tickets), date.today(),
-                    )
-        except Exception:
-            logger.exception("Advisory cache job failed — users will fall back to live computation")
-
-
-async def _morning_digest_job() -> None:
-    """
-    Morning digest — runs 05:30 UTC (07:30 CAT).
-
-    Broadcasts today's ranked signal picks to all configured Telegram channels
-    so subscribers see the day's full list at wake-up time. Runs 90 min after
-    the 04:00 UTC sync to guarantee signals are computed.
-    No-op when Telegram is not configured.
-    """
-    async with AsyncSessionLocal() as db:
-        try:
-            n_sent = await push_morning_digest(db)
-            logger.info("Morning digest: broadcast to %d channel(s)", n_sent)
-        except Exception:
-            logger.exception("Morning digest push failed")
-
-
-async def _tomorrow_presync_job() -> None:
-    """
-    Tomorrow pre-sync — runs 16:00 UTC (18:00 CAT / 6pm Malawi local).
-
-    Pulls fixtures + odds for tomorrow and computes signals so the user can
-    review and manually place bets this evening for all of tomorrow's matches,
-    well ahead of kickoff. Also pre-warms the AI advisory cache for tomorrow
-    so Scout/Strategist/Skeptic and the Acca Builder are instant when checked
-    this evening instead of paying the 15-45s live-pipeline cost on first request,
-    then pushes tomorrow's full single-match slate + the AI Acca-of-the-Day to
-    both TiTiBet Telegram channels — Pro sees everything in clear, Free sees a
-    couple of randomly revealed matches with the rest spoiler-blurred. Also pushes
-    the 'tonight + overnight' digest in the same scheduler slot.
-
-    Deliberately does NOT auto-track any bets here (singles or ACCA) — whatever
-    gets tracked first freezes the 6pm odds even after signals are recomputed
-    closer to kickoff. Singles are tracked by the normal sync cycle (04:00 etc.);
-    ACCA is tracked by the 06:30 UTC advisory cache job the following morning,
-    both using the freshest available odds at time of tracking.
-    """
-    tomorrow = date.today() + timedelta(days=1)
-    async with AsyncSessionLocal() as db:
-        try:
-            run = await ingestion.sync_date(db, tomorrow)
-            if run.status == "success":
-                n_sig = await compute_signals_for_date(db, tomorrow)
-                await db.commit()
-                logger.info(
-                    "Tomorrow pre-sync (6pm local): %s — %d fixtures, %d signals",
-                    tomorrow, run.fixtures_pulled, n_sig,
-                )
-            else:
-                logger.warning("Tomorrow pre-sync: %s sync status=%s", tomorrow, run.status)
-        except Exception:
-            logger.exception("Tomorrow pre-sync failed — nightly digest job will retry")
-            return
-        try:
-            from app.services.advisor_service import get_advisor_insights
-            result = await get_advisor_insights(db, tomorrow, current_user=None, force=True)
-            n_matches = result.get("matches_analysed", 0)
-            logger.info("Tomorrow advisory cache: %d matches analysed for %s", n_matches, tomorrow)
-            # Deliberately no auto_track_acca_legs here — tracking tomorrow's ACCA at 16:00 UTC
-            # locks in stale odds 12-18h before kickoff. The 05:00 UTC advisory cache job
-            # handles ACCA tracking the following morning with fresh post-04:00-sync odds.
-        except Exception:
-            logger.exception("Tomorrow advisory pre-cache failed — users will fall back to live computation")
-        try:
-            n_sent = await push_tomorrow_digest(db, tomorrow)
-            if n_sent:
-                logger.info("Tomorrow digest: pushed to %d channel(s) for %s", n_sent, tomorrow)
-        except Exception:
-            logger.exception("Tomorrow digest push failed")
-        # Also push the 'tonight + overnight' digest (matches kicking off in the
-        # next 12h). Runs in the same 16:00 UTC slot so subscribers get both
-        # messages at 18:00 CAT together.
-        try:
-            n_sent = await push_signal_digest(db)
-            if n_sent:
-                logger.info("Overnight digest: pushed to %d channel(s)", n_sent)
-        except Exception:
-            logger.exception("Overnight digest push failed")
-
-
-
-async def _nightly_results_job() -> None:
-    """
-    00:00 UTC nightly sweep — push results for any date in the last 3 days
-    that is fully settled but hasn't been reported to Telegram yet.
-    Catches late finishers that weren't picked up by the sync-cycle checks.
-    """
-    async with AsyncSessionLocal() as db:
-        try:
-            n = await check_and_push_pending_results(db)
-            if n:
-                logger.info("Nightly results job: pushed results for %d date(s)", n)
-        except Exception:
-            logger.exception("Nightly results job failed — continuing normally")
-
 
 async def _weekly_calibration_job() -> None:
     """
@@ -526,65 +454,28 @@ def get_scheduler() -> AsyncIOScheduler:
     global _scheduler
     if _scheduler is None:
         _scheduler = AsyncIOScheduler(timezone="UTC")
-        for hour, minute in settings.sync_times_list:
+        # First sync = morning extras (advisory cache + ACCA + morning digest).
+        # Second sync = evening extras (tomorrow presync + digests).
+        # Remaining syncs = core ingest + settle only.
+        for i, (hour, minute) in enumerate(settings.sync_times_list):
             _scheduler.add_job(
                 sync_and_compute,
                 CronTrigger(hour=hour, minute=minute),
                 id=f"sync-{hour:02d}{minute:02d}",
                 replace_existing=True,
                 misfire_grace_time=300,
+                kwargs={"morning_extras": i == 0, "evening_extras": i == 1},
             )
         # Pre-kickoff alert — runs every 60 min, 04:00–22:00 UTC (06:00–00:00 CAT).
         # Sends a compact Telegram message for High+Both signals kicking off
         # within 90 minutes that haven't already been alerted today.
         # No-op when TELEGRAM_BOT_TOKEN is not set.
-        # After-midnight (CAT) matches are covered by the evening digest instead.
         _scheduler.add_job(
             _kickoff_alert_job,
             CronTrigger(hour="4-22", minute="0"),
             id="kickoff-alerts",
             replace_existing=True,
             misfire_grace_time=120,
-        )
-        # Morning digest — 05:30 UTC (07:30 CAT). Runs 90 min after the 04:00
-        # sync so today's signals are computed. Pushes the day's ranked picks
-        # so subscribers see them at wake-up time.
-        _scheduler.add_job(
-            _morning_digest_job,
-            CronTrigger(hour=5, minute=30),
-            id="morning-digest",
-            replace_existing=True,
-            misfire_grace_time=1800,
-        )
-        # AI advisory cache — 05:00 UTC (07:00 CAT). Runs 60 min after the
-        # 04:00 sync — enough time for signal computation to complete even on
-        # busy days with many fixtures. Pre-computes the advisory and writes it
-        # to system_settings so every user gets instant results instead of
-        # waiting 15-45 s for the AI pipeline to complete.
-        _scheduler.add_job(
-            _advisory_cache_job,
-            CronTrigger(hour=5, minute=0),
-            id="advisory-cache",
-            replace_existing=True,
-            misfire_grace_time=1800,
-        )
-        # Tomorrow pre-sync — 16:00 UTC (18:00 CAT / 6pm Malawi local). Pulls
-        # tomorrow's fixtures + odds, computes signals, pushes tomorrow + overnight
-        # Telegram digests. No bet tracking — stakes commit off morning-sync odds.
-        _scheduler.add_job(
-            _tomorrow_presync_job,
-            CronTrigger(hour=16, minute=0),
-            id="tomorrow-presync",
-            replace_existing=True,
-            misfire_grace_time=1800,
-        )
-        # Nightly results sweep -- 00:00 UTC, catches late finishers from prior day.
-        _scheduler.add_job(
-            _nightly_results_job,
-            CronTrigger(hour=0, minute=0),
-            id="nightly-results",
-            replace_existing=True,
-            misfire_grace_time=600,
         )
         # Weekly calibration audit -- every Monday 05:00 UTC.
         # Computes Brier skill, ECE, per-market calibration gaps and flags any
@@ -608,9 +499,8 @@ def get_scheduler() -> AsyncIOScheduler:
             misfire_grace_time=3600,
         )
         logger.info(
-            "Scheduler configured for %d sync times + kickoff alerts every 60 min "
-            "(04:00-22:00 UTC) + morning digest 05:30 UTC + advisory cache 05:00 UTC "
-            "+ tomorrow presync+digest 16:00 UTC + nightly results 00:00 UTC",
+            "Scheduler configured: %d syncs (first=morning extras, second=evening extras) "
+            "+ kickoff alerts 04:00-22:00 UTC + weekly calibration + weekly cleanup",
             len(settings.sync_times_list),
         )
     return _scheduler
