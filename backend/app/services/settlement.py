@@ -77,9 +77,9 @@ def _settle_bet(bet: TrackedBet, won: bool) -> None:
 def _normalize_market(market_type: str | None) -> str:
     """Normalize LLM-generated market labels to canonical settlement names."""
     mt = (market_type or "").strip()
-    # "Over 0.5 Goals" / "Under 2.5 Goals" → strip suffix
-    if mt.endswith(" Goals") and not mt.startswith("Exactly"):
-        mt = mt[: -len(" Goals")].strip()
+    # "Over 0.5 Goals" / "Over 0.5 goals" / "Under 2.5 Goals" → strip suffix (case-insensitive)
+    if mt.lower().endswith(" goals") and not mt.lower().startswith("exactly"):
+        mt = mt[: -len(" goals")].strip()
     # "Home Team Over 0.5" / "Away Team Over 1.5" → canonical names
     mt = mt.replace("Home Team Over ", "Home Over ").replace("Home Team Under ", "Home Under ")
     mt = mt.replace("Away Team Over ", "Away Over ").replace("Away Team Under ", "Away Under ")
