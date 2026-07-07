@@ -362,7 +362,7 @@ async def _kickoff_alert_job() -> None:
 
 async def _advisory_cache_job() -> None:
     """
-    Pre-warm AI advisory cache — runs 06:30 UTC (08:30 CAT), 2.5h after the
+    Pre-warm AI advisory cache — runs 04:30 UTC (06:30 CAT), 30 min after the
     04:00 sync so today's signals are in the DB.
 
     Calls the full advisory pipeline once (no user context → no acca tracking)
@@ -456,7 +456,7 @@ async def _tomorrow_presync_job() -> None:
             n_matches = result.get("matches_analysed", 0)
             logger.info("Tomorrow advisory cache: %d matches analysed for %s", n_matches, tomorrow)
             # Deliberately no auto_track_acca_legs here — tracking tomorrow's ACCA at 16:00 UTC
-            # locks in stale odds 12-18h before kickoff. The 06:30 UTC advisory cache job
+            # locks in stale odds 12-18h before kickoff. The 04:30 UTC advisory cache job
             # handles ACCA tracking the following morning with fresh post-04:00-sync odds.
         except Exception:
             logger.exception("Tomorrow advisory pre-cache failed — users will fall back to live computation")
@@ -556,13 +556,13 @@ def get_scheduler() -> AsyncIOScheduler:
             replace_existing=True,
             misfire_grace_time=1800,
         )
-        # AI advisory cache — 06:30 UTC (08:30 CAT). Runs 2.5h after the
+        # AI advisory cache — 04:30 UTC (06:30 CAT). Runs 30 min after the
         # 04:00 sync so today's signals are available. Pre-computes the advisory
         # and writes it to system_settings so every user gets instant results
         # instead of waiting 15-45 s for the AI pipeline to complete.
         _scheduler.add_job(
             _advisory_cache_job,
-            CronTrigger(hour=6, minute=30),
+            CronTrigger(hour=4, minute=30),
             id="advisory-cache",
             replace_existing=True,
             misfire_grace_time=1800,
@@ -608,7 +608,7 @@ def get_scheduler() -> AsyncIOScheduler:
         )
         logger.info(
             "Scheduler configured for %d sync times + kickoff alerts every 60 min "
-            "(04:00-22:00 UTC) + morning digest 05:30 UTC + advisory cache 06:30 UTC "
+            "(04:00-22:00 UTC) + morning digest 05:30 UTC + advisory cache 04:30 UTC "
             "+ tomorrow presync+digest 16:00 UTC + nightly results 00:00 UTC",
             len(settings.sync_times_list),
         )
