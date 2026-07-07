@@ -469,42 +469,16 @@ async def _tomorrow_presync_job() -> None:
                 logger.info("Tomorrow digest: pushed to %d channel(s) for %s", n_sent, tomorrow)
         except Exception:
             logger.exception("Tomorrow digest push failed")
-
-
-async def _nightly_digest_job() -> None:
-    """
-    Evening digest — runs 18:30 UTC (20:30 CAT).
-
-    1. Pre-sync TOMORROW (UTC) so matches that kick off after midnight Malawi time
-       — which fall on the next UTC date — have computed signals available.
-       (Cheap fallback: _tomorrow_presync_job already did this at 18:00 UTC;
-       the cooldown guard in sync_date makes this a no-op when it succeeded.)
-    2. Broadcast the 'tonight + overnight' digest to all configured Telegram
-       channels so subscribers can bet on after-midnight fixtures before bed.
-
-    Best-effort: a failed pre-sync still sends the digest from existing data.
-    No-op when Telegram is not configured.
-    """
-    async with AsyncSessionLocal() as db:
-        tomorrow = date.today() + timedelta(days=1)
-        try:
-            run = await ingestion.sync_date(db, tomorrow)
-            if run.status == "success":
-                n_sig = await compute_signals_for_date(db, tomorrow)
-                await db.commit()
-                logger.info(
-                    "Nightly digest pre-sync: %s — %d fixtures, %d signals",
-                    tomorrow, run.fixtures_pulled, n_sig,
-                )
-            else:
-                logger.warning("Nightly digest pre-sync: %s sync status=%s", tomorrow, run.status)
-        except Exception:
-            logger.exception("Nightly digest pre-sync failed — sending digest from existing data")
+        # Also push the 'tonight + overnight' digest (matches kicking off in the
+        # next 12h). Folded here from the old nightly-digest job at 18:30 UTC so
+        # subscribers get both messages at 20:00 CAT in one scheduler slot.
         try:
             n_sent = await push_signal_digest(db)
-            logger.info("Nightly digest: broadcast to %d channel(s)", n_sent)
+            if n_sent:
+                logger.info("Overnight digest: pushed to %d channel(s)", n_sent)
         except Exception:
-            logger.exception("Nightly digest push failed")
+            logger.exception("Overnight digest push failed")
+
 
 
 async def _nightly_results_job() -> None:
@@ -606,16 +580,6 @@ def get_scheduler() -> AsyncIOScheduler:
             replace_existing=True,
             misfire_grace_time=1800,
         )
-        # Evening digest — 18:30 UTC (20:30 CAT). Pre-syncs tomorrow so
-        # after-midnight (CAT) matches have signals, then broadcasts the
-        # 'tonight + overnight' digest to the Free/Pro channels.
-        _scheduler.add_job(
-            _nightly_digest_job,
-            CronTrigger(hour=18, minute=30),
-            id="nightly-digest",
-            replace_existing=True,
-            misfire_grace_time=1800,
-        )
         # Nightly results sweep -- 02:00 UTC, catches late finishers from prior day.
         _scheduler.add_job(
             _nightly_results_job,
@@ -647,8 +611,8 @@ def get_scheduler() -> AsyncIOScheduler:
         )
         logger.info(
             "Scheduler configured for %d sync times + kickoff alerts every 60 min "
-            "(06:00-00:00 UTC) + morning digest 07:30 UTC + evening digest 18:30 UTC "
-            "+ nightly results 02:00 UTC",
+            "(06:00-00:00 UTC) + morning digest 07:30 UTC + advisory cache 08:30 UTC "
+            "+ tomorrow presync+digest 18:00 UTC + nightly results 02:00 UTC",
             len(settings.sync_times_list),
         )
     return _scheduler
