@@ -588,7 +588,7 @@ export default function BetTable({ bets, summary, isPro = true, onUpgrade, onRef
         </div>
         <p className="text-sm font-semibold text-[var(--text-h)]">No picks tracked yet</p>
         <p className="text-xs text-[var(--text)] opacity-75 max-w-xs">
-          Single picks are tracked automatically each sync. To add an ACCA, go to the <span className="font-semibold text-[var(--accent)]">Value Bets</span> tab and tap <span className="font-semibold">Track Acca</span>.
+          Single picks are tracked automatically each sync.
         </p>
       </div>
     )

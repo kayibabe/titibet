@@ -208,6 +208,15 @@ async def build_acca_candidates(
     # Per-leg errors compound — the bar for evidence is higher than for singles.
     rows = [(sig, fix) for sig, fix in rows if sig.dual_agreement != "Bayesian Only"]
 
+    # BOS gate for Over-goals ACCA legs: stable/defensive fixture (bos_passed=True)
+    # contradicts an Over-goals pick. Compounding per-leg errors makes this
+    # constraint more important in ACCA context than in singles.
+    _BOS_OVER_MKTS = {"Home Over 0.5", "Away Over 0.5", "Over 1.5", "Over 2.5",
+                      "Home Over 1.5", "Away Over 1.5"}
+    rows = [(sig, fix) for sig, fix in rows if not (
+        sig.bos_passed and sig.market in _BOS_OVER_MKTS
+    )]
+
     # Best signal per fixture
     best: dict[int, tuple[Signal, Fixture]] = {}
     for sig, fix in rows:

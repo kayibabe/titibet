@@ -42,13 +42,6 @@ export async function fetchSignalExplanation(fixtureId, market) {
   return res.json()
 }
 
-export async function fetchAccumulators({ date } = {}) {
-  const params = new URLSearchParams()
-  if (date) params.set('date', date)
-  const res = await apiFetch(`/api/accumulators?${params}`)
-  if (!res.ok) throw new Error(`Accumulators fetch failed: ${res.status}`)
-  return res.json()
-}
 
 export async function computeSignals(date) {
   const res = await apiFetch(`${BASE}/compute`, {

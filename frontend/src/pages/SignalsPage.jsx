@@ -4,8 +4,6 @@ import { useSignals } from '../store/useSignals'
 import { computeSignals, fetchSignals } from '../api/signals'
 import { syncData, fetchBets } from '../api/tracker'
 import SignalCard from '../components/signals/SignalCard'
-import AccumulatorLegCard, { ACCUMULATOR_TIERS } from '../components/signals/ValueBetCard'
-import { fetchAccumulators } from '../api/signals'
 import TrackModal from '../components/tracker/TrackModal'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import AIAdvisorPanel from '../components/signals/AIAdvisorPanel'
@@ -131,144 +129,8 @@ function SortPill({ label, active, onClick }) {
 
 const TABS = [
   { id: 'signals',   label: 'Signals',     icon: TrendingUp },
-  { id: 'valuebets', label: 'Value Bets',  icon: Zap        },
   { id: 'advisor',   label: 'AI Advisory', icon: Sparkles   },
 ]
-
-function ValueBetsTab({ date, isPro, onUpgrade }) {
-  const [selectedTier, setSelectedTier] = useState(2.0)
-  const [accumulators, setAccumulators] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-
-  useEffect(() => {
-    setLoading(true)
-    setError(null)
-    fetchAccumulators({ date })
-      .then(data => setAccumulators(data))
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false))
-  }, [date])
-
-  const currentAcc = accumulators?.tiers?.[selectedTier.toFixed(1)]
-
-  return (
-    <div className="space-y-5">
-      <p className="text-xs text-[var(--text)] opacity-70">
-        Pick a target odds level — we combine today's top-qualifying picks into an accumulator that reaches it using our model's fair-value prices.
-      </p>
-
-      {/* Tier selector */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-        {ACCUMULATOR_TIERS.map(({ odds, label, desc }) => {
-          const acc = accumulators?.tiers?.[odds.toFixed(1)]
-          const selected = selectedTier === odds
-          return (
-            <button
-              key={odds}
-              onClick={() => setSelectedTier(odds)}
-              title={desc}
-              className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border font-semibold transition-colors ${
-                selected
-                  ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]'
-                  : 'border-[var(--border)] text-[var(--text)] hover:border-[var(--accent)]/40 hover:text-[var(--text-h)] hover:bg-[var(--code-bg)]'
-              }`}
-            >
-              <span className="text-xl font-black tabular-nums leading-none">{label}</span>
-              {!loading && acc && (
-                <span className={`text-[10px] font-medium ${selected ? 'opacity-80' : 'opacity-60'}`}>
-                  {acc.leg_count} leg{acc.leg_count !== 1 ? 's' : ''}
-                </span>
-              )}
-              {loading && <span className="text-[10px] opacity-40">—</span>}
-            </button>
-          )
-        })}
-      </div>
-
-      {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
-      )}
-
-      {loading && (
-        <div className="space-y-2 animate-pulse">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="h-16 rounded-xl bg-[var(--border)]" />
-          ))}
-        </div>
-      )}
-
-      {!loading && !error && currentAcc && (
-        <>
-          {/* Accumulator header */}
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent)]/6">
-            <Zap size={14} className="text-[var(--accent)] shrink-0" />
-            <div className="flex-1 min-w-0">
-              <span className="text-sm font-semibold text-[var(--text-h)]">
-                {currentAcc.leg_count}-leg accumulator
-              </span>
-              <span className="text-[var(--text)] opacity-50 mx-2">·</span>
-              <span className="text-sm font-bold text-[var(--accent)] tabular-nums">
-                ~{currentAcc.combined_odds.toFixed(2)}x
-              </span>
-              <span className="text-xs text-[var(--text)] opacity-60 ml-1">combined odds</span>
-            </div>
-            {currentAcc.insufficient_picks && (
-              <span className="shrink-0 text-[10px] font-semibold text-amber-400 bg-amber-500/15 border border-amber-500/25 px-2 py-0.5 rounded">
-                Partial — not enough qualifying picks
-              </span>
-            )}
-          </div>
-
-          {/* Legs */}
-          {currentAcc.legs.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center gap-3 text-center">
-              <div className="w-12 h-12 rounded-full bg-[var(--code-bg)] flex items-center justify-center">
-                <Radio size={22} className="text-[var(--text)] opacity-40" />
-              </div>
-              <p className="text-sm font-semibold text-[var(--text-h)]">No qualifying picks for this tier</p>
-              <p className="text-xs text-[var(--text)] opacity-70 max-w-xs">
-                Try a lower odds target, or sync fresh data.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {currentAcc.legs.map((leg, i) =>
-                leg.locked ? (
-                  <div key={leg.signal_id} className="relative select-none">
-                    <div className="opacity-30 pointer-events-none">
-                      <AccumulatorLegCard leg={leg} index={i} />
-                    </div>
-                    <div className="absolute inset-0 flex items-center justify-center rounded-xl">
-                      <div className="flex items-center gap-2 rounded-lg bg-[var(--bg)] border border-[var(--border)] shadow-lg px-4 py-2 text-xs">
-                        <Zap size={12} className="text-[var(--accent)]" />
-                        <span className="font-semibold text-[var(--text-h)]">Pro only</span>
-                        <button onClick={onUpgrade} className="font-semibold text-[var(--accent)] hover:underline ml-1">
-                          Upgrade →
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <AccumulatorLegCard key={leg.signal_id} leg={leg} index={i} />
-                )
-              )}
-            </div>
-          )}
-
-          {!isPro && currentAcc.legs.some(l => l.locked) && (
-            <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/8 px-4 py-3 text-center text-sm">
-              <span className="text-slate-300">Showing first 2 legs. </span>
-              <button onClick={onUpgrade} className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">
-                Upgrade to Pro for full accumulators →
-              </button>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
 
 export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigateToTracker, initialFilter, onFilterConsumed }) {
   const { isPro } = useTier()
@@ -983,15 +845,6 @@ const reload = () => load(params)
           )
         })()}
       </div>
-
-      {/* ── VALUE BETS TAB ────────────────────────────────────────────────── */}
-      {activeTab === 'valuebets' && (
-        <ValueBetsTab
-          date={date}
-          isPro={isPro}
-          onUpgrade={onUpgrade}
-        />
-      )}
 
       {/* ── AI ADVISORY TAB ───────────────────────────────────────────────── */}
       <div className={activeTab === 'advisor' ? '' : 'hidden'}>

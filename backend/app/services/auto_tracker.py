@@ -117,6 +117,16 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
     existing_keys: set[tuple] = {
         (r.fixture_id, r.market_type) for r in existing_rows
     }
+    # Also include NULL-event_date rows (fixture lookup failed during ingestion) so
+    # a subsequent sync with a resolved date doesn't double-track the same pick.
+    null_date_rows = list(
+        (await db.execute(
+            select(TrackedBet.fixture_id, TrackedBet.market_type)
+            .where(TrackedBet.event_date.is_(None))
+            .where(TrackedBet.fixture_id.isnot(None))
+        )).all()
+    )
+    existing_keys |= {(r.fixture_id, r.market_type) for r in null_date_rows}
 
     inserted = 0
     for signal, fixture in rows:
@@ -171,6 +181,28 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
             and signal.dual_agreement == "Both"
             and (fixture.league_tier or 3) >= 3
             and (fixture.country or "").lower() in HO05_DATA_POOR_COUNTRIES
+        ):
+            continue
+
+        # BOS gate: stable/defensive fixture (bos_passed=True) contradicts any
+        # Over-goals pick — the model flags low scoring but we'd be betting on goals.
+        _OVER_MARKETS = {"Home Over 0.5", "Away Over 0.5", "Over 1.5", "Over 2.5",
+                         "Home Over 1.5", "Away Over 1.5"}
+        if signal.bos_passed and signal.market in _OVER_MARKETS:
+            continue
+
+        # Home Over 0.5 single-engine gate: Poisson Only at non-High confidence
+        # requires prob >= 0.80. Loss audit Jul-2026: 9 of 11 real-stake HO0.5
+        # losses were Poisson Only Medium at prob 0.69–0.79; no corresponding wins
+        # in that bucket justify the variance. Bayesian non-agreement is a strong
+        # contra-signal that the bookmaker prices embed information the Poisson
+        # model misses (formation, motivation, home-pitch familiarity).
+        prob_for_gate = max(signal.bayesian_prob or 0.0, signal.poisson_prob or 0.0)
+        if (
+            signal.market == "Home Over 0.5"
+            and signal.dual_agreement == "Poisson Only"
+            and signal.dual_confidence != "High"
+            and prob_for_gate < 0.80
         ):
             continue
 
