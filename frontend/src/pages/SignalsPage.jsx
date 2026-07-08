@@ -890,7 +890,7 @@ const reload = () => load(params)
 
         {!loading && displayedSignals.length > 0 && (() => {
           // Supplemental = Bayesian-only OR Both+Medium (Bayesian High but Poisson not grade A)
-          const isSupplemental = s => s.dual_agreement === 'Bayesian Only' || (s.dual_agreement === 'Both' && s.dual_confidence !== 'High')
+          const isSupplemental = s => s.dual_agreement === 'Bayesian Only'
           const primarySignals = displayedSignals.filter(s => !isSupplemental(s))
           const supplementalSignals = displayedSignals.filter(isSupplemental)
           // Free-tier limit applies across both sections combined, primary first
