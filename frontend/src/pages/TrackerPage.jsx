@@ -25,7 +25,6 @@ const ADVISOR_META = {
 const SOURCE_OPTIONS = [
   { value: '',         label: 'All Picks',    icon: null },
   { value: 'system',   label: 'System Picks', icon: Bot  },
-  { value: 'advisory', label: 'AI Advisory',  icon: Bot  },
   { value: 'manual',   label: 'Manual Picks', icon: User },
 ]
 
