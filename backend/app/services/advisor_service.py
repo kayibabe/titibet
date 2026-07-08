@@ -927,6 +927,13 @@ async def auto_track_acca_legs(
         legs = ticket.get("legs", [])
         combined_odds = ticket.get("combined_odds")
 
+        # Stable ticket ID: hash of sorted fixture IDs + date.
+        # Re-tracking the same ticket after a stale-odds void gives the same ID,
+        # so analytics can group legs correctly even across re-track cycles.
+        import hashlib as _hl
+        _fid_str = ",".join(sorted(str(leg.get("fixture_id", "")) for leg in legs if leg.get("fixture_id")))
+        acca_ticket_id = f"{target_date.isoformat()}_{_hl.md5((_fid_str + target_date.isoformat()).encode()).hexdigest()[:8]}"
+
         # Individual leg rows
         for leg in legs:
             fid = leg.get("fixture_id")
@@ -971,6 +978,7 @@ async def auto_track_acca_legs(
                 source_rule_label="AI Acca Leg (Auto)",
                 dual_confidence=ticket.get("confidence"),
                 result_status="Pending",
+                acca_ticket_id=acca_ticket_id,
             ))
             existing_keys.add(key)
             inserted += 1

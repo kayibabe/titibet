@@ -32,6 +32,7 @@ class TrackedBet(Base):
     result_status: Mapped[str] = mapped_column(String(16), default="Pending", index=True)
     profit_loss: Mapped[float] = mapped_column(Float, default=0.0)
     notes: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    acca_ticket_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
 
     # Closing Line Value
     # closing_odds: best market price for this market just before kickoff

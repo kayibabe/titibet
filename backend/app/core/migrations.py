@@ -61,6 +61,10 @@ COLUMN_MIGRATIONS = [
     ("signals", "is_candidate", "INTEGER NOT NULL DEFAULT 0"),
     # ── User activity tracking ────────────────────────────────────────────────
     ("users", "last_active_at", "DATETIME"),
+    # ── ACCA ticket grouping — one stable ID per advisory ticket per date ─────
+    # Allows analytics to group legs by ticket rather than by event_date alone,
+    # fixing incorrect hit-rate counts when multiple tickets exist on one date.
+    ("tracked_bets", "acca_ticket_id", "TEXT"),
 ]
 
 TABLE_MIGRATIONS: list[str] = [

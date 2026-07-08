@@ -433,6 +433,26 @@ async def cs_generation_allowed(db: AsyncSession) -> bool:
             return False
     except Exception:
         return False
+    # Check latest calibration snapshot: CS market Brier skill must meet the floor.
+    # If no CS-specific snapshot entry exists yet (early data), this check passes
+    # so the settled-bets gate remains the only hard gate until calibration data builds.
+    try:
+        snap_row = (await db.execute(_text("""
+            SELECT market_summary FROM calibration_snapshots
+            ORDER BY created_at DESC LIMIT 1
+        """))).scalar()
+        if snap_row:
+            import json as _json
+            markets = _json.loads(snap_row) if isinstance(snap_row, str) else (snap_row or [])
+            cs_skills = [
+                float(m.get("brier_skill", 0.0))
+                for m in markets
+                if str(m.get("market", "")).startswith(CS_MARKET_PREFIX)
+            ]
+            if cs_skills and max(cs_skills) < CS_MIN_BRIER_SKILL:
+                return False
+    except Exception:
+        pass  # calibration table not yet populated — don't block on it
     return True
 
 

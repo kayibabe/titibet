@@ -530,13 +530,16 @@ async def acca_performance(
     )
 
     # ── By leg count ───────────────────────────────────────────────────────
-    # Group by event_date; a ticket is won only when every leg is Won.
-    date_legs: dict = defaultdict(list)
+    # Group by (event_date, acca_ticket_id) so multiple advisory tickets on the
+    # same date are counted as separate tickets. Fall back to event_date string
+    # for legacy rows that predate the acca_ticket_id column.
+    ticket_legs: dict = defaultdict(list)
     for bet in bets:
-        date_legs[bet.event_date].append(bet)
+        ticket_key = (bet.event_date, getattr(bet, "acca_ticket_id", None) or str(bet.event_date))
+        ticket_legs[ticket_key].append(bet)
 
     lc_stats: dict[int, dict] = defaultdict(lambda: {"tickets": 0, "wins": 0})
-    for legs in date_legs.values():
+    for legs in ticket_legs.values():
         n = len(legs)
         lc_stats[n]["tickets"] += 1
         if all(lg.result_status == "Won" for lg in legs):
@@ -557,7 +560,7 @@ async def acca_performance(
 
     # ── Two-market combos ──────────────────────────────────────────────────
     combo_stats: dict[tuple, dict] = defaultdict(lambda: {"tickets": 0, "wins": 0})
-    for legs in date_legs.values():
+    for legs in ticket_legs.values():
         if len(legs) < 2:
             continue
         ticket_won = all(lg.result_status == "Won" for lg in legs)

@@ -26,7 +26,10 @@ from typing import Optional
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import LEAGUE_WATCHLIST
+from app.core.config import (
+    LEAGUE_WATCHLIST, DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES,
+    PROVISIONAL_LEAGUE_MIN_BETS,
+)
 from app.models.learning_proposal import LearningProposal
 
 logger = logging.getLogger("titibet.watch_guard")
@@ -96,6 +99,49 @@ async def _query_league_stats(db: AsyncSession, keyword: str) -> tuple[int, int,
 
     roi = (total_pnl / total_stk * 100) if total_stk else 0.0
     return int(total_n), int(total_wins), round(roi, 1)
+
+
+_GRAD_CFG = {
+    "min_bets_warn":    PROVISIONAL_LEAGUE_MIN_BETS,
+    "min_bets_act":     max(PROVISIONAL_LEAGUE_MIN_BETS * 2, 15),
+    "warn_roi_pct":     -15.0,
+    "suppress_roi_pct": -30.0,
+    "recover_roi_pct":  -10.0,
+}
+
+
+async def _graduated_leagues(db: AsyncSession) -> list[str]:
+    """
+    Return lowercase league names that have accumulated >= PROVISIONAL_LEAGUE_MIN_BETS
+    settled system bets but are not already covered by a LEAGUE_WATCHLIST keyword.
+    These leagues have passed the provisional cap and deserve automated monitoring.
+    """
+    rows = (await db.execute(text("""
+        SELECT LOWER(TRIM(league)) AS league_lc, COUNT(*) AS n
+        FROM tracked_bets
+        WHERE result_status IN ('Won', 'Lost')
+          AND league IS NOT NULL
+          AND TRIM(league) != ''
+          AND user_id IS NULL
+        GROUP BY LOWER(TRIM(league))
+        HAVING COUNT(*) >= :min_bets
+    """), {"min_bets": PROVISIONAL_LEAGUE_MIN_BETS})).all()
+
+    watchlist_keywords = list(LEAGUE_WATCHLIST.keys())
+    graduated = []
+    for row in rows:
+        lc = row[0]
+        if not lc or lc in ("accumulator", "unknown"):
+            continue
+        if lc in DISABLED_LEAGUES:
+            continue
+        if any(k in lc for k in OVER_GOALS_SUPPRESSED_LEAGUES):
+            continue
+        # Skip if any watchlist keyword matches this league name (already monitored).
+        if any(kw in lc for kw in watchlist_keywords):
+            continue
+        graduated.append(lc)
+    return graduated
 
 
 async def run_league_watch_guard(db: AsyncSession) -> list[LeagueStatus]:
@@ -190,6 +236,84 @@ async def run_league_watch_guard(db: AsyncSession) -> list[LeagueStatus]:
         else:
             msg_parts.append(f"OK (warn threshold {warn_roi:+.1f}%)")
             logger.debug("Watch guard OK: '%s'  ROI=%+.1f%%  bets=%d", keyword, roi, total_bets)
+
+        statuses.append(LeagueStatus(
+            keyword=keyword,
+            note=note,
+            total_bets=total_bets,
+            wins=wins,
+            roi_pct=roi,
+            state=state,
+            action_taken=action,
+            proposal_id=proposal_id,
+            message=" | ".join(msg_parts),
+        ))
+
+    # ── Graduated leagues (not in static LEAGUE_WATCHLIST) ───────────────────
+    # Any league that has exceeded PROVISIONAL_LEAGUE_MIN_BETS gets automatic
+    # monitoring with conservative default thresholds. This closes the gap where
+    # a league graduates from provisional status but is never explicitly watched.
+    for keyword in await _graduated_leagues(db):
+        cfg = _GRAD_CFG
+        note = f"Auto-graduated: >{PROVISIONAL_LEAGUE_MIN_BETS} system bets, no static watchlist entry."
+        min_warn   = cfg["min_bets_warn"]
+        min_act    = cfg["min_bets_act"]
+        warn_roi   = cfg["warn_roi_pct"]
+        supp_roi   = cfg["suppress_roi_pct"]
+        recover_roi = cfg["recover_roi_pct"]
+
+        total_bets, wins, roi = await _query_league_stats(db, keyword)
+        active_proposal = await _get_active_proposal(db, keyword)
+
+        state       = "OK"
+        action      = "none"
+        proposal_id = active_proposal.id if active_proposal else None
+        msg_parts   = [f"bets={total_bets}  wins={wins}  ROI={roi:+.1f}%  [auto-grad]"]
+
+        if active_proposal and total_bets >= min_act and roi >= recover_roi:
+            active_proposal.is_active = False
+            await db.commit()
+            state  = "RECOVERED"
+            action = "reactivated"
+            proposal_id = active_proposal.id
+            logger.info("Watch guard (auto) RECOVERED: '%s'  ROI=%+.1f%%", keyword, roi)
+
+        elif active_proposal:
+            state = "SUPPRESSED"
+
+        elif total_bets >= min_act and roi <= supp_roi:
+            proposal = LearningProposal(
+                change_type=_CHANGE_TYPE,
+                target=keyword,
+                proposed_value=round(roi, 1),
+                rationale=(
+                    f"Watch guard auto-suppression (graduated): '{keyword}' has "
+                    f"{total_bets} bets with ROI={roi:+.1f}% (threshold={supp_roi:+.1f}%). {note}"
+                ),
+                confidence="Medium",
+                backtest_note=(
+                    f"{wins}/{total_bets} wins ({wins/total_bets*100:.0f}% WR)  "
+                    f"ROI={roi:+.1f}%  threshold={supp_roi:+.1f}%"
+                ),
+                is_active=True,
+            )
+            db.add(proposal)
+            await db.flush()
+            await db.commit()
+            state       = "SUPPRESSED"
+            action      = "suppressed"
+            proposal_id = proposal.id
+            logger.warning(
+                "Watch guard (auto) SUPPRESSED: '%s'  ROI=%+.1f%%  bets=%d  LP #%d",
+                keyword, roi, total_bets, proposal.id,
+            )
+
+        elif total_bets >= min_warn and roi <= warn_roi:
+            state = "WARNING"
+            logger.warning(
+                "Watch guard (auto) WARNING: '%s'  ROI=%+.1f%%  bets=%d/%d",
+                keyword, roi, total_bets, min_act,
+            )
 
         statuses.append(LeagueStatus(
             keyword=keyword,
