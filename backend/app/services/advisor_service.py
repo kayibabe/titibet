@@ -27,7 +27,7 @@ import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings, DUAL_HIGH_ODDS_CEILING
+from app.core.config import get_settings, DUAL_HIGH_ODDS_CEILING, OVER_GOALS_SUPPRESSED_LEAGUES, DISABLED_LEAGUES
 from app.models import Signal, Fixture
 from app.services.performance_intelligence import PerformanceWeights, compute_performance_weights
 
@@ -701,6 +701,17 @@ async def auto_track_advisor_picks(
                 continue
 
             sig, fix = pair
+
+            # Skip picks from suppressed leagues — mirrors auto_tracker suppression so
+            # zero-stake advisory rows don't inflate loss counts for disabled markets.
+            _league_lower = (fix.league or "").lower().strip()
+            if _league_lower in DISABLED_LEAGUES or "friendlies" in _league_lower:
+                continue
+            _OVER_ADV = {"Home Over 0.5", "Away Over 0.5", "Over 1.5", "Over 2.5",
+                         "Home Over 1.5", "Away Over 1.5"}
+            if market in _OVER_ADV and any(k in _league_lower for k in OVER_GOALS_SUPPRESSED_LEAGUES):
+                continue
+
             odds = sig.bayesian_best_odd
             if not odds or odds <= 1.0:
                 prob = sig.bayesian_prob or sig.poisson_prob
