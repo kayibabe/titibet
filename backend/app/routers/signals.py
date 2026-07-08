@@ -16,7 +16,7 @@ from app.core.config import (
     MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING,
     WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
     COPA_HO05_SUPPRESSED_LEAGUES, PROVISIONAL_LEAGUE_MIN_BETS,
-    is_womens_fixture,
+    is_womens_fixture, OVER25_SUPPRESSED_TIERS,
 )
 from app.models import Signal, Fixture, TrackedBet
 from app.models.odds import MarketSnapshot
@@ -368,6 +368,15 @@ async def list_signals(
                     & Signal.market.in_(_OVER_MKT_LIST)
                 )
             )
+
+    # Over 2.5 suppressed in Tier 3 leagues — 57.1% WR / -100% ROI on 14 live bets.
+    if OVER25_SUPPRESSED_TIERS:
+        query = query.where(
+            ~(
+                (Signal.market == "Over 2.5")
+                & Fixture.league_tier.in_(list(OVER25_SUPPRESSED_TIERS))
+            )
+        )
 
     # Away-goals suppression for leagues with structurally poor away-scoring reliability.
     if AWAY_GOALS_SUPPRESSED_LEAGUES:

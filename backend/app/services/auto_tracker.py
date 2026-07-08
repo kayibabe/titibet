@@ -34,7 +34,7 @@ from app.models.user import User as _User  # noqa: F401 — registers users tabl
 from app.core.config import (
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
     WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
-    DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES,
+    DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES, OVER25_SUPPRESSED_TIERS,
     is_womens_fixture,
 )
 from app.services.acca_builder import build_acca_candidates, build_accumulator
@@ -144,6 +144,8 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         if signal.market in {"Home Over 0.5", "Away Over 0.5", "Over 1.5", "Over 2.5"}:
             if any(k in league_lower for k in OVER_GOALS_SUPPRESSED_LEAGUES):
                 continue
+        if signal.market == "Over 2.5" and fixture.league_tier in OVER25_SUPPRESSED_TIERS:
+            continue
 
         odds = signal.bayesian_best_odd
         if not odds or odds <= 1.01:

@@ -738,6 +738,11 @@ COPA_HO05_SUPPRESSED_LEAGUES: frozenset[str] = frozenset({
     "copa mx",
 })
 
+# League tiers where Over 2.5 signals are suppressed system-wide.
+# Tier 3 Over 2.5 shows 57.1% WR and -100% ROI across 14 live bets (Jul 2026).
+# Tier 1 and Tier 2 remain unaffected — Tier 2 Over 2.5 is 5W/0L at +71% ROI.
+OVER25_SUPPRESSED_TIERS: frozenset[int] = frozenset({3})
+
 # Leagues where away-scoring signals (Away Over 0.5/1.5) are surgically suppressed.
 # These competitions show unreliable away-goal patterns that the Poisson/Bayesian
 # models overestimate — typically low-tier Argentine/South American leagues with

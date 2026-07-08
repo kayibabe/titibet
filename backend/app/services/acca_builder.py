@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Signal, Fixture
 from app.core.config import (
     DISABLED_MARKETS, DISABLED_LEAGUES,
-    OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
+    OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES, OVER25_SUPPRESSED_TIERS,
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS,
     HO05_DATA_POOR_COUNTRIES, ACCA_OVER25_UNKNOWN_TIER_CEILING,
     COPA_HO05_SUPPRESSED_LEAGUES,
@@ -116,6 +116,13 @@ async def build_acca_candidates(
             query = query.where(
                 ~(func.lower(func.trim(Fixture.league)).contains(lk) & Signal.market.in_(_AWAY))
             )
+    if OVER25_SUPPRESSED_TIERS:
+        query = query.where(
+            ~(
+                (Signal.market == "Over 2.5")
+                & Fixture.league_tier.in_(list(OVER25_SUPPRESSED_TIERS))
+            )
+        )
 
     rows = (await db.execute(query)).all()
 
