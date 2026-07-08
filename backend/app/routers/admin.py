@@ -788,3 +788,32 @@ async def trigger_watchguard(
             for s in statuses
         ],
     }
+
+
+@router.post("/sync/trigger")
+async def trigger_sync(
+    run_date: Optional[str] = Query(None, description="ISO date to sync (default: today)"),
+    morning_extras: bool = Query(False, description="Run advisory cache + ACCA + morning digest"),
+    evening_extras: bool = Query(False, description="Run tomorrow pre-sync + digests"),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Manually fire sync_and_compute for a date.
+    Runs ingestion → signal compute → settlement → self-learning pipelines.
+    Useful for on-demand recovery or schedule testing.
+    """
+    import asyncio
+    from datetime import date as _date
+    from app.scheduler import sync_and_compute
+
+    target = _date.fromisoformat(run_date) if run_date else _date.today()
+    task = asyncio.create_task(
+        sync_and_compute(target, morning_extras=morning_extras, evening_extras=evening_extras)
+    )
+    return {
+        "status": "triggered",
+        "date": str(target),
+        "morning_extras": morning_extras,
+        "evening_extras": evening_extras,
+        "note": "Running in background — check server logs for progress.",
+    }

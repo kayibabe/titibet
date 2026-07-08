@@ -144,15 +144,6 @@ async def lifespan(app: FastAPI):
 
         _asyncio.create_task(_force_sync_today())
 
-    # One-shot manual trigger for the evening digest, used to verify the broadcast
-    # outside its 18:30 UTC schedule. Gated by an env flag so it only fires when
-    # explicitly requested: set RUN_DIGEST_ON_STARTUP=true, deploy, then unset.
-    # Runs in the background so it never blocks startup or health checks.
-    if os.getenv("RUN_DIGEST_ON_STARTUP", "").lower() in ("1", "true", "yes"):
-        import asyncio as _asyncio
-        from app.scheduler import _nightly_digest_job
-        logger.info("RUN_DIGEST_ON_STARTUP set — firing one-shot evening digest")
-        _asyncio.create_task(_nightly_digest_job())
     yield
     scheduler.shutdown(wait=False)
     logger.info("TiTiBet shut down.")

@@ -51,7 +51,7 @@ ACCA_BUILDER: dict = {
     "models": {
         "claude":   "claude-sonnet-5",
         "gemini":   "gemini-2.0-flash",
-        "cerebras": "llama3.3-70b",
+        "cerebras": "llama3.1-70b",
         "groq":     "llama-3.3-70b-versatile",
         "mistral":  "mistral-small-latest",
     },
@@ -105,7 +105,7 @@ ADVISORS: list[dict] = [
         "models": {
             "claude":   "claude-sonnet-5",
             "gemini":   "gemini-2.0-flash",
-            "cerebras": "llama3.3-70b",
+            "cerebras": "llama3.1-70b",
             "groq":     "llama-3.1-8b-instant",          # same pool as Skeptic — 70b-versatile quota exhausts first
             "mistral":  "mistral-small-latest",
         },
@@ -135,7 +135,7 @@ ADVISORS: list[dict] = [
         "models": {
             "claude":   "claude-sonnet-5",
             "gemini":   "gemini-2.0-flash",
-            "cerebras": "llama3.3-70b",
+            "cerebras": "llama3.1-70b",
             "groq":     "llama-3.1-8b-instant",          # same pool as Skeptic — 70b-versatile quota exhausts first
             "mistral":  "mistral-small-latest",
         },
@@ -165,7 +165,7 @@ ADVISORS: list[dict] = [
         "models": {
             "claude":   "claude-sonnet-5",
             "gemini":   "gemini-2.0-flash",
-            "cerebras": "llama3.3-70b",
+            "cerebras": "llama3.1-70b",
             "groq":     "llama-3.1-8b-instant",       # 8B model = separate rate-limit pool from 70B
             "mistral":  "mistral-small-latest",
         },
@@ -426,13 +426,9 @@ async def _call_claude(advisor: dict, context: str, api_key: str) -> dict | None
             api_key=api_key,
             base_url="https://api.anthropic.com",  # ignore ANTHROPIC_BASE_URL from Claude Code env
         )
-        # No assistant prefill — the Sonnet 4.6/5 family rejects it with a 400.
-        # Thinking stays off: this is a fast structured-selection task and
-        # thinking tokens would eat into max_tokens.
         msg = await client.messages.create(
             model=advisor["models"]["claude"],
             max_tokens=3000,
-            thinking={"type": "disabled"},
             system=advisor["system"],
             messages=[
                 {"role": "user", "content": f"{advisor['task']}\n\n{context}"},
@@ -444,19 +440,25 @@ async def _call_claude(advisor: dict, context: str, api_key: str) -> dict | None
             logger.info("Claude returned empty text for %s — falling back", advisor["id"])
             return None
         return _extract_json(text)
-    except anthropic.APIError as exc:
-        body_msg = ""
-        if isinstance(exc.body, dict):
-            body_msg = exc.body.get("error", {}).get("message", "")
-        if _is_quota_error(body_msg):
-            logger.info("Claude quota — falling back (advisor=%s)", advisor["id"])
-            return None
-        logger.warning("Claude error for %s: HTTP %s — %s", advisor["id"], exc.status_code, body_msg)
-        return _err(f"claude_{exc.status_code}", f"Claude error: {body_msg[:120] or str(exc)[:120]}")
+    except anthropic.APITimeoutError:
+        logger.info("Claude timeout — falling back (advisor=%s)", advisor["id"])
+        return None
     except anthropic.AuthenticationError:
         return _err("claude_auth", "Anthropic API key is invalid.")
     except anthropic.RateLimitError:
         return _err("claude_429", "Claude rate limit — retry shortly.")
+    except anthropic.APIStatusError as exc:
+        body_msg = ""
+        if isinstance(exc.body, dict):
+            body_msg = exc.body.get("error", {}).get("message", "")
+        if _is_quota_error(body_msg):
+            logger.info("Claude quota (HTTP %s) — falling back (advisor=%s)", exc.status_code, advisor["id"])
+            return None
+        logger.warning("Claude error for %s: HTTP %s — %s", advisor["id"], exc.status_code, body_msg)
+        return _err(f"claude_{exc.status_code}", f"Claude error: {body_msg[:120] or str(exc)[:120]}")
+    except anthropic.APIError as exc:
+        logger.warning("Claude API error for %s: %s", advisor["id"], exc)
+        return None
     except json.JSONDecodeError:
         return _err("claude_json", "Claude returned malformed JSON.")
     except Exception as exc:
