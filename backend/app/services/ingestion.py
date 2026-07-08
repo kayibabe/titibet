@@ -400,11 +400,11 @@ async def sync_date(
             len(_leagues_to_fetch), _max_league_calls, _n_fresh_selected,
         )
 
-        # Always run the date-paged fetch first: free-plan gives 3 pages ≈ 30
-        # random fixtures as a reliable baseline regardless of league-cache state.
-        # Per-league fetch supplements this with targeted coverage for specific
-        # leagues. Both results are merged; deduplication keeps the last row for
-        # any (fixture, bookmaker, market, selection) tuple.
+        # Date-paged fetch first: on a paid plan with MAX_ODDS_PAGES=100 this
+        # covers all fixtures on the date (typically 40+ pages on busy days).
+        # Per-league fetch runs after as a safety net for any fixture missed by
+        # the date-paged run. Both are merged; deduplication keeps the last row
+        # for any (fixture, bookmaker, market, selection) tuple.
         market_rows_api = await api_client.fetch_markets(date_str)
         if _leagues_to_fetch:
             league_rows = await api_client.fetch_markets_by_leagues(date_str, _leagues_to_fetch)

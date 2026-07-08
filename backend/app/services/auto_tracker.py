@@ -6,9 +6,10 @@ Idempotent: existing rows are skipped.  Called from sync_and_compute() so
 auto-tracking runs every sync cycle regardless of whether anyone visits the
 Signals page.
 
-Qualifying signals:
-  - High confidence + Both agreement  (dual signal)
-  - Home Over 0.5 + Poisson Only + rule_strong  (Poisson signal)
+Qualifying signals (everything served to subscribers):
+  - Any signal with is_candidate=False and dual_agreement != "Contradiction"
+  - Suppression guards applied (DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES,
+    women's league filters, HO05_DATA_POOR_COUNTRIES, DUAL_HIGH_ODDS_CEILING)
 
 ACCA auto-tracking (auto_track_acca_signals):
   - Builds a signal-model ACCA from all qualifying candidates each sync cycle.
@@ -16,6 +17,7 @@ ACCA auto-tracking (auto_track_acca_signals):
     earlier system_acca ticket are eligible — guaranteeing zero leg overlap
     across multiple ACCA tickets for the same date.
   - Minimum 2 unused candidates required; target odds 4.0, fallback 3.5, 3.0.
+  - Defers to advisor-path ACCA (acca_advisory_system) when one already exists.
 """
 from __future__ import annotations
 
@@ -40,11 +42,6 @@ from app.services.acca_builder import build_acca_candidates, build_accumulator
 logger = logging.getLogger("titibet.auto_tracker")
 
 FLAT_STAKE = 50_000.0
-
-# Minimum probability both engines must reach for a Both+High pick to be
-# auto-tracked. Both+High signals near the 0.70 floor show weaker edge
-# (market already fairly priced); raising the bar to 0.73 filters these out.
-DUAL_HIGH_MIN_PROB = 0.73
 
 
 async def _load_kelly_multipliers(db: AsyncSession) -> dict[str, float]:
@@ -86,30 +83,18 @@ def _grade(q: float | None) -> str | None:
 async def auto_track_date(db: AsyncSession, run_date: date) -> int:
     """
     Create system TrackedBet rows for all qualifying signals on run_date.
+    Tracks every signal served to subscribers: is_candidate=False and not a
+    Contradiction (engines actively disagree → no bet).
     Returns count of newly inserted bets.
     """
-    from sqlalchemy import or_, and_
-
-    # Load qualifying signals for this date
+    # Load all non-candidate, non-contradiction signals for this date
     rows = list(
         (await db.execute(
             select(Signal, Fixture)
             .join(Fixture, Signal.fixture_id == Fixture.id)
             .where(Fixture.event_date == run_date)
             .where(Signal.is_candidate == False)  # noqa: E712
-            .where(
-                or_(
-                    and_(
-                        Signal.dual_confidence == "High",
-                        Signal.dual_agreement == "Both",
-                    ),
-                    and_(
-                        Signal.market == "Home Over 0.5",
-                        Signal.dual_agreement == "Poisson Only",
-                        Signal.poisson_rule_strong == True,  # noqa: E712
-                    ),
-                )
-            )
+            .where(Signal.dual_agreement != "Contradiction")
         )).all()
     )
 
@@ -169,22 +154,6 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             continue
 
-        # Both+High minimum probability gate — both engines must clear 0.73.
-        # Picks near the 0.70 floor tend to be fairly priced by the market;
-        # the extra 3pp screens out low-edge dual signals.
-        if (
-            signal.dual_confidence == "High"
-            and signal.dual_agreement == "Both"
-        ):
-            b_prob = signal.bayesian_prob or 0.0
-            p_prob = signal.poisson_prob or 0.0
-            if min(b_prob, p_prob) < DUAL_HIGH_MIN_PROB:
-                logger.debug(
-                    "auto_track: skip %s %s — Both+High probs %.3f/%.3f < %.2f gate",
-                    fixture.home_team, signal.market, b_prob, p_prob, DUAL_HIGH_MIN_PROB,
-                )
-                continue
-
         # Skip women's league over-goals picks — models calibrated on men's
         # football systematically overestimate scoring in women's fixtures.
         if (
@@ -205,18 +174,33 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             continue
 
-        is_dual = signal.dual_confidence == "High" and signal.dual_agreement == "Both"
+        agreement = signal.dual_agreement or ""
+        confidence = signal.dual_confidence or ""
         match_name = f"{fixture.home_team} vs {fixture.away_team}"
 
+        if agreement == "Both" and confidence == "High":
+            source_rule_key   = "system_dual"
+            source_rule_label = "Dual Signal (High+Both)"
+        elif agreement == "Both":
+            source_rule_key   = "system_dual"
+            source_rule_label = f"Dual Signal ({confidence or 'Medium'}+Both)"
+        elif agreement == "Poisson Only":
+            source_rule_key   = "system_auto"
+            source_rule_label = "System Poisson Pick"
+        elif agreement == "Bayesian Only":
+            source_rule_key   = "system_auto"
+            source_rule_label = "System Bayesian Pick"
+        else:
+            source_rule_key   = "system_auto"
+            source_rule_label = "System Auto-Pick"
+
         # Apply active kelly_fraction_adj multiplier (from learning proposals).
-        # E.g. a 0.5× multiplier for "High" confidence halves the dual stake.
-        conf = signal.dual_confidence or "Medium"
-        kelly_mult = kelly_mults.get(conf, 1.0)
+        kelly_mult = kelly_mults.get(confidence, 1.0)
         stake = round(FLAT_STAKE * kelly_mult)
         if stake != FLAT_STAKE:
             logger.debug(
                 "auto_track: stake for %s %s confidence = %.0f (%.2f× of %.0f)",
-                signal.market, conf, stake, kelly_mult, FLAT_STAKE,
+                signal.market, confidence, stake, kelly_mult, FLAT_STAKE,
             )
 
         bet = TrackedBet(
@@ -231,8 +215,8 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
             odds=odds,
             stake=stake,
             recommended_stake_pct=signal.dual_recommended_stake_pct,
-            source_rule_key="system_dual" if is_dual else "system_auto",
-            source_rule_label="Dual Signal (High+Both)" if is_dual else "System Auto-Pick",
+            source_rule_key=source_rule_key,
+            source_rule_label=source_rule_label,
             signal_grade=_grade(signal.dual_quality_score),
             dual_confidence=signal.dual_confidence,
             dual_agreement=signal.dual_agreement,

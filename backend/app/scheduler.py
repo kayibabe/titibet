@@ -31,7 +31,7 @@ from app.core.database import AsyncSessionLocal
 from app.models import TrackedBet, Fixture
 from app.services import ingestion
 from app.services.signal_engine import compute_signals_for_date
-from app.services.auto_tracker import auto_track_date
+from app.services.auto_tracker import auto_track_date, auto_track_acca_signals
 from app.services.settlement import settle_bets_for_date, FINAL_STATUSES
 from app.services.loss_analysis_agent import run_loss_analysis_pipeline
 from app.services.strategy_pipeline import run_strategy_pipeline, check_suppression_reactivations
@@ -191,8 +191,9 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                 except Exception:
                     logger.exception("Auto-tracker failed for %s — continuing normally", run_date)
                 # ACCA tracking runs in morning_extras (first daily sync) via auto_track_acca_legs.
-                # The signal-model fallback (system_acca) is disabled — it produced duplicate
-                # tickets before the advisory cache was warmed.
+                # The signal-model fallback (auto_track_acca_signals) runs at the END of
+                # morning_extras — after the advisor ACCA has had a chance to build tickets,
+                # so its deference guard correctly skips it when the advisor succeeded.
                 # Settle every pending bet with a final fixture (any event_date), not only run_date.
                 n_settled = (await settle_bets_for_date(db, None))["settled"]
                 logger.info(
@@ -335,6 +336,16 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                                 )
                     except Exception:
                         logger.exception("Advisory cache/ACCA failed — continuing normally")
+                    # Signal-model ACCA fallback: builds a ticket from signal candidates
+                    # when the advisor produced no accumulators. The deference guard inside
+                    # auto_track_acca_signals skips silently when acca_advisory_system rows
+                    # already exist for this date — so no duplicates are possible.
+                    try:
+                        n_signal_acca = await auto_track_acca_signals(db, run_date)
+                        if n_signal_acca:
+                            logger.info("Signal-model ACCA fallback: %d rows for %s", n_signal_acca, run_date)
+                    except Exception:
+                        logger.exception("Signal-model ACCA fallback failed — continuing normally")
                     try:
                         n_sent = await push_morning_digest(db)
                         if n_sent:

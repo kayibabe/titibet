@@ -75,9 +75,9 @@ SHARP_BOOKMAKER_NAMES: frozenset = frozenset({"Pinnacle", "Bet365"})
 TARGET_BOOKMAKER_NAMES: frozenset = frozenset({"William Hill"})
 
 # Hard cap on odds pages fetched per sync. Each page ≈ 10 fixtures, 1 API request.
-# Default 3 (~30 fixtures) is far too low for busy days (400+ fixtures), which left
-# most fixtures — including the ones we actually want — with no odds and therefore no
-# signals. Tunable via MAX_ODDS_PAGES env so coverage can be raised against quota.
+# Free-plan default was 3 (~30 fixtures). Set MAX_ODDS_PAGES=100 in .env on a paid
+# plan — the API's actual page count (typically 40 on busy days) drives real usage;
+# 100 just ensures we never stop early.
 MAX_ODDS_PAGES = int(os.getenv("MAX_ODDS_PAGES", "3"))
 
 # Cache location. Defaults to backend/.cache for local dev, but on Fly it MUST point
