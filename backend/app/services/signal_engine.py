@@ -714,10 +714,15 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             p = poi_by_market.get(market)
 
             # Prefer the keyed Poisson lookup (covers markets not in poi_by_market
-            # because they came in via a different rule_key, e.g. cs00o15 -> Over 1.5)
+            # because they came in via a different rule_key, e.g. cs00o15 -> Over 1.5).
+            # Only override when the canonical rule passes, or no passing rule was found yet —
+            # a passing cascade result (e.g. cs00extreme) must never be replaced by a
+            # failing canonical rule (e.g. over15 on a lopsided-match fixture).
             p_key = MARKET_TO_POISSON_KEY.get(market)
             if p_key and p_key in poi_by_key:
-                p = poi_by_key[p_key]
+                keyed = poi_by_key[p_key]
+                if p is None or keyed.rule_pass:
+                    p = keyed
 
             # Filter mixed signals to only those that implicate this specific market.
             # Fixture-wide contradictions (e.g. O2.5 vs U3.5) must not contaminate
