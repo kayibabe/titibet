@@ -17,7 +17,7 @@ ACCA auto-tracking (auto_track_acca_signals):
     earlier system_acca ticket are eligible — guaranteeing zero leg overlap
     across multiple ACCA tickets for the same date.
   - Minimum 2 unused candidates required; target odds 4.0, fallback 3.5, 3.0.
-  - Defers to advisor-path ACCA (acca_advisory_system) when one already exists.
+  - Defers to advisor-path ACCA (acca_leg_system) when leg rows already exist.
 """
 from __future__ import annotations
 
@@ -250,17 +250,17 @@ async def auto_track_acca_signals(db: AsyncSession, run_date: date) -> int:
     Returns count of new TrackedBet rows inserted (0 or 1 combined row).
     """
     # Defer to the advisor path if it has already run OR is scheduled to run.
-    # Check 1: acca_advisory_system rows already exist (08:30 cache job already ran).
+    # Check 1: acca_leg_system rows already exist (evening_extras job already ran).
     advisor_acca_count = await db.scalar(
         select(func.count()).select_from(TrackedBet).where(
             TrackedBet.event_date == run_date,
-            TrackedBet.source_rule_key == "acca_advisory_system",
+            TrackedBet.source_rule_key == "acca_leg_system",
             TrackedBet.user_id.is_(None),
         )
     )
     if advisor_acca_count:
         logger.info(
-            "Auto-ACCA %s: advisor-path ACCA already exists (%d row(s)) — skipping signal-model ticket",
+            "Auto-ACCA %s: advisor-path ACCA legs already exist (%d row(s)) — skipping signal-model ticket",
             run_date, advisor_acca_count,
         )
         return 0

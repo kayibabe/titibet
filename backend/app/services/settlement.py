@@ -219,7 +219,7 @@ async def settle_acca_bets(db: AsyncSession) -> dict:
 
     q = select(TrackedBet).where(
         TrackedBet.result_status == "Pending",
-        TrackedBet.source_rule_key.in_(["acca_advisory", "acca_advisory_system"]),
+        TrackedBet.source_rule_key == "acca_advisory",
     )
     result = await db.execute(q)
     acca_bets: list[TrackedBet] = list(result.scalars().all())

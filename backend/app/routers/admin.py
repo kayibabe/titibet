@@ -699,9 +699,8 @@ async def retrack_advisory_acca(
     """
     Force-replace a date's system acca tracking rows and optionally user rows.
 
-    Always deletes acca_leg_system / acca_advisory_system rows (user_id=NULL)
-    for the date, then re-runs auto_track_acca_legs() against the current
-    advisory cache.
+    Always deletes acca_leg_system rows (user_id=NULL) for the date, then
+    re-runs auto_track_acca_legs() against the current advisory cache.
 
     replace_user_bets=true additionally purges all users' acca_advisory rows
     for the date so they see the new acca as un-tracked and can re-add it.

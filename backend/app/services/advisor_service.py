@@ -882,12 +882,13 @@ async def auto_track_acca_legs(
     replace:     bool = False,
 ) -> int:
     """
-    Create system-level TrackedBet rows (user_id=None) for ALL acca tickets on a
-    date — one leg row per fixture+market, one combined row per ticket fingerprint.
+    Create system-level TrackedBet rows (user_id=None) for ALL acca leg bets on a
+    date — one leg row per fixture+market.  No combined accumulator row is written;
+    each leg is tracked individually so per-market stats stay clean.
 
     Accepts either a single acca dict (backward compat) or a list of ticket dicts.
     Idempotent by default: skips legs already tracked for this date.
-    replace=True wipes all system acca rows first (emergency reset).
+    replace=True wipes all system acca leg rows first (emergency reset).
 
     Returns total count of new rows inserted.
     """
@@ -904,7 +905,7 @@ async def auto_track_acca_legs(
             text(
                 "DELETE FROM tracked_bets "
                 "WHERE event_date = :d AND user_id IS NULL "
-                "AND source_rule_key IN ('acca_leg_system','acca_advisory_system')"
+                "AND source_rule_key = 'acca_leg_system'"
             ),
             {"d": target_date.isoformat()},
         )
@@ -915,7 +916,7 @@ async def auto_track_acca_legs(
                 select(TrackedBet.fixture_id, TrackedBet.market_type)
                 .where(
                     TrackedBet.event_date == target_date,
-                    TrackedBet.source_rule_key.in_(["acca_leg_system", "acca_advisory_system"]),
+                    TrackedBet.source_rule_key == "acca_leg_system",
                 )
             )).all()
         )
@@ -981,42 +982,6 @@ async def auto_track_acca_legs(
                 acca_ticket_id=acca_ticket_id,
             ))
             existing_keys.add(key)
-            inserted += 1
-
-        # Combined row — one per ticket, deduped by fingerprint
-        fp = _acca_fingerprint(legs)
-        fp_tag = f"Accumulator|{fp}"
-        combo_exists = await db.scalar(
-            select(TrackedBet.id).where(
-                TrackedBet.source_rule_key == "acca_advisory_system",
-                TrackedBet.event_date == target_date,
-                TrackedBet.user_id.is_(None),
-                TrackedBet.selection_name == fp_tag,
-            )
-        )
-        if not combo_exists:
-            leg_summary = "\n".join(
-                f"{i+1}. {leg.get('home_team','')} vs {leg.get('away_team','')} · "
-                f"{leg.get('market','')} @ {float(leg.get('odd') or 0):.2f}"
-                for i, leg in enumerate(legs)
-            )
-            db.add(TrackedBet(
-                user_id=None,
-                fixture_id=None,
-                bookmaker="AI Acca",
-                event_date=target_date,
-                match_name=f"AI Acca · {len(legs)} leg{'s' if len(legs) != 1 else ''}",
-                league=None,
-                market_type="Accumulator",
-                selection_name=fp_tag,
-                odds=combined_odds,
-                stake=50_000.0,
-                source_rule_key="acca_advisory_system",
-                source_rule_label=f"{ticket.get('rank_label') or 'AI Acca of the Day'} (System)",
-                dual_confidence=ticket.get("confidence"),
-                notes=json.dumps({"legs": legs, "leg_summary": leg_summary}),
-                result_status="Pending",
-            ))
             inserted += 1
 
     if inserted:
