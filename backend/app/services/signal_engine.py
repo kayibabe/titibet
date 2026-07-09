@@ -382,7 +382,9 @@ async def _get_underperforming_leagues(
         league_lower = (league or "").lower().strip()
         # Never auto-suppress Tier 1 leagues — they may share names across countries
         # (e.g. "Premier League" = England + Ethiopia) and are too important to block.
-        if league_lower in TIER_1_LEAGUES:
+        # Use substring check (same as get_league_tier()) — DB names like "UEFA Europa
+        # Conference League" contain the keyword "conference league" but are not equal to it.
+        if any(k in league_lower for k in TIER_1_LEAGUES):
             continue
         roi = (total_pl / total_stake) * 100 if total_stake else -100.0
         if roi < min_roi_pct:
