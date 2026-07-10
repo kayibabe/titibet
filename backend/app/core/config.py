@@ -552,7 +552,11 @@ BAYESIAN_KELLY_P_VARIANCE: float = 0.05
 BAYESIAN_KELLY_PRIOR_VARIANCE: float = 0.10
 
 MARKET_MIN_ODDS: dict = {
-    "Over 1.5":        1.30,
+    # 2026-07-10: raised 1.30 → 1.50. At odds < 1.50 the market implies > 67%
+    # no-vig probability; Medium Bayesian confidence (55-70%) cannot beat that.
+    # After EV gating was removed (2026-07-02) the 1.30 floor admitted anti-value
+    # signals (e.g. A Lyga @ 1.30, Belarus PL @ 1.56) where model prob < market prob.
+    "Over 1.5":        1.50,
     "Over 2.5":        1.55,
     "Under 2.5":       2.10,  # < 2.10 implies < 48% probability — no value at short Under 2.5
     # Recalibrated 2026-07-02: the old 1.70 floor came from an audit run while

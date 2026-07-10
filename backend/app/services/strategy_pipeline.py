@@ -132,12 +132,16 @@ async def run_signal_analyst(db: AsyncSession) -> PerformanceReport | None:
     """
     cutoff = date.today() - timedelta(days=ANALYSIS_WINDOW_DAYS)
 
+    # Exclude zero-stake advisory shadow rows (scout/strategist/skeptic) — each
+    # agent writes a separate row per signal, inflating counts by up to 3×.
+    _ADVISORY_KEYS = ("scout_pick", "strategist_pick", "skeptic_pick")
     rows = await db.execute(
         select(TrackedBet, Fixture)
         .outerjoin(Fixture, TrackedBet.fixture_id == Fixture.id)
         .where(
             TrackedBet.result_status.in_(["Won", "Lost"]),
             TrackedBet.event_date >= cutoff,
+            TrackedBet.source_rule_key.notin_(_ADVISORY_KEYS),
         )
     )
     pairs = rows.all()
@@ -388,12 +392,14 @@ async def run_risk_agent(
       - Clear underperformance: win rate >= 8pp below overall (market/league/confidence)
       - Directionally sound: proposed_value is a genuine tightening (lower Kelly, etc.)
     """
+    _ADVISORY_KEYS_BT = ("scout_pick", "strategist_pick", "skeptic_pick")
     cutoff = date.today() - timedelta(days=BACKTEST_WINDOW_DAYS)
     result = await db.execute(
         select(TrackedBet)
         .where(
             TrackedBet.result_status.in_(["Won", "Lost"]),
             TrackedBet.event_date >= cutoff,
+            TrackedBet.source_rule_key.notin_(_ADVISORY_KEYS_BT),
         )
     )
     all_bets: list[TrackedBet] = result.scalars().all()
@@ -605,12 +611,14 @@ async def check_suppression_reactivations(db: AsyncSession) -> int:
         # ── ROI-based reactivation: check post-suppression performance ────────
         # Query settled bets on this market placed AFTER the suppression was written.
         # Limit to REACTIVATION_LOOKBACK_BETS most recent bets for efficiency.
+        _ADVISORY_KEYS_RA = ("scout_pick", "strategist_pick", "skeptic_pick")
         bets_result = await db.execute(
             select(TrackedBet)
             .where(
                 TrackedBet.market_type == market,
                 TrackedBet.result_status.in_(["Won", "Lost"]),
                 TrackedBet.created_at >= created_at,
+                TrackedBet.source_rule_key.notin_(_ADVISORY_KEYS_RA),
             )
             .order_by(TrackedBet.created_at.desc())
             .limit(REACTIVATION_LOOKBACK_BETS)

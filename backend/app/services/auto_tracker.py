@@ -208,6 +208,18 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             continue
 
+        # Over 1.5 confidence gate: only track High-confidence signals.
+        # Jul-2026 audit: Medium-confidence Over 1.5 at 1.30–1.56 odds lands as
+        # structural negative EV — market no-vig (~67-77%) exceeds model prob
+        # (55-70%). High confidence (≥0.70) gives the model a realistic chance of
+        # beating the market. Medium Bayesian-Only Over 1.5 is not suppressed from
+        # signal generation (it informs pattern detection), only from auto-tracking.
+        if (
+            signal.market == "Over 1.5"
+            and signal.dual_confidence != "High"
+        ):
+            continue
+
         agreement = signal.dual_agreement or ""
         confidence = signal.dual_confidence or ""
         match_name = f"{fixture.home_team} vs {fixture.away_team}"

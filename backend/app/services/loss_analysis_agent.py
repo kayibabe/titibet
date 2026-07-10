@@ -545,12 +545,18 @@ async def _load_unanalysed_losses(
     """Load settled Lost bets that don't yet have a LossAnalysis row."""
     cutoff = date.today() - timedelta(days=lookback_days)
 
+    # Exclude zero-stake advisory shadow rows (scout_pick, strategist_pick,
+    # skeptic_pick). Each advisory agent writes a separate TrackedBet row per
+    # signal, which inflates loss counts by up to 3× for the same fixture.
+    # Stake > 0 keeps only real auto-tracked and manually-entered bets.
+    _ADVISORY_KEYS = ("scout_pick", "strategist_pick", "skeptic_pick")
     stmt = (
         select(TrackedBet, Fixture)
         .outerjoin(Fixture, TrackedBet.fixture_id == Fixture.id)
         .where(
             TrackedBet.result_status == "Lost",
             TrackedBet.event_date >= cutoff,
+            TrackedBet.source_rule_key.notin_(_ADVISORY_KEYS),
         )
         .order_by(TrackedBet.event_date.desc())
     )
@@ -729,9 +735,15 @@ async def run_loss_analysis_pipeline(
     logger.info("Threshold Tuner proposed %d changes", len(proposals))
 
     # ── Step 4: Backtest proposals ─────────────────────────────────────────
-    # Load all settled bets for backtesting
+    # Load all settled bets for backtesting — exclude advisory shadow rows
+    # (zero-stake scout/strategist/skeptic picks) so duplicate rows don't
+    # inflate loss counts and bias the backtest away from valid proposals.
+    _ADVISORY_KEYS_BT = ("scout_pick", "strategist_pick", "skeptic_pick")
     all_settled_result = await db.execute(
-        select(TrackedBet).where(TrackedBet.result_status.in_(["Won", "Lost"]))
+        select(TrackedBet).where(
+            TrackedBet.result_status.in_(["Won", "Lost"]),
+            TrackedBet.source_rule_key.notin_(_ADVISORY_KEYS_BT),
+        )
     )
     all_settled = list(all_settled_result.scalars().all())
 
