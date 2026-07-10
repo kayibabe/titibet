@@ -29,7 +29,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger(__name__)
 
 # Minimum completed fixtures with scores per league to justify fitting ZINB.
-_MIN_FIXTURES_FOR_ZINB: int = 20
+# Raised 20→40 after D1 backfill tripled the number of qualifying leagues and
+# pushed morning ZINB fitting from ~1h to 3h+. 40 fixtures still gives ZINB
+# enough data to converge while cutting the league count by roughly half.
+_MIN_FIXTURES_FOR_ZINB: int = 40
 # How far back (days) to pull historical fixtures for model fitting.
 _LOOKBACK_DAYS: int = 365
 
