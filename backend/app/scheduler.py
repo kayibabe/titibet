@@ -393,12 +393,6 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                             logger.info("Tomorrow digest: sent to %d channel(s) for %s", n_sent, tomorrow)
                     except Exception:
                         logger.exception("Tomorrow digest push failed — continuing normally")
-                    try:
-                        n_sent = await push_signal_digest(db)
-                        if n_sent:
-                            logger.info("Overnight digest: sent to %d channel(s)", n_sent)
-                    except Exception:
-                        logger.exception("Overnight digest push failed — continuing normally")
 
         except Exception:
             logger.exception("Scheduler error for %s", run_date)
@@ -672,9 +666,12 @@ def get_scheduler() -> AsyncIOScheduler:
     global _scheduler
     if _scheduler is None:
         _scheduler = AsyncIOScheduler(timezone="UTC")
-        # First sync = morning extras (advisory cache + ACCA + morning digest).
-        # Second sync = evening extras (tomorrow presync + digests).
-        # Remaining syncs = core ingest + settle only.
+        # First sync (04:00 UTC) = morning extras + tomorrow extras combined:
+        #   today ingestion + signals + advisory + ACCA + morning Telegram digest,
+        #   then immediately tomorrow ingestion + signals + advisory + ACCA +
+        #   tomorrow Telegram digest.  Both are built from the same fresh data so
+        #   Telegram and the web always show the same acca.
+        # Remaining syncs = core ingest + settle + learning pipelines only.
         for i, (hour, minute) in enumerate(settings.sync_times_list):
             _scheduler.add_job(
                 sync_and_compute,
@@ -682,7 +679,7 @@ def get_scheduler() -> AsyncIOScheduler:
                 id=f"sync-{hour:02d}{minute:02d}",
                 replace_existing=True,
                 misfire_grace_time=300,
-                kwargs={"morning_extras": i == 0, "evening_extras": i == 1},
+                kwargs={"morning_extras": i == 0, "evening_extras": i == 0},
             )
         # Pre-kickoff alert — runs every 60 min, 04:00–22:00 UTC (06:00–00:00 CAT).
         # Sends a compact Telegram message for High+Both signals kicking off
@@ -718,7 +715,7 @@ def get_scheduler() -> AsyncIOScheduler:
             misfire_grace_time=3600,
         )
         logger.info(
-            "Scheduler configured: %d syncs (first=morning extras, second=evening extras) "
+            "Scheduler configured: %d syncs (first=morning+tomorrow extras, rest=settle-only) "
             "+ kickoff alerts 04:00-22:00 UTC + daily calibration + weekly cleanup",
             len(settings.sync_times_list),
         )
