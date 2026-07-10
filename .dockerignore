@@ -5,6 +5,9 @@ backend/.env
 # Dev artefacts
 backend/.cache
 backend/titibet.db
+backend/*.db.live
+backend/*.db.live-shm
+backend/*.db.live-wal
 backend/__pycache__
 backend/**/__pycache__
 backend/**/*.pyc
