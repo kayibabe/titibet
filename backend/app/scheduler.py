@@ -39,7 +39,6 @@ from app.services.league_watch_guard import run_league_watch_guard
 from app.services.telegram import (
     push_kickoff_alerts,
     check_and_push_pending_results,
-    push_signal_digest,
     push_morning_digest,
     push_tomorrow_digest,
     push_ingestion_alert,
