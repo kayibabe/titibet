@@ -746,6 +746,10 @@ COPA_HO05_SUPPRESSED_LEAGUES: frozenset[str] = frozenset({
     "copa peru",
     "copa do brasil",
     "copa mx",
+    # 2026-07-10: 2 tracked HO0.5 losses (FBC Melgar vs UCV Moquegua Jun 30 + Jul 6).
+    # Peruvian Copa de la Liga uses rotation/reserve squads — same structural pattern
+    # as other LatAm cups where home scoring drops sharply vs. league games.
+    "copa de la liga",
 })
 
 # League tiers where Over 2.5 signals are suppressed system-wide.

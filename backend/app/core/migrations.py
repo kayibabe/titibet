@@ -199,6 +199,16 @@ INDEX_MIGRATIONS: list[tuple[str, str]] = [
         "ON tracked_bets(user_id, event_date) "
         "WHERE source_rule_key = 'acca_advisory' AND user_id IS NOT NULL",
     ),
+    # One system signal bet per fixture+market — DB-level guard against duplicate
+    # auto-tracking when concurrent startup syncs both read the same empty dedup set
+    # before either commits (race condition on consecutive deploys).
+    # Excludes accumulators (fixture_id IS NULL) and user-tracked bets (user_id IS NOT NULL).
+    (
+        "uq_system_signal_bet",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_system_signal_bet "
+        "ON tracked_bets (fixture_id, market_type) "
+        "WHERE user_id IS NULL AND fixture_id IS NOT NULL AND market_type != 'Accumulator'",
+    ),
 ]
 
 # One-shot data fixes — each is an idempotent UPDATE with tight WHERE guards.
@@ -270,6 +280,30 @@ async def run_migrations(engine: AsyncEngine) -> None:
                 log.info("Table migration applied (CREATE TABLE IF NOT EXISTS)")
             except Exception as e:  # noqa: BLE001
                 log.warning("Table migration FAILED: %s", e)
+
+        # ── Pre-index dedup pass ──────────────────────────────────────────────────
+        # Remove duplicate system signal bets (same fixture+market tracked multiple
+        # times due to a bookmaker-field race on concurrent startup syncs).
+        # Must run before uq_system_signal_bet index creation to avoid IntegrityError.
+        try:
+            result = await conn.execute(text("""
+                DELETE FROM tracked_bets
+                WHERE user_id IS NULL
+                  AND fixture_id IS NOT NULL
+                  AND market_type != 'Accumulator'
+                  AND id NOT IN (
+                    SELECT MIN(id)
+                    FROM tracked_bets
+                    WHERE user_id IS NULL
+                      AND fixture_id IS NOT NULL
+                      AND market_type != 'Accumulator'
+                    GROUP BY fixture_id, market_type
+                  )
+            """))
+            if result.rowcount:
+                log.info("Dedup migration: removed %d duplicate system signal bet(s)", result.rowcount)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Dedup migration FAILED: %s", e)
 
         for index_name, sql in INDEX_MIGRATIONS:
             try:

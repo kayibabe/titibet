@@ -34,7 +34,8 @@ from app.models.user import User as _User  # noqa: F401 — registers users tabl
 from app.core.config import (
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
     WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
-    DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES, OVER25_SUPPRESSED_TIERS,
+    DISABLED_LEAGUES, DISABLED_MARKETS, OVER_GOALS_SUPPRESSED_LEAGUES,
+    OVER25_SUPPRESSED_TIERS, MARKET_MIN_ODDS,
     is_womens_fixture,
 )
 from app.services.acca_builder import build_acca_candidates, build_accumulator
@@ -135,9 +136,11 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         if key in existing_keys:
             continue
 
-        # Defense-in-depth: skip disabled leagues and over-goals-suppressed leagues.
-        # signal_engine already filters these at write time, but old signals in the
-        # DB (generated before a league was suppressed) can still reach this loop.
+        # Defense-in-depth: skip disabled markets and leagues.
+        # signal_engine and router already filter these, but old signals in the
+        # DB (generated before a market/league was retired) can still reach this loop.
+        if signal.market in DISABLED_MARKETS:
+            continue
         league_lower = (fixture.league or "").lower().strip()
         if league_lower in DISABLED_LEAGUES or "friendlies" in league_lower:
             continue
@@ -154,6 +157,11 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
                 odds = round(1.0 / prob, 3)
             else:
                 continue
+
+        # Skip signals below the minimum odds floor — parity with router serving gate.
+        min_odds_floor = MARKET_MIN_ODDS.get(signal.market)
+        if min_odds_floor is not None and odds < min_odds_floor:
+            continue
 
         # Skip Both+High picks whose odds exceed the serving-time ceiling —
         # consistent with what the router shows subscribers.
