@@ -487,7 +487,19 @@ async def _cleanup_old_snapshots() -> None:
                   AND change_type='market_odds_ceiling'
                   AND target IN ({disabled_mkt_list})
             """))
-            deactivated = r1.rowcount + r2.rowcount + r3.rowcount + r4.rowcount
+            # 2026-07-10: expire unimplemented proposal types. The signal engine and
+            # auto_tracker only consume league_suppression and kelly_fraction_adj.
+            # rule_disable and min_confidence are not wired to any consumer and were
+            # written by the LLM with free-text targets that don't match real market
+            # names. market_suppression is also unimplemented in the signal path.
+            # market_odds_ceiling (non-DISABLED target) is similarly unconsumed.
+            r5 = await db.execute(text("""
+                UPDATE learning_proposals SET is_active=0
+                WHERE is_active=1
+                  AND change_type IN ('rule_disable', 'min_confidence',
+                                      'market_suppression', 'market_odds_ceiling')
+            """))
+            deactivated = r1.rowcount + r2.rowcount + r3.rowcount + r4.rowcount + r5.rowcount
             await db.commit()
             if deactivated:
                 logger.info("Cleanup: deactivated %d stale learning proposals.", deactivated)
