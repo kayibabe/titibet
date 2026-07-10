@@ -35,11 +35,13 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     # Scheduler sync times (HH:MM UTC, comma-separated)
-    # First sync (04:00 UTC / 06:00 CAT) runs morning + tomorrow extras:
-    #   today's signals, today's advisory + ACCA, morning Telegram digest,
-    #   tomorrow's signals, tomorrow's advisory + ACCA, tomorrow Telegram digest.
-    # Second sync (23:00 UTC / 01:00 CAT) runs settlement catch-up only.
-    sync_times: str = "04:00,23:00"
+    # 04:00 UTC (06:00 CAT) — morning refresh: today ingestion + signals + settlement
+    #   + morning Telegram. If last night's evening digest already sent today's picks,
+    #   the morning Telegram is a brief "Confirmed" update; otherwise a full digest.
+    # 19:00 UTC (21:00 CAT) — evening pull: tomorrow ingestion + signals (peak odds
+    #   availability) + advisory + ACCA + "Tomorrow's Picks" Telegram digest.
+    # 23:00 UTC (01:00 CAT) — settlement-only: re-pull today, settle, learn pipelines.
+    sync_times: str = "04:00,19:00,23:00"
 
     # Bayesian engine thresholds
     # (min_value_edge removed 2026-07-02 — EV/edge gating retired from pipeline)

@@ -177,23 +177,27 @@ Analyses ALL settled bets (wins + losses). Broader strategic rule changes.
 
 ## Scheduler schedule
 
-Default sync times (UTC): `04:00, 23:00`
+Default sync times (UTC): `04:00, 19:00, 23:00`
 
-**04:00 UTC (06:00 CAT) — full daily sync:**
-Runs morning extras AND tomorrow extras in one job:
-1. Today's ingestion + signals + settlement
-2. Today's advisory cache + ACCA tracking
-3. Morning Telegram digest ("Today's Picks")
-4. Tomorrow's ingestion + signals
-5. Tomorrow's advisory cache + ACCA tracking (covers after-midnight UTC kickoffs)
-6. Tomorrow Telegram digest ("Tomorrow, {date}")
+**04:00 UTC (06:00 CAT) — morning refresh:**
+1. Today's ingestion + signals (odds refresh after overnight bookmaker updates)
+2. Settlement of pending bets + learning pipelines
+3. Advisory cache refresh + ACCA stale-odds guard (removes/replaces legs that moved >10%)
+4. Morning Telegram — two modes:
+   - **Confirmation** (normal): evening digest already sent today's picks last night → sends "Today's Picks Confirmed · {date}" with refreshed rankings and updated ACCA
+   - **Full digest** (fallback): no evening digest for today (outage, first day) → sends complete morning digest with ACCA as before
 
-Building today and tomorrow in the same job means Telegram and the web always show the same acca — no divergence from stale evening caches.
+**19:00 UTC (21:00 CAT) — evening pull (primary signal run):**
+1. Tomorrow's ingestion + signals — peak odds window (European bookmaker markets fully populated by close of business; best `bookmaker_support_rank` and `drift_rank`)
+2. Tomorrow's advisory cache + ACCA tracking
+3. Evening Telegram: "Tomorrow's Picks · {date}" with AI Acca-of-the-Day — the primary ACCA sent before subscribers go to bed
 
 **23:00 UTC (01:00 CAT) — settlement-only sync:**
 Re-pulls today's fixtures, settles pending bets, runs learning pipelines. No Telegram digests.
 
-Override with `SYNC_TIMES=HH:MM,HH:MM` in `backend/.env`.
+Override with `SYNC_TIMES=HH:MM,HH:MM,HH:MM` in `backend/.env`.
+
+**Why this split:** Evening signals at 19:00 UTC are higher quality (more bookmakers have posted lines) than those computed at 04:00 UTC. Sending the ACCA in the evening maps naturally to how subscribers plan — check picks before bed, confirm in the morning. One ACCA announcement per day, no duplicate tickets.
 
 Set `SKIP_STARTUP_SYNC=true` to skip the startup sync (saves API quota on hot-reload dev restarts). Catch-up settlement still runs.
 

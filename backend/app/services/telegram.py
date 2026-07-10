@@ -655,16 +655,19 @@ async def push_signal_digest(db: AsyncSession, free_reveal_count: int = FREE_REV
 # ─────────────────────────────────────────────────────────────────────────────
 # Tomorrow digest — singles + AI Advisory accumulator ticket
 #
-# Sent at 18:00 UTC (8pm Malawi local) right after the tomorrow pre-sync, so
-# subscribers get tomorrow's full single-match slate AND the AI Advisory's
-# Acca-of-the-Day in one message — early enough to place bets tonight.
+# Sent at 19:00 UTC (21:00 CAT) after the evening pre-sync, so subscribers
+# get tomorrow's full single-match slate AND the AI Advisory's Acca-of-the-Day
+# in one message before they go to bed. 19:00 UTC is the peak odds-availability
+# window (bookmaker markets for next-day fixtures are fully populated by European
+# close of business) so signals at this point are higher quality than those
+# computed at the 04:00 UTC morning run.
 #
 # Pro gets everything in clear text. Free gets identical content, but only
 # `FREE_REVEAL_COUNT` randomly chosen matches (biased away from High
 # confidence — see `_pick_reveal_fixture_ids`) are shown in clear — the rest
-# have their team names wrapped in a Telegram spoiler (tap-to-reveal blur),
-# and every leg of the Acca ticket is spoiler-blurred regardless, since the
-# accumulator is the headline Pro perk.
+# have their team names replaced with a non-revealable placeholder, and every
+# leg of the Acca ticket is hidden regardless, since the accumulator is the
+# headline Pro perk.
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _check_push_sent(db: AsyncSession, push_date: date, channel_type: str, push_type: str) -> bool:
@@ -763,12 +766,12 @@ def build_tomorrow_message(
 async def push_tomorrow_digest(db: AsyncSession, run_date: date | None = None) -> int:
     """
     Broadcast tomorrow's full single-match slate plus the AI Advisory's Acca-of-
-    the-Day to TiTiBet Free and Pro. Pro sees everything in clear; Free sees
-    `FREE_REVEAL_COUNT` randomly chosen matches revealed and the rest (plus the
-    whole Acca ticket) spoiler-blurred. Called by the 18:00 UTC tomorrow
-    pre-sync job, after fixtures/odds/signals are synced and the advisory cache
-    is warmed for tomorrow. Idempotent per date+channel via telegram_push_log.
-    Returns the number of channels sent to.
+    the-Day to TiTiBet Free and Pro. Called by the 19:00 UTC (21:00 CAT) evening
+    sync job, after tomorrow's fixtures/odds/signals are ingested and the advisory
+    cache is warmed. Pro sees everything in clear; Free sees `FREE_REVEAL_COUNT`
+    randomly chosen matches revealed, the rest hidden with a non-revealable
+    placeholder, and all Acca legs hidden. Idempotent per date+channel via
+    telegram_push_log. Returns the number of channels sent to.
     """
     if not settings.telegram_bot_token:
         return 0
@@ -1088,11 +1091,20 @@ async def push_results_report(
 
 async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_REVEAL_COUNT) -> int:
     """
-    Broadcast today's full signal list as a morning digest (all-day picks).
-    Called after the 06:00 UTC sync so subscribers see the day's picks at wake-up.
-    Both channels get the full list (rank order); Free spoiler-blurs all but
-    `free_reveal_count` randomly-revealed matches (biased away from High
-    confidence — see `_pick_reveal_fixture_ids`).
+    Broadcast today's signal list at 06:00 CAT (04:00 UTC).
+
+    Two modes depending on whether last night's evening digest (19:00 UTC) already
+    sent today's picks:
+
+    • Confirmation mode — evening ran last night: sends "Today's Picks Confirmed"
+      with refreshed odds and the updated ACCA (stale-odds guard may have revised
+      legs overnight). No duplicate ACCA announcement — just a morning sanity check.
+
+    • Full digest mode — no evening digest for today (first-run or evening missed):
+      sends the complete morning digest with ACCA, identical to pre-evening behaviour.
+
+    Both channels get the full ranked signal list; Free spoiler-blurs all but
+    `free_reveal_count` randomly-chosen matches (biased away from High confidence).
     Returns the number of channels sent to.
     """
     if not settings.telegram_bot_token:
@@ -1110,7 +1122,6 @@ async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_RE
         logger.info("Morning digest: no signals for %s — skipping", today)
         return 0
 
-    # Rank order (best first) so subscribers see top picks immediately.
     by_rank = sorted(deduped, key=lambda r: _system_rank(r[0], r[1]), reverse=True)
     reveal_fixture_ids = _pick_reveal_fixture_ids(by_rank, free_reveal_count)
 
@@ -1122,23 +1133,49 @@ async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_RE
     except Exception:
         logger.exception("Morning digest: failed to fetch AI Advisory acca — sending singles only")
 
+    # Was last night's evening digest already sent for today's date?
+    # (Evening digest logs push_type="tomorrow" for the next-day date, which is today.)
+    evening_sent = False
+    for _, ct in targets:
+        if await _check_push_sent(db, today, ct, "tomorrow"):
+            evening_sent = True
+            break
+
+    date_label = today.strftime("%a %d %b %Y")
     sent = 0
     for chat_id, channel_type in targets:
         if channel_type == "free":
-            text = build_signal_digest(by_rank, channel_type="free", now=now, reveal_fixture_ids=reveal_fixture_ids, acca=acca)
+            text = build_signal_digest(by_rank, channel_type="free", now=now,
+                                       reveal_fixture_ids=reveal_fixture_ids, acca=acca)
         else:
             text = build_signal_digest(by_rank, channel_type=channel_type, now=now, acca=acca)
-        # Override title line to say "Today's Picks" instead of "Tonight & Overnight"
-        text = text.replace("Tonight &amp; Overnight", "Today's Picks")
-        text = text.replace("Tonight &amp; after-midnight kickoffs", "Today's signal picks")
+
+        if evening_sent:
+            # Confirmation mode: replace header to signal this is a refreshed confirmation,
+            # not a new announcement. ACCA is still included (updated by stale-odds guard).
+            title_key = "TiTiBet Free" if channel_type == "free" else "TiTiBet Pro"
+            text = text.replace(
+                f"🌙 <b>{title_key} — Tonight &amp; Overnight</b>",
+                f"✅ <b>{title_key} — Today's Picks Confirmed · {date_label}</b>",
+            )
+            text = text.replace(
+                "Tonight &amp; after-midnight kickoffs",
+                "Refreshed after morning odds update",
+            )
+        else:
+            # Full digest mode: standard morning framing.
+            text = text.replace("Tonight &amp; Overnight", "Today's Picks")
+            text = text.replace("Tonight &amp; after-midnight kickoffs", "Today's signal picks")
+
         ok = False
         for chunk in _split_message(text):
             ok = await _send_to(chat_id, chunk)
         if ok:
             sent += 1
 
+    mode = "confirmation" if evening_sent else "digest"
     if sent:
-        logger.info("Morning digest sent to %d channel(s) — %d picks for %s", sent, len(deduped), today)
+        logger.info("Morning %s sent to %d channel(s) — %d picks for %s", mode, sent, len(deduped), today)
     return sent
 
 
