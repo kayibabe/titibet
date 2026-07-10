@@ -83,9 +83,15 @@ async def run_backtest(
     if league_name:
         query = query.where(Fixture.league.ilike(f"%{league_name}%"))
 
-    # Only include finished fixtures
+    # Only include finished fixtures that have at least one market snapshot.
+    # Fixtures backfilled without odds (no market_snapshots rows) are useless
+    # for signal replay and were causing O(N) empty snapshot queries that pushed
+    # 6-month backtests past the 60-second Fly.io proxy timeout.
     query = query.where(Fixture.status.in_(["FT", "AET", "PEN"]))
     query = query.where(Fixture.home_score.isnot(None))
+    query = query.where(
+        Fixture.id.in_(select(MarketSnapshot.fixture_id).distinct())
+    )
 
     fixture_result = await db.execute(query)
     fixtures: list[Fixture] = list(fixture_result.scalars().all())
@@ -438,6 +444,7 @@ async def collect_cs_backtest_data(
         Fixture.status == "FT",
         Fixture.home_score.isnot(None),
         Fixture.away_score.isnot(None),
+        Fixture.id.in_(select(MarketSnapshot.fixture_id).distinct()),
     )
     if date_from:
         query = query.where(Fixture.event_date >= date_from)
