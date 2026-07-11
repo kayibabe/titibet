@@ -929,8 +929,11 @@ async def cleanup_tracked_bets(
     )
 
     # 8. Women's over-goals
+    # tracked_bets has no home_team/away_team columns — team names are in match_name
+    # as "Home Team vs Away Team". " W" suffix appears as "Team W vs ..." or "... vs Team W".
     results["womens_og"] = await _count_and_delete(
-        f"market_type IN ({og_mkt_ph}) AND ({women_like} OR lower(home_team) LIKE '% w' OR lower(away_team) LIKE '% w')",
+        f"market_type IN ({og_mkt_ph}) AND ({women_like}"
+        " OR lower(match_name) LIKE '% w vs %' OR lower(match_name) LIKE '% vs % w')",
         {**ogm_params, **women_params},
         "women's OG",
     )
@@ -979,19 +982,50 @@ async def cleanup_tracked_bets(
             await db.execute(text(f"DELETE FROM signals WHERE {sql_where}"), params)
         return n
 
-    sig_results["disabled_markets"] = await _count_and_delete_signals(
-        f"market IN ({dm_placeholders})", dm_params
+    # signals table has no league/home_team/away_team columns — must join via fixtures
+    fix_dl_like = " OR ".join(
+        f"lower(trim(f.league)) = :sdl{i}" for i, _ in enumerate(DISABLED_LEAGUES)
     )
-    sig_results["disabled_leagues"] = await _count_and_delete_signals(
-        f"lower(trim(league)) IN ({dl_placeholders})", dl_params
+    sdl_params = {f"sdl{i}": v.lower().strip() for i, v in enumerate(DISABLED_LEAGUES)}
+
+    fix_og_like = " OR ".join(
+        f"lower(trim(f.league)) LIKE '%' || :sog{i} || '%'"
+        for i, _ in enumerate(OVER_GOALS_SUPPRESSED_LEAGUES)
     )
-    sig_results["og_suppressed_leagues"] = await _count_and_delete_signals(
-        f"market IN ({og_mkt_ph}) AND ({og_like})",
-        {**ogm_params, **og_params},
+    sog_params = {f"sog{i}": v for i, v in enumerate(OVER_GOALS_SUPPRESSED_LEAGUES)}
+
+    fix_wk_like = " OR ".join(
+        f"lower(f.league) LIKE '%' || :swk{i} || '%'"
+        for i, _ in enumerate(WOMEN_LEAGUE_KEYWORDS)
     )
-    sig_results["womens_og"] = await _count_and_delete_signals(
-        f"market IN ({og_mkt_ph}) AND ({women_like} OR lower(home_team) LIKE '% w' OR lower(away_team) LIKE '% w')",
-        {**ogm_params, **women_params},
+    swk_params = {f"swk{i}": v for i, v in enumerate(WOMEN_LEAGUE_KEYWORDS)}
+
+    async def _cads(where: str, params: dict) -> int:
+        """count-and-delete signals with optional fixture join via EXISTS."""
+        sql_c = f"SELECT COUNT(*) FROM signals s WHERE {where}"
+        sql_d = f"DELETE FROM signals WHERE id IN (SELECT s.id FROM signals s WHERE {where})"
+        n = (await db.execute(text(sql_c), params)).scalar() or 0
+        if not dry_run and n > 0:
+            await db.execute(text(sql_d), params)
+        return n
+
+    sig_results["disabled_markets"] = await _cads(
+        f"s.market IN ({dm_placeholders})", dm_params
+    )
+    sig_results["disabled_leagues"] = await _cads(
+        f"EXISTS (SELECT 1 FROM fixtures f WHERE f.id = s.fixture_id AND ({fix_dl_like}))",
+        sdl_params,
+    )
+    sig_results["og_suppressed_leagues"] = await _cads(
+        f"s.market IN ({og_mkt_ph}) AND EXISTS "
+        f"(SELECT 1 FROM fixtures f WHERE f.id = s.fixture_id AND ({fix_og_like}))",
+        {**ogm_params, **sog_params},
+    )
+    sig_results["womens_og"] = await _cads(
+        f"s.market IN ({og_mkt_ph}) AND EXISTS "
+        f"(SELECT 1 FROM fixtures f WHERE f.id = s.fixture_id AND "
+        f"({fix_wk_like} OR lower(f.home_team) LIKE '% w' OR lower(f.away_team) LIKE '% w'))",
+        {**ogm_params, **swk_params},
     )
     total_signals_deleted = sum(sig_results.values())
 
