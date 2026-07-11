@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
@@ -12,7 +12,19 @@ from app.models.user import User
 from app.models.learning_proposal import LearningProposal
 import httpx
 
-from app.core.config import get_settings
+from app.core.config import (
+    get_settings,
+    DISABLED_MARKETS,
+    DISABLED_LEAGUES,
+    OVER_GOALS_SUPPRESSED_LEAGUES,
+    COPA_HO05_SUPPRESSED_LEAGUES,
+    WOMEN_LEAGUE_KEYWORDS,
+    DUAL_HIGH_ODDS_CEILING,
+    POISSON_ONLY_MAX_ODDS,
+    MARKET_MIN_ODDS,
+    HO05_DATA_POOR_COUNTRIES,
+    OVER25_SUPPRESSED_TIERS,
+)
 from app.services.api_client import get_quota_info
 from app.services.settlement import refresh_stale_fixtures_and_settle
 from app.services.loss_analysis_agent import run_loss_analysis_pipeline
@@ -788,6 +800,269 @@ async def trigger_watchguard(
             }
             for s in statuses
         ],
+    }
+
+
+@router.post("/cleanup-tracked-bets")
+async def cleanup_tracked_bets(
+    dry_run: bool = Query(False, description="Preview counts — no deletes"),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Delete system tracked_bets (user_id IS NULL) and signal rows that violate
+    the current serving-time gates. Idempotent — safe to run multiple times.
+
+    Gates applied:
+    1. DISABLED_MARKETS — market type permanently retired
+    2. DISABLED_LEAGUES — league permanently disabled
+    3. OVER_GOALS_SUPPRESSED_LEAGUES — over-goals markets blocked in these leagues
+    4. Over 1.5 non-High confidence gate
+    5. Over 2.5 Tier 3 suppression
+    6. COPA_HO05_SUPPRESSED_LEAGUES — cup HO0.5 blocked
+    7. MARKET_MIN_ODDS floors
+    8. Women's league over-goals suppression
+    9. DUAL_HIGH_ODDS_CEILING (Both+High ceiling)
+    10. POISSON_ONLY_MAX_ODDS (Poisson Only odds cap)
+    11. HO05_DATA_POOR_COUNTRIES (Both+High Tier 3 blocked)
+    12. Under 2.5 odds > 2.20 cap
+    """
+    over_goals_markets = (
+        "Over 1.5", "Over 2.5", "Home Over 0.5", "Away Over 0.5", "Over 0.5 1H",
+    )
+
+    def _list(s): return list(s)
+    def _lower_list(s): return [x.lower().strip() for x in s]
+
+    async def _count_and_delete(sql_where: str, params: dict, label: str) -> int:
+        count_sql = f"SELECT COUNT(*) FROM tracked_bets WHERE user_id IS NULL AND {sql_where}"
+        n = (await db.execute(text(count_sql), params)).scalar() or 0
+        if not dry_run and n > 0:
+            await db.execute(text(f"DELETE FROM tracked_bets WHERE user_id IS NULL AND {sql_where}"), params)
+        return n
+
+    # Build over-goals suppressed LIKE conditions
+    og_like = " OR ".join(
+        f"lower(trim(league)) LIKE '%' || :og{i} || '%'"
+        for i, _ in enumerate(OVER_GOALS_SUPPRESSED_LEAGUES)
+    )
+    og_params = {f"og{i}": v for i, v in enumerate(OVER_GOALS_SUPPRESSED_LEAGUES)}
+
+    women_like = " OR ".join(
+        f"lower(league) LIKE '%' || :wk{i} || '%'"
+        for i, _ in enumerate(WOMEN_LEAGUE_KEYWORDS)
+    )
+    women_params = {f"wk{i}": v for i, v in enumerate(WOMEN_LEAGUE_KEYWORDS)}
+
+    copa_lower = _lower_list(COPA_HO05_SUPPRESSED_LEAGUES)
+    data_poor_lower = _lower_list(HO05_DATA_POOR_COUNTRIES)
+
+    dm_placeholders = ",".join(f":dm{i}" for i, _ in enumerate(DISABLED_MARKETS))
+    dl_placeholders = ",".join(f":dl{i}" for i, _ in enumerate(DISABLED_LEAGUES))
+    copa_placeholders = ",".join(f":copa{i}" for i, _ in enumerate(copa_lower))
+    dp_placeholders = ",".join(f":dp{i}" for i, _ in enumerate(data_poor_lower))
+    og_mkt_ph = ",".join(f":ogm{i}" for i, _ in enumerate(over_goals_markets))
+
+    dm_params = {f"dm{i}": v for i, v in enumerate(DISABLED_MARKETS)}
+    dl_params = {f"dl{i}": v.lower().strip() for i, v in enumerate(DISABLED_LEAGUES)}
+    copa_params = {f"copa{i}": v for i, v in enumerate(copa_lower)}
+    dp_params = {f"dp{i}": v for i, v in enumerate(data_poor_lower)}
+    ogm_params = {f"ogm{i}": v for i, v in enumerate(over_goals_markets)}
+
+    results = {}
+
+    # 1. Disabled markets
+    results["disabled_markets"] = await _count_and_delete(
+        f"market_type IN ({dm_placeholders})", dm_params, "disabled markets"
+    )
+
+    # 2. Disabled leagues
+    results["disabled_leagues"] = await _count_and_delete(
+        f"lower(trim(league)) IN ({dl_placeholders})", dl_params, "disabled leagues"
+    )
+
+    # 3. Over-goals suppressed leagues
+    results["og_suppressed_leagues"] = await _count_and_delete(
+        f"market_type IN ({og_mkt_ph}) AND ({og_like})",
+        {**ogm_params, **og_params},
+        "OG suppressed leagues",
+    )
+
+    # 4. Over 1.5 non-High confidence
+    results["over15_non_high"] = await _count_and_delete(
+        "market_type = 'Over 1.5' AND (dual_confidence IS NULL OR dual_confidence != 'High')",
+        {}, "Over 1.5 non-High",
+    )
+
+    # 5. Over 2.5 Tier 3
+    results["over25_tier3"] = await _count_and_delete(
+        "market_type = 'Over 2.5' AND fixture_id IN (SELECT id FROM fixtures WHERE league_tier >= 3)",
+        {}, "Over 2.5 Tier 3",
+    )
+
+    # 6. Copa HO0.5
+    results["copa_ho05"] = await _count_and_delete(
+        f"market_type = 'Home Over 0.5' AND lower(trim(league)) IN ({copa_placeholders})",
+        copa_params, "Copa HO0.5",
+    )
+
+    # 7. Below MARKET_MIN_ODDS floors
+    min_odds_clause = (
+        "(market_type = 'Over 1.5'       AND odds IS NOT NULL AND odds < :o15_min)"
+        " OR (market_type = 'Over 2.5'   AND odds IS NOT NULL AND odds < :o25_min)"
+        " OR (market_type = 'Under 2.5'  AND odds IS NOT NULL AND odds < :u25_min)"
+        " OR (market_type = 'Home Over 0.5' AND odds IS NOT NULL AND odds < :ho05_min)"
+        " OR (market_type = 'Home Win to Nil' AND odds IS NOT NULL AND odds < :hwtn_min)"
+        " OR (market_type = 'Away Win to Nil' AND odds IS NOT NULL AND odds < :awtn_min)"
+    )
+    results["below_min_odds"] = await _count_and_delete(
+        f"({min_odds_clause})",
+        {
+            "o15_min":  MARKET_MIN_ODDS.get("Over 1.5", 1.50),
+            "o25_min":  MARKET_MIN_ODDS.get("Over 2.5", 1.55),
+            "u25_min":  MARKET_MIN_ODDS.get("Under 2.5", 2.10),
+            "ho05_min": MARKET_MIN_ODDS.get("Home Over 0.5", 1.30),
+            "hwtn_min": MARKET_MIN_ODDS.get("Home Win to Nil", 1.40),
+            "awtn_min": MARKET_MIN_ODDS.get("Away Win to Nil", 1.40),
+        },
+        "below min odds",
+    )
+
+    # 8. Women's over-goals
+    results["womens_og"] = await _count_and_delete(
+        f"market_type IN ({og_mkt_ph}) AND ({women_like} OR lower(home_team) LIKE '% w' OR lower(away_team) LIKE '% w')",
+        {**ogm_params, **women_params},
+        "women's OG",
+    )
+
+    # 9. DUAL_HIGH_ODDS_CEILING
+    ho05_ceil = DUAL_HIGH_ODDS_CEILING.get("Home Over 0.5", 1.95)
+    ao05_ceil = DUAL_HIGH_ODDS_CEILING.get("Away Over 0.5", 2.10)
+    results["dual_high_odds_ceiling"] = await _count_and_delete(
+        "(market_type = 'Home Over 0.5' AND dual_agreement = 'Both' AND dual_confidence = 'High' AND odds IS NOT NULL AND odds >= :ho05_ceil)"
+        " OR (market_type = 'Away Over 0.5' AND dual_agreement = 'Both' AND dual_confidence = 'High' AND odds IS NOT NULL AND odds >= :ao05_ceil)",
+        {"ho05_ceil": ho05_ceil, "ao05_ceil": ao05_ceil},
+        "dual high odds ceiling",
+    )
+
+    # 10. POISSON_ONLY_MAX_ODDS for HO0.5
+    po_max = POISSON_ONLY_MAX_ODDS.get("Home Over 0.5", 2.10)
+    results["poisson_only_max_odds"] = await _count_and_delete(
+        "market_type = 'Home Over 0.5' AND dual_agreement = 'Poisson Only' AND odds IS NOT NULL AND odds >= :po_max",
+        {"po_max": po_max},
+        "Poisson Only max odds",
+    )
+
+    # 11. HO05_DATA_POOR_COUNTRIES (Both+High, Tier 3)
+    results["data_poor_countries"] = await _count_and_delete(
+        f"market_type = 'Home Over 0.5' AND dual_agreement = 'Both' AND dual_confidence = 'High'"
+        f" AND fixture_id IN (SELECT id FROM fixtures WHERE league_tier >= 3 AND lower(country) IN ({dp_placeholders}))",
+        dp_params,
+        "data-poor countries",
+    )
+
+    # 12. Under 2.5 odds > 2.20
+    results["under25_odds_cap"] = await _count_and_delete(
+        "market_type = 'Under 2.5' AND odds IS NOT NULL AND odds > 2.20",
+        {}, "Under 2.5 odds cap",
+    )
+
+    total_bets_deleted = sum(results.values())
+
+    # ── Clean up signal rows (disabled markets + disabled leagues + suppressed) ──
+    sig_results = {}
+
+    async def _count_and_delete_signals(sql_where: str, params: dict) -> int:
+        count_sql = f"SELECT COUNT(*) FROM signals WHERE {sql_where}"
+        n = (await db.execute(text(count_sql), params)).scalar() or 0
+        if not dry_run and n > 0:
+            await db.execute(text(f"DELETE FROM signals WHERE {sql_where}"), params)
+        return n
+
+    sig_results["disabled_markets"] = await _count_and_delete_signals(
+        f"market IN ({dm_placeholders})", dm_params
+    )
+    sig_results["disabled_leagues"] = await _count_and_delete_signals(
+        f"lower(trim(league)) IN ({dl_placeholders})", dl_params
+    )
+    sig_results["og_suppressed_leagues"] = await _count_and_delete_signals(
+        f"market IN ({og_mkt_ph}) AND ({og_like})",
+        {**ogm_params, **og_params},
+    )
+    sig_results["womens_og"] = await _count_and_delete_signals(
+        f"market IN ({og_mkt_ph}) AND ({women_like} OR lower(home_team) LIKE '% w' OR lower(away_team) LIKE '% w')",
+        {**ogm_params, **women_params},
+    )
+    total_signals_deleted = sum(sig_results.values())
+
+    if not dry_run:
+        await db.commit()
+
+    # ── Post-cleanup analytics ────────────────────────────────────────────────
+    analytics_rows = (await db.execute(text("""
+        SELECT market_type,
+               COUNT(*) total,
+               SUM(CASE WHEN result_status='Won' THEN 1 ELSE 0 END) won,
+               SUM(CASE WHEN result_status='Lost' THEN 1 ELSE 0 END) lost,
+               ROUND(100.0 * SUM(CASE WHEN result_status='Won' THEN 1 ELSE 0 END)
+                     / NULLIF(SUM(CASE WHEN result_status IN ('Won','Lost') THEN 1 ELSE 0 END),0), 2) wr_pct,
+               ROUND(
+                 (SUM(CASE WHEN result_status='Won' THEN (odds - 1) * stake ELSE 0 END)
+                  - SUM(CASE WHEN result_status='Lost' THEN stake ELSE 0 END))
+                 / NULLIF(SUM(CASE WHEN result_status IN ('Won','Lost') THEN stake ELSE 0 END),0) * 100,
+               2) roi_pct
+        FROM tracked_bets
+        WHERE user_id IS NULL AND market_type != 'Accumulator'
+          AND result_status IN ('Won','Lost','Pending')
+        GROUP BY market_type ORDER BY total DESC
+    """))).fetchall()
+
+    overall = (await db.execute(text("""
+        SELECT COUNT(*) total,
+               SUM(CASE WHEN result_status='Won' THEN 1 ELSE 0 END) won,
+               SUM(CASE WHEN result_status='Lost' THEN 1 ELSE 0 END) lost,
+               ROUND(100.0 * SUM(CASE WHEN result_status='Won' THEN 1 ELSE 0 END)
+                     / NULLIF(SUM(CASE WHEN result_status IN ('Won','Lost') THEN 1 ELSE 0 END),0), 2) wr_pct,
+               ROUND(
+                 (SUM(CASE WHEN result_status='Won' THEN (odds - 1) * stake ELSE 0 END)
+                  - SUM(CASE WHEN result_status='Lost' THEN stake ELSE 0 END))
+                 / NULLIF(SUM(CASE WHEN result_status IN ('Won','Lost') THEN stake ELSE 0 END),0) * 100,
+               2) roi_pct
+        FROM tracked_bets
+        WHERE user_id IS NULL AND market_type != 'Accumulator'
+          AND result_status IN ('Won','Lost')
+    """))).fetchone()
+
+    return {
+        "dry_run": dry_run,
+        "tracked_bets_deleted": {
+            **results,
+            "total": total_bets_deleted,
+        },
+        "signal_rows_deleted": {
+            **sig_results,
+            "total": total_signals_deleted,
+        },
+        "post_cleanup_analytics": {
+            "overall": {
+                "total": overall.total,
+                "won": overall.won,
+                "lost": overall.lost,
+                "win_rate_pct": overall.wr_pct,
+                "roi_pct": overall.roi_pct,
+            },
+            "by_market": [
+                {
+                    "market": r.market_type,
+                    "total": r.total,
+                    "won": r.won,
+                    "lost": r.lost,
+                    "win_rate_pct": r.wr_pct,
+                    "roi_pct": r.roi_pct,
+                }
+                for r in analytics_rows
+            ],
+        },
     }
 
 
