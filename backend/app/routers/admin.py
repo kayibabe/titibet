@@ -524,12 +524,13 @@ async def autobet_catchup(
 
         # 4. Create TrackedBet rows
         for sig, fix in deduped:
-            # Check for existing system pick on this fixture+market
+            # Check for existing system pick on this fixture+market.
+            # Match the uq_system_signal_bet index: any user_id=NULL row for
+            # this (fixture_id, market_type) — regardless of source_rule_key.
             existing = await db.scalar(
                 select(TrackedBet).where(
                     TrackedBet.fixture_id == sig.fixture_id,
                     TrackedBet.market_type == sig.market,
-                    TrackedBet.source_rule_key == "system_auto",
                     TrackedBet.user_id.is_(None),
                 )
             )
