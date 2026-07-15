@@ -580,7 +580,7 @@ function SignalQualityContent({ byConfidence, byAgreement, showFactor, onApplySi
 const ANALYTICS_TABS = [
   { id: 'overview',  label: 'Overview',  desc: 'P&L and performance summary' },
   { id: 'markets',   label: 'Markets',   desc: 'Market, league and signal breakdown' },
-  { id: 'strategy',  label: 'Strategy',  desc: 'Staking, calibration and self-learning' },
+  { id: 'strategy',  label: 'Engine health',  desc: 'Staking, calibration and self-learning' },
 ]
 
 export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNavigate, settings }) {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { RefreshCw, CheckCircle, TrendingUp, Lock, Upload, MoreHorizontal, Bot, User, Layers } from 'lucide-react'
+import { RefreshCw, CheckCircle, TrendingUp, Lock, Upload, Settings2, Bot, User, Layers } from 'lucide-react'
 import { useTracker } from '../store/useTracker'
 import { syncData, computeCLV, deduplicateBets, normalizeStakes } from '../api/tracker'
 import { fetchAnalytics } from '../api/analytics'
@@ -25,6 +25,7 @@ const ADVISOR_META = {
 const SOURCE_OPTIONS = [
   { value: '',         label: 'All Picks',    icon: null },
   { value: 'system',   label: 'System Picks', icon: Bot  },
+  { value: 'advisory', label: 'AI Advisory',  icon: Bot  },
   { value: 'manual',   label: 'Manual Picks', icon: User },
 ]
 
@@ -292,65 +293,70 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           </span>
         )}
 
-        {/* Maintenance actions */}
-        <div className="relative ml-auto">
-          <button
-            onClick={() => setMoreOpen(v => !v)}
-            title="More actions"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)] text-sm text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] transition-colors"
-          >
-            <MoreHorizontal size={15} />
-            <span className="hidden sm:inline">More</span>
-          </button>
-          {moreOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setMoreOpen(false)} />
-              <div className="absolute right-0 mt-1 z-20 w-56 rounded-lg border border-[var(--border)] bg-[var(--bg)] shadow-xl p-1">
-                {isPro ? (
-                  <button
-                    onClick={() => { setMoreOpen(false); handleComputeCLV() }}
-                    disabled={computingCLV}
-                    className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors text-left"
-                  >
-                    <TrendingUp size={14} className={`text-green-400 ${computingCLV ? 'animate-pulse' : ''}`} />
-                    {computingCLV ? 'Computing CLV…' : noCLVCount > 0 ? `Compute CLV (${noCLVCount})` : 'Refresh CLV'}
-                  </button>
-                ) : (
-                  <div
-                    title="Upgrade to Pro to compute Closing Line Value"
-                    className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-blue-400 cursor-default"
-                  >
-                    <Lock size={14} /> CLV · Pro
-                  </div>
-                )}
-                <button
-                  onClick={() => { setMoreOpen(false); handleNormalizeStakes() }}
-                  disabled={normalizing}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors text-left"
-                  title="Set all bets to K50,000 flat stake and recompute P/L"
-                >
-                  <Layers size={14} className={`text-emerald-400 ${normalizing ? 'animate-pulse' : ''}`} />
-                  {normalizing ? 'Updating stakes…' : 'Set All Stakes → K50k'}
-                </button>
-                <button
-                  onClick={() => { setMoreOpen(false); handleDedup() }}
-                  disabled={deduping}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors text-left"
-                  title="Remove duplicate entries for the same fixture"
-                >
-                  <Layers size={14} className={`text-amber-400 ${deduping ? 'animate-pulse' : ''}`} />
-                  {deduping ? 'Removing duplicates…' : 'Remove Duplicates'}
-                </button>
-                <button
-                  onClick={() => { setMoreOpen(false); setShowImport(true) }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-[var(--text-h)] hover:bg-[var(--code-bg)] transition-colors text-left"
-                  title="Bulk-import historical bets from CSV"
-                >
-                  <Upload size={14} /> Import CSV
-                </button>
-              </div>
-            </>
+        {/* CLV — visible button, promoted from dropdown */}
+        <div className="flex items-center gap-2 ml-auto">
+          {isPro ? (
+            <button
+              onClick={handleComputeCLV}
+              disabled={computingCLV}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)] text-sm text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors"
+              title="Compute Closing Line Value for all settled bets"
+            >
+              <TrendingUp size={13} className={`text-green-400 ${computingCLV ? 'animate-pulse' : ''}`} />
+              <span>{computingCLV ? 'Computing…' : noCLVCount > 0 ? `CLV (${noCLVCount})` : 'CLV'}</span>
+            </button>
+          ) : (
+            <div
+              title="Upgrade to Pro to compute Closing Line Value"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-500/25 bg-blue-500/8 text-blue-400 text-sm select-none"
+            >
+              <Lock size={13} />
+              <span>CLV</span>
+            </div>
           )}
+
+          {/* Maintenance dropdown — gear icon, low-frequency ops only */}
+          <div className="relative">
+            <button
+              onClick={() => setMoreOpen(v => !v)}
+              title="Maintenance actions"
+              className="p-2 rounded-lg border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] transition-colors"
+            >
+              <Settings2 size={15} />
+            </button>
+            {moreOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setMoreOpen(false)} />
+                <div className="absolute right-0 mt-1 z-20 w-52 rounded-lg border border-[var(--border)] bg-[var(--bg)] shadow-xl p-1">
+                  <button
+                    onClick={() => { setMoreOpen(false); handleNormalizeStakes() }}
+                    disabled={normalizing}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors text-left"
+                    title="Set all bets to K50,000 flat stake and recompute P/L"
+                  >
+                    <Layers size={14} className={`text-emerald-400 ${normalizing ? 'animate-pulse' : ''}`} />
+                    {normalizing ? 'Updating stakes…' : 'Set All Stakes → K50k'}
+                  </button>
+                  <button
+                    onClick={() => { setMoreOpen(false); handleDedup() }}
+                    disabled={deduping}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors text-left"
+                    title="Remove duplicate entries for the same fixture"
+                  >
+                    <Layers size={14} className={`text-amber-400 ${deduping ? 'animate-pulse' : ''}`} />
+                    {deduping ? 'Removing duplicates…' : 'Remove Duplicates'}
+                  </button>
+                  <button
+                    onClick={() => { setMoreOpen(false); setShowImport(true) }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-[var(--text-h)] hover:bg-[var(--code-bg)] transition-colors text-left"
+                    title="Bulk-import historical bets from CSV"
+                  >
+                    <Upload size={14} /> Import CSV
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 

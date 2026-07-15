@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { RefreshCw, Download, Calendar, Sparkles, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle, ChevronDown, ChevronUp, Radio, Search } from 'lucide-react'
+import { RefreshCw, Download, Calendar, Sparkles, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Radio, Search, Heart } from 'lucide-react'
 import { useSignals } from '../store/useSignals'
 import { computeSignals, fetchSignals } from '../api/signals'
 import { syncData, fetchBets } from '../api/tracker'
@@ -54,6 +54,12 @@ function fmtDate(iso) {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
 }
 
+function shiftDate(iso, days) {
+  const d = new Date(iso + 'T00:00:00')
+  d.setDate(d.getDate() + days)
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
+
 function FilterSelect({ label, value, onChange, options, tooltip }) {
   return (
     <label className="flex flex-col gap-1 text-sm text-[var(--text)]">
@@ -100,6 +106,7 @@ const TABS = [
 export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigateToTracker, initialFilter, onFilterConsumed }) {
   const { isPro } = useTier()
   const { user } = useAuth()
+  const isAdmin = !!user?.is_admin
   const { showOnboarding, completeOnboarding } = useOnboarding(user)
   const today = (() => {
     const d = new Date()
@@ -273,6 +280,14 @@ const reload = () => load(params)
     return { total: displayedSignals.length, highConf }
   }, [displayedSignals])
 
+  // Auto-expand the filter panel when active filters produce 0 results so the
+  // user can see what's blocking their view without having to discover the panel.
+  useEffect(() => {
+    if (!loading && !error && displayedSignals.length === 0 && activeFilterCount > 0) {
+      setFiltersOpen(true)
+    }
+  }, [loading, error, displayedSignals.length, activeFilterCount]) // eslint-disable-line
+
   const _LIVE_SET = new Set(['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT'])
   const hasLiveMatches = signals.some(s => _LIVE_SET.has((s.status || '').trim().toUpperCase()))
 
@@ -323,47 +338,71 @@ const reload = () => load(params)
 
       {/* ── Toolbar ───────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 flex-wrap">
-        <div
-          className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)] cursor-pointer group hover:bg-[var(--code-bg)] transition-colors"
-          onClick={() => !isBusy && dateInputRef.current?.showPicker()}
-          title="Pick a date"
-        >
-          <Calendar size={13} className="text-[var(--accent)] shrink-0" />
-          <span className="text-sm font-medium text-[var(--text-h)] group-hover:text-[var(--accent)] transition-colors select-none">
-            {fmtDate(date)}{isToday ? ' · Today' : isTomorrow ? ' · Tomorrow' : ''}
-          </span>
-          <input
-            ref={dateInputRef}
-            type="date"
-            value={date}
-            max={maxDate}
-            onChange={e => e.target.value && setDate(e.target.value)}
+        <div className="flex items-center rounded-lg border border-[var(--border)] overflow-hidden">
+          <button
+            onClick={() => !isBusy && setDate(shiftDate(date, -1))}
             disabled={isBusy}
-            style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', width: 0, height: 0, bottom: 0, left: 0 }}
-          />
+            aria-label="Previous day"
+            className="px-2 py-1.5 hover:bg-[var(--code-bg)] text-[var(--text)] disabled:opacity-40 transition-colors border-r border-[var(--border)]"
+          >
+            <ChevronLeft size={14} />
+          </button>
+
+          <div
+            className="relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer group hover:bg-[var(--code-bg)] transition-colors"
+            onClick={() => !isBusy && dateInputRef.current?.showPicker()}
+            title="Pick a date"
+          >
+            <Calendar size={13} className="text-[var(--accent)] shrink-0" />
+            <span className="text-sm font-medium text-[var(--text-h)] group-hover:text-[var(--accent)] transition-colors select-none">
+              {fmtDate(date)}{isToday ? ' · Today' : isTomorrow ? ' · Tomorrow' : ''}
+            </span>
+            <input
+              ref={dateInputRef}
+              type="date"
+              value={date}
+              max={maxDate}
+              onChange={e => e.target.value && setDate(e.target.value)}
+              disabled={isBusy}
+              style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', width: 0, height: 0, bottom: 0, left: 0 }}
+            />
+          </div>
+
+          <button
+            onClick={() => !isBusy && setDate(shiftDate(date, 1))}
+            disabled={isBusy || date >= maxDate}
+            aria-label="Next day"
+            className="px-2 py-1.5 hover:bg-[var(--code-bg)] text-[var(--text)] disabled:opacity-40 transition-colors border-l border-[var(--border)]"
+          >
+            <ChevronRight size={14} />
+          </button>
         </div>
 
-        <button
-          onClick={handleRecompute}
-          disabled={isBusy}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)] text-sm text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors"
-          title="Re-run engines on cached odds — no API call"
-        >
-          <RefreshCw size={13} className={computing ? 'animate-spin' : ''} />
-          <span className="hidden sm:inline">{computing ? 'Computing…' : 'Recompute'}</span>
-          <span className="sm:hidden">{computing ? '…' : 'Run'}</span>
-        </button>
+        {isAdmin && (
+          <>
+            <button
+              onClick={handleRecompute}
+              disabled={isBusy}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)] text-sm text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors"
+              title="Re-run engines on cached odds — no API call"
+            >
+              <RefreshCw size={13} className={computing ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">{computing ? 'Computing…' : 'Recompute'}</span>
+              <span className="sm:hidden">{computing ? '…' : 'Run'}</span>
+            </button>
 
-        <button
-          onClick={handleSync}
-          disabled={isBusy}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"
-          title="Pull fresh odds from API-Football for this date, then recompute"
-        >
-          <Download size={13} className={syncing ? 'animate-bounce' : ''} />
-          <span className="hidden sm:inline">{syncing ? 'Syncing…' : 'Sync API'}</span>
-          <span className="sm:hidden">{syncing ? '…' : 'Sync'}</span>
-        </button>
+            <button
+              onClick={handleSync}
+              disabled={isBusy}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"
+              title="Pull fresh odds from API-Football for this date, then recompute"
+            >
+              <Download size={13} className={syncing ? 'animate-bounce' : ''} />
+              <span className="hidden sm:inline">{syncing ? 'Syncing…' : 'Sync API'}</span>
+              <span className="sm:hidden">{syncing ? '…' : 'Sync'}</span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* ── Tab bar ───────────────────────────────────────────────────────── */}
@@ -373,7 +412,7 @@ const reload = () => load(params)
           return (
             <button
               key={id}
-              onClick={() => setActiveTab(id)}
+              onClick={() => locked ? onUpgrade?.() : setActiveTab(id)}
               className={`
                 flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors
                 ${activeTab === id
@@ -569,14 +608,6 @@ const reload = () => load(params)
                 ))}
               </div>
 
-              {/* Card-border legend — reference material, kept out of the board */}
-              <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--text)] opacity-75 pt-1 border-t border-[var(--border)]">
-                <span className="font-medium">Card borders:</span>
-                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-500/60 border border-emerald-400"></span> High probability (70%+)</span>
-                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-violet-500/60 border border-violet-400"></span> Bayesian only</span>
-                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-amber-500/60 border border-amber-400"></span> Medium confidence</span>
-                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-500/60 border border-red-400"></span> Contradiction</span>
-              </div>
             </div>
           )}
         </div>
@@ -612,18 +643,40 @@ const reload = () => load(params)
               )}
             </>
           )}
-          <button
-            onClick={() => setBestPerFixture(v => !v)}
-            title={bestPerFixture ? 'Currently showing best signal per game — click to see all signals per game' : 'Currently showing all signals per game — click to show only the best per game'}
-            className={`ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-semibold transition-colors ${
-              bestPerFixture
-                ? 'border-[var(--accent)]/50 bg-[var(--accent)]/10 text-[var(--accent)]'
-                : 'border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)]'
-            }`}
-          >
-            <Target size={10} />
-            {bestPerFixture ? 'Best per game' : 'All per game'}
-          </button>
+          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              onClick={() => setShowSavedOnly(v => !v)}
+              title={showSavedOnly ? 'Showing saved signals only — click to show all' : 'Show saved signals only'}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-[10px] font-semibold transition-colors ${
+                showSavedOnly
+                  ? 'border-red-400/50 bg-red-500/15 text-red-300'
+                  : 'border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)]'
+              }`}
+            >
+              <Heart size={10} fill={showSavedOnly ? 'currentColor' : 'none'} />
+              Saved
+            </button>
+            <button
+              onClick={() => setBestPerFixture(v => !v)}
+              title={bestPerFixture ? 'Currently showing best signal per game — click to see all signals per game' : 'Currently showing all signals per game — click to show only the best per game'}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-semibold transition-colors ${
+                bestPerFixture
+                  ? 'border-[var(--accent)]/50 bg-[var(--accent)]/10 text-[var(--accent)]'
+                  : 'border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)]'
+              }`}
+            >
+              <Target size={10} />
+              {bestPerFixture ? 'One per match' : 'All per match'}
+            </button>
+          </div>
+        </div>
+
+        {/* Card-border legend — always visible so users don't need to open filters to decode colours */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-[var(--text)] opacity-60 px-1">
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500/60 border border-emerald-400 shrink-0"></span> High prob 70%+</span>
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-violet-500/60 border border-violet-400 shrink-0"></span> Bayesian only</span>
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500/60 border border-amber-400 shrink-0"></span> Medium conf</span>
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-500/60 border border-red-400 shrink-0"></span> Contradiction</span>
         </div>
 
         {loading && signals.length === 0 && (

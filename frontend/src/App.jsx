@@ -102,7 +102,7 @@ export default function App() {
       case 'tools':
         return <ToolsPage settings={settings} onUpgrade={goToPricing} onUpdate={update} />
       case 'account':
-        return <AccountPage />
+        return <AccountPage onUpgrade={goToPricing} />
       case 'pricing':
         return <PricingPage />
       case 'admin':

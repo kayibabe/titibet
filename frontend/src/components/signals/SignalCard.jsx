@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react'
-import { ChevronDown, ChevronUp, Clock, TrendingDown, TrendingUp, Lock, CheckCircle2, Lightbulb, X, Heart, Bot } from 'lucide-react'
+import { ChevronDown, ChevronUp, Clock, TrendingDown, TrendingUp, Lock, CheckCircle2, Lightbulb, X, Heart, Bot, Plus } from 'lucide-react'
 import { ConfidenceBadge, AgreementBadge } from './SignalBadge'
 import EngineBreakdown from './EngineBreakdown'
 import ContradictionAlert from './ContradictionAlert'
@@ -648,7 +648,7 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
           <Heart size={15} fill={isSaved ? 'currentColor' : 'none'} />
         </button>
 
-        {isAutoTracked && (
+        {isAutoTracked ? (
           <span
             title="This signal was automatically recorded as a system pick. View in Tracker to see results."
             className="flex items-center gap-1 text-xs font-semibold text-violet-400 mr-1"
@@ -656,13 +656,21 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
             <Bot size={13} />
             System Pick
           </span>
-        )}
-        {!isAutoTracked && isTracked && (
+        ) : isTracked ? (
           <span className="flex items-center gap-1 text-xs font-semibold text-emerald-400 mr-1">
             <CheckCircle2 size={13} />
             Tracked
           </span>
-        )}
+        ) : onTrackPick && !isFinished ? (
+          <button
+            onClick={() => onTrackPick(signal)}
+            aria-label="Track this pick"
+            className="flex items-center gap-1 text-xs font-semibold text-[var(--accent)] hover:opacity-75 transition-opacity mr-1"
+          >
+            <Plus size={13} />
+            Track
+          </button>
+        ) : null}
       </div>
 
       {/* ── Explanation panel (inline, deterministic) ── */}

@@ -1,4 +1,4 @@
-﻿import { TrendingUp, TrendingDown, Target, BarChart2, Layers, Clock } from 'lucide-react'
+﻿import { TrendingUp, TrendingDown, Target, BarChart2 } from 'lucide-react'
 import { fmtPLCompact, fmtKCompact } from '../../utils/format'
 
 function KPICard({ icon: Icon, label, value, fullValue, sub, tone = 'neutral', size = 'normal' }) {
@@ -81,62 +81,67 @@ export default function KPIRow({ summary }) {
   const ClvIcon  = avg_clv == null || avg_clv >= 0 ? TrendingUp : TrendingDown
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2">
-      <KPICard
-        icon={RoiIcon}
-        label="ROI"
-        value={`${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%`}
-        sub="return on investment"
-        tone={roiTone}
-      />
-      <KPICard
-        icon={Target}
-        label="Hit Rate"
-        value={`${win_rate.toFixed(1)}%`}
-        sub={`${wins}W · ${losses}L`}
-        tone={wrTone}
-      />
-      <KPICard
-        icon={BarChart2}
-        label="Net P&L"
-        value={fmtPLCompact(total_profit_loss)}
-        fullValue={`${total_profit_loss >= 0 ? '+' : '-'}K${Math.abs(total_profit_loss).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-        sub={`on ${settled_bets} settled`}
-        tone={plTone}
-      />
-      <KPICard
-        icon={Layers}
-        label="Avg Odds"
-        value={avg_odds != null ? avg_odds.toFixed(2) : '—'}
-        sub="avg odds taken"
-        tone="neutral"
-      />
-      <KPICard
-        icon={Layers}
-        label="Total Staked"
-        value={fmtKCompact(total_stake)}
-        fullValue={`K${total_stake.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-        sub={`${settled_bets} settled`}
-        tone="muted"
-      />
-      <KPICard
-        icon={Clock}
-        label="Pending"
-        value={pending_bets}
-        sub="awaiting results"
-        tone="muted"
-      />
-      <KPICard
-        icon={ClvIcon}
-        label="Avg CLV"
-        value={avg_clv != null ? `${avg_clv >= 0 ? '+' : ''}${avg_clv.toFixed(1)}%` : '—'}
-        sub={
-          avg_clv != null
-            ? `${clv_coverage_pct.toFixed(0)}% coverage · ${positive_clv_pct?.toFixed(0) ?? '?'}% positive`
-            : 'no closing data yet'
-        }
-        tone={clvTone}
-      />
+    <div className="space-y-2">
+      {/* Primary KPIs */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <KPICard
+          icon={RoiIcon}
+          label="ROI"
+          value={`${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%`}
+          sub="return on investment"
+          tone={roiTone}
+        />
+        <KPICard
+          icon={Target}
+          label="Hit Rate"
+          value={`${win_rate.toFixed(1)}%`}
+          sub={`${wins}W · ${losses}L`}
+          tone={wrTone}
+        />
+        <KPICard
+          icon={BarChart2}
+          label="Net P&L"
+          value={fmtPLCompact(total_profit_loss)}
+          fullValue={`${total_profit_loss >= 0 ? '+' : '-'}K${Math.abs(total_profit_loss).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          sub={`on ${settled_bets} settled`}
+          tone={plTone}
+        />
+        <KPICard
+          icon={ClvIcon}
+          label="Avg CLV"
+          value={avg_clv != null ? `${avg_clv >= 0 ? '+' : ''}${avg_clv.toFixed(1)}%` : '—'}
+          sub={
+            avg_clv != null
+              ? `${clv_coverage_pct.toFixed(0)}% coverage · ${positive_clv_pct?.toFixed(0) ?? '?'}% positive`
+              : 'no closing data yet'
+          }
+          tone={clvTone}
+        />
+      </div>
+
+      {/* Secondary metrics — operational context, lower visual weight */}
+      <div className="flex items-center gap-4 px-1 text-[11px] text-[var(--text)] opacity-60">
+        <span>
+          Avg odds{' '}
+          <span className="font-semibold text-[var(--text-h)]">
+            {avg_odds != null ? avg_odds.toFixed(2) : '—'}
+          </span>
+        </span>
+        <span>
+          Staked{' '}
+          <span
+            className="font-semibold text-[var(--text-h)]"
+            title={`K${total_stake.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          >
+            {fmtKCompact(total_stake)}
+          </span>
+        </span>
+        {pending_bets > 0 && (
+          <span>
+            <span className="font-semibold text-amber-400">{pending_bets}</span> pending
+          </span>
+        )}
+      </div>
     </div>
   )
 }

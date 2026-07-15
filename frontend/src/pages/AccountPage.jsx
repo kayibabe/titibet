@@ -1,5 +1,5 @@
 ﻿import { useState } from 'react'
-import { Save, KeyRound, User, CheckCircle } from 'lucide-react'
+import { Save, KeyRound, User, CheckCircle, Zap, Send } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { apiFetch } from '../api/client'
 import { fmtDate } from '../utils/format'
@@ -40,8 +40,9 @@ function Input({ value, onChange, type = 'text', placeholder, autoComplete }) {
   )
 }
 
-export default function AccountPage() {
+export default function AccountPage({ onUpgrade }) {
   const { user, logout } = useAuth()
+  const isFree = !user?.tier || user.tier === 'free'
 
   const [name, setName] = useState(user?.name || '')
   const [timezone, setTimezone] = useState(user?.timezone || 'Africa/Blantyre')
@@ -125,6 +126,15 @@ export default function AccountPage() {
             )}
           </p>
         </div>
+        {isFree && onUpgrade && (
+          <button
+            onClick={onUpgrade}
+            className="shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-semibold hover:opacity-90 transition-opacity"
+          >
+            <Zap size={13} />
+            Upgrade to Pro
+          </button>
+        )}
       </div>
 
       {/* Profile */}
@@ -183,6 +193,37 @@ export default function AccountPage() {
             {pwSaved ? 'Updated!' : pwLoading ? 'Updating…' : 'Update Password'}
           </button>
         </form>
+      </Section>
+
+      {/* Notifications */}
+      <Section title="Notifications">
+        <div className="space-y-3">
+          <p className="text-sm text-[var(--text)] opacity-75">
+            Get daily pick digests and ACCA alerts on Telegram — sent at 21:00 CAT (evening picks) and 06:00 CAT (morning confirmation).
+          </p>
+          <div className="flex flex-col gap-2">
+            <a
+              href="https://t.me/TiTiBetFree"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[var(--border)] text-sm font-medium text-[var(--text-h)] hover:bg-[var(--code-bg)] transition-colors w-fit"
+            >
+              <Send size={14} className="text-sky-400" />
+              Free channel — daily top 3 picks
+            </a>
+            {!isFree && (
+              <a
+                href="https://t.me/TiTiBetPro"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[var(--border)] text-sm font-medium text-[var(--text-h)] hover:bg-[var(--code-bg)] transition-colors w-fit"
+              >
+                <Send size={14} className="text-violet-400" />
+                Pro channel — full digest + ACCA
+              </a>
+            )}
+          </div>
+        </div>
       </Section>
 
       {/* Danger zone */}
