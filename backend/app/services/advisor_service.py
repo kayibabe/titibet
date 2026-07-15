@@ -668,6 +668,24 @@ async def auto_track_advisor_picks(
                 else:
                     continue
 
+            # Over 1.5 quality gate: Bayesian-only Over 1.5 at 1.30–1.36 in early
+            # European qualifying has ~43% WR — far below the ~75% break-even at
+            # those odds. Reject entirely below 1.40; require Both-engine agreement
+            # when odds are 1.40–1.50.
+            if market == "Over 1.5":
+                if odds < 1.40:
+                    logger.debug(
+                        "auto_track_advisor_picks: Over 1.5 @ %.2f below 1.40 floor — skip (%s vs %s)",
+                        odds, fix.home_team, fix.away_team,
+                    )
+                    continue
+                if odds < 1.50 and sig.dual_agreement != "Both":
+                    logger.debug(
+                        "auto_track_advisor_picks: Over 1.5 @ %.2f needs Both agreement, got %s — skip (%s vs %s)",
+                        odds, sig.dual_agreement, fix.home_team, fix.away_team,
+                    )
+                    continue
+
             key = (fix.id, market, rule_key)
             if key in existing_keys:
                 continue
