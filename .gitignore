@@ -19,6 +19,7 @@ deploy/.env.production
 backend/*.db
 backend/*.db-shm
 backend/*.db-wal
+backend/*.db.live
 
 # Frontend build output
 frontend/dist/
@@ -52,7 +53,9 @@ backend/.cache/
 # Temporary fix / debug scripts
 backend/fix_*.py
 backend/settle_now.py
+backend/query_check.py
 commitmsg.txt
+"ai websites.txt"
 
 # One-off maintenance and backfill scripts
 backend/backfill_*.py
