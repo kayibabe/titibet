@@ -894,6 +894,12 @@ async def cleanup_tracked_bets(
         {}, "Over 1.5 non-High",
     )
 
+    # 4a. Over 1.5 Bayesian Only — Poisson doesn't confirm the goals line
+    results["over15_bayesian_only"] = await _count_and_delete(
+        "market_type = 'Over 1.5' AND dual_agreement = 'Bayesian Only'",
+        {}, "Over 1.5 Bayesian Only",
+    )
+
     # 5. Over 2.5 Tier 3
     results["over25_tier3"] = await _count_and_delete(
         "market_type = 'Over 2.5' AND fixture_id IN (SELECT id FROM fixtures WHERE league_tier >= 3)",
@@ -1012,6 +1018,9 @@ async def cleanup_tracked_bets(
     sig_results["disabled_markets"] = await _cads(
         f"s.market IN ({dm_placeholders})", dm_params
     )
+    sig_results["over15_bayesian_only"] = await _cads(
+        "s.market = 'Over 1.5' AND s.dual_agreement = 'Bayesian Only'", {}
+    )
     sig_results["disabled_leagues"] = await _cads(
         f"EXISTS (SELECT 1 FROM fixtures f WHERE f.id = s.fixture_id AND ({fix_dl_like}))",
         sdl_params,
@@ -1097,6 +1106,134 @@ async def cleanup_tracked_bets(
                 for r in analytics_rows
             ],
         },
+    }
+
+
+@router.post("/backfill-dates")
+async def backfill_dates(
+    date_from: str = Query(description="Start date inclusive, YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="End date inclusive (default: today)"),
+    dry_run: bool = Query(False, description="Preview only — no DB writes, no API calls"),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Full re-sync for each date in the range: ingest fixtures/odds from API-Football,
+    recompute signals, auto-track qualifying picks, then settle all pending bets.
+
+    For past dates the API returns final scores but no odds — signals recompute from
+    existing market_snapshots when available. If a date has no snapshots, signals will
+    be skipped (returned in 'no_snapshots' list).
+
+    Use dry_run=true to preview which dates would be processed without making API calls.
+    """
+    import asyncio
+    from datetime import date, timedelta
+    from sqlalchemy import func as sqlfunc, text as sqltxt
+    from app.services.ingestion import sync_date
+    from app.services.signal_engine import compute_signals_for_date
+    from app.services.auto_tracker import auto_track_date
+    from app.services.settlement import settle_bets_for_date
+    from app.models import Signal, Fixture
+    from app.core.config import DISABLED_MARKETS, DISABLED_LEAGUES
+    from app.core.database import AsyncSessionLocal
+
+    try:
+        start = date.fromisoformat(date_from)
+    except ValueError:
+        raise HTTPException(400, f"Invalid date_from: {date_from!r} — use YYYY-MM-DD")
+    try:
+        end = date.fromisoformat(date_to) if date_to else date.today()
+    except ValueError:
+        raise HTTPException(400, f"Invalid date_to: {date_to!r} — use YYYY-MM-DD")
+    if end < start:
+        raise HTTPException(400, "date_to must be >= date_from")
+    if (end - start).days > 60:
+        raise HTTPException(400, "Date range cannot exceed 60 days")
+
+    if dry_run:
+        # Just preview which dates exist in DB vs missing
+        async with AsyncSessionLocal() as db:
+            preview = []
+            current = start
+            while current <= end:
+                snap_count = (await db.execute(sqltxt(
+                    "SELECT COUNT(*) FROM market_snapshots ms "
+                    "JOIN fixtures f ON f.id = ms.fixture_id "
+                    "WHERE f.event_date = :d"
+                ), {"d": current.isoformat()})).scalar() or 0
+                sig_count = (await db.execute(sqltxt(
+                    "SELECT COUNT(*) FROM signals s "
+                    "JOIN fixtures f ON f.id = s.fixture_id "
+                    "WHERE f.event_date = :d AND s.is_candidate = 0"
+                ), {"d": current.isoformat()})).scalar() or 0
+                bet_count = (await db.execute(sqltxt(
+                    "SELECT COUNT(*) FROM tracked_bets WHERE event_date = :d AND user_id IS NULL"
+                ), {"d": current.isoformat()})).scalar() or 0
+                preview.append({
+                    "date": current.isoformat(),
+                    "market_snapshots": snap_count,
+                    "signals": sig_count,
+                    "system_bets": bet_count,
+                    "action": "sync+compute+track" if snap_count == 0 else (
+                        "compute+track" if sig_count == 0 else (
+                            "track" if bet_count == 0 else "skip (already tracked)"
+                        )
+                    ),
+                })
+                current += timedelta(days=1)
+        return {"dry_run": True, "date_from": date_from, "date_to": end.isoformat(), "preview": preview}
+
+    # Live run — process each date sequentially
+    results = []
+    current = start
+    while current <= end:
+        date_str = current.isoformat()
+        entry: dict = {
+            "date": date_str,
+            "ingested": False,
+            "signals_computed": 0,
+            "bets_tracked": 0,
+            "error": None,
+        }
+        async with AsyncSessionLocal() as db:
+            try:
+                run = await asyncio.wait_for(sync_date(db, current, force=True), timeout=120)
+                entry["ingested"] = run.status == "success"
+                entry["fixtures_pulled"] = getattr(run, "fixtures_pulled", 0)
+                if run.status == "success":
+                    n_sig = await asyncio.wait_for(
+                        compute_signals_for_date(db, current), timeout=90
+                    )
+                    entry["signals_computed"] = n_sig
+                    await db.commit()
+                    n_track = await auto_track_date(db, current)
+                    entry["bets_tracked"] = n_track
+                else:
+                    entry["error"] = f"ingestion status: {run.status}"
+            except asyncio.TimeoutError:
+                entry["error"] = "timed out (>120s)"
+            except Exception as exc:
+                entry["error"] = str(exc)
+        results.append(entry)
+        current += timedelta(days=1)
+
+    # Settle all pending bets (all dates) after back-filling
+    settled_count = 0
+    async with AsyncSessionLocal() as db:
+        try:
+            info = await settle_bets_for_date(db, None)
+            settled_count = info.get("settled", 0)
+        except Exception as exc:
+            settled_count = -1
+
+    return {
+        "dry_run": False,
+        "date_from": date_from,
+        "date_to": end.isoformat(),
+        "days_processed": len(results),
+        "total_bets_tracked": sum(r.get("bets_tracked", 0) for r in results),
+        "total_settled": settled_count,
+        "detail": results,
     }
 
 

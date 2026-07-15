@@ -151,3 +151,42 @@ export async function triggerStrategyPipeline() {
   }
   return res.json()
 }
+
+/** Delete non-qualifying tracked_bets and signal rows based on current gate rules. */
+export async function cleanupTrackedBets({ dryRun = false } = {}) {
+  const res = await apiFetch(`/api/admin/cleanup-tracked-bets?dry_run=${dryRun}`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Cleanup failed')
+  }
+  return res.json()
+}
+
+/**
+ * Preview which dates in a range need back-filling.
+ * dry_run=true is fast (no API calls); dry_run=false does the full sync.
+ */
+export async function backfillDates({ dateFrom, dateTo, dryRun = false } = {}) {
+  const params = new URLSearchParams({ date_from: dateFrom, dry_run: String(dryRun) })
+  if (dateTo) params.set('date_to', dateTo)
+  const res = await apiFetch(`/api/admin/backfill-dates?${params}`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Backfill failed')
+  }
+  return res.json()
+}
+
+/** Trigger a full sync (ingest + signals + track + settle) for a single date. */
+export async function triggerSync({ date, morningExtras = false, eveningExtras = false } = {}) {
+  const params = new URLSearchParams()
+  if (date) params.set('run_date', date)
+  if (morningExtras) params.set('morning_extras', 'true')
+  if (eveningExtras) params.set('evening_extras', 'true')
+  const res = await apiFetch(`/api/admin/sync/trigger?${params}`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Sync trigger failed')
+  }
+  return res.json()
+}
