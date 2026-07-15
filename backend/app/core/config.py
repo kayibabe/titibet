@@ -405,6 +405,15 @@ DISABLED_LEAGUES: frozenset = frozenset({
     # Superettan (Sweden second div): -39,500 P&L, 60% WR on 5 bets.
     # Edge exists but smaller than model estimates; paused pending ≥20-bet re-audit.
     "superettan",
+    # ── Disabled 2026-07-15 (audit: confirmed loss-making or no track record) ──
+    # Serie C (Brazilian 3rd division): no settled-bet track record; Tier 3 with
+    # thin bookmaker coverage and high structural variability. Amazonas 0-1 loss
+    # Jul 9 @ 1.30 HO0.5. Block until ≥20 settled bets establish a baseline.
+    "serie c",
+    # Serie B (Italian + Brazilian): 5W/3L at avg 1.54 odds on losses → -8.1% ROI.
+    # Same -47,500 P&L evidence flagged for HALVED_STAKE. Tactically defensive
+    # style; home scoring rates lower than lambda estimates. Re-audit at ≥20 bets.
+    "serie b",
 })
 
 # Leagues where the auto-tracker stake is halved (×0.5) instead of full FLAT_STAKE.

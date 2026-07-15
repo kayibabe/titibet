@@ -432,6 +432,19 @@ async def list_signals(
             )
         ]
 
+    # Over 1.5 Bayesian Only gate: suppress Over 1.5 signals where only the
+    # Bayesian (price-consensus) engine fired and Poisson gives no confirmation.
+    # Poisson models goal totals directly — Bayesian Only on a goals market means
+    # price movement is the sole evidence, which is insufficient for a goals line.
+    # Backtest Jul 9: Bate Borisov vs FC Gomel (Belarus, 1.34) lost Bayesian Only.
+    rows = [
+        (sig, fix) for sig, fix in rows
+        if not (
+            sig.market == "Over 1.5"
+            and sig.dual_agreement == "Bayesian Only"
+        )
+    ]
+
     # Copa/cup gate: suppress Home Over 0.5 in South American cup competitions.
     # Rotation/reserve line-ups + knockout incentives depress home-scoring rates.
     if COPA_HO05_SUPPRESSED_LEAGUES:
