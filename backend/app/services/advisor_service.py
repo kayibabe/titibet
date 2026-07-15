@@ -96,37 +96,14 @@ ACCA_BUILDER: dict = {
     ),
 }
 
+# ── Advisor roster ───────────────────────────────────────────────────────────
+# 2026-07-11 audit: Scout (42.9% paper WR) and Skeptic (50% paper WR) retired.
+# Strategist (60% paper WR, most conservative) retained and converted to a small
+# real stake (STRATEGIST_REAL_STAKE) to generate a live performance signal over
+# the next 30 bets before deciding whether to restore the others.
+STRATEGIST_REAL_STAKE: float = 10_000.0
+
 ADVISORS: list[dict] = [
-    {
-        "id":    "scout",
-        "name":  "The Scout",
-        "role":  "Signal validation & match context",
-        "emoji": "🔭",
-        "models": {
-            "claude":   "claude-sonnet-5",
-            "gemini":   "gemini-2.0-flash",
-            "cerebras": "llama3.1-70b",
-            "groq":     "llama-3.1-8b-instant",          # same pool as Skeptic — 70b-versatile quota exhausts first
-            "mistral":  "mistral-small-latest",
-        },
-        "system": (
-            "You are a professional football betting analyst specialising in statistical signal validation. "
-            "You receive signals from a dual-engine system (Bayesian consensus + Poisson probability model) "
-            "alongside historical match data (form, head-to-head, team stats). "
-            "Your job: for each match, assess whether the contextual data SUPPORTS or UNDERMINES the signal. "
-            "Do not just restate the numbers — add genuine analytical insight. "
-            "Focus on 1-2 sentences of real observation per match. "
-            "Identify the strongest 2-3 picks overall. "
-            "Always respond with valid JSON only. No markdown, no prose outside the JSON."
-        ),
-        "task": (
-            "Analyse each signal. Return JSON with this exact shape:\n"
-            '{"verdict":"Strong"|"Mixed"|"Caution",'
-            '"top_picks":[{"home_team":"...","away_team":"...","market":"...","reason":"..."},...],'
-            '"warnings":["warning",...],'
-            '"summary":"2-3 sentence paragraph"}'
-        ),
-    },
     {
         "id":    "strategist",
         "name":  "The Strategist",
@@ -136,7 +113,7 @@ ADVISORS: list[dict] = [
             "claude":   "claude-sonnet-5",
             "gemini":   "gemini-2.0-flash",
             "cerebras": "llama3.1-70b",
-            "groq":     "llama-3.1-8b-instant",          # same pool as Skeptic — 70b-versatile quota exhausts first
+            "groq":     "llama-3.1-8b-instant",
             "mistral":  "mistral-small-latest",
         },
         "system": (
@@ -155,37 +132,6 @@ ADVISORS: list[dict] = [
             '"top_picks":[{"home_team":"...","away_team":"...","market":"...","reason":"..."},...],'
             '"warnings":["correlation/concentration note",...],'
             '"summary":"2-3 sentence paragraph on the day\'s overall opportunity"}'
-        ),
-    },
-    {
-        "id":    "skeptic",
-        "name":  "The Skeptic",
-        "role":  "Contrarian risk & red-flag analysis",
-        "emoji": "🧐",
-        "models": {
-            "claude":   "claude-sonnet-5",
-            "gemini":   "gemini-2.0-flash",
-            "cerebras": "llama3.1-70b",
-            "groq":     "llama-3.1-8b-instant",       # 8B model = separate rate-limit pool from 70B
-            "mistral":  "mistral-small-latest",
-        },
-        "system": (
-            "You are a contrarian football betting analyst — your job is to find reasons NOT to bet. "
-            "You receive signals from an AI model system and related match data. "
-            "Look for: thin bookmaker coverage suggesting model may be fitting noise, "
-            "team motivational factors (dead rubbers, rotation risk, fixture congestion), "
-            "H2H patterns that contradict the signal, misleading form (e.g. wins against weak opposition), "
-            "markets with historically low model accuracy. "
-            "You are the last line of defence before money goes down. Be sceptical but fair — "
-            "if a signal genuinely looks solid, say so. "
-            "Always respond with valid JSON only. No markdown, no prose outside the JSON."
-        ),
-        "task": (
-            "Find risks and red flags. Return JSON with this exact shape:\n"
-            '{"verdict":"Strong"|"Mixed"|"Caution",'
-            '"top_picks":[{"home_team":"...","away_team":"...","market":"...","reason":"..."},...],'
-            '"warnings":["specific red flag",...],'
-            '"summary":"2-3 sentence contrarian assessment"}'
         ),
     },
 ]
@@ -726,6 +672,9 @@ async def auto_track_advisor_picks(
             if key in existing_keys:
                 continue
 
+            # Strategist uses a real stake for live performance tracking;
+            # all other advisors remain at zero (paper-trade only).
+            advisor_stake = STRATEGIST_REAL_STAKE if adv_id == "strategist" else 0.0
             db.add(TrackedBet(
                 user_id=None,
                 fixture_id=fix.id,
@@ -736,7 +685,7 @@ async def auto_track_advisor_picks(
                 market_type=market,
                 selection_name=market,
                 odds=odds,
-                stake=0.0,
+                stake=advisor_stake,
                 source_rule_key=rule_key,
                 source_rule_label=rule_label,
                 dual_confidence=sig.dual_confidence,
@@ -987,7 +936,7 @@ async def auto_track_acca_legs(
                 market_type=market,
                 selection_name=market,
                 odds=odd,
-                stake=50_000.0,
+                stake=25_000.0,  # halved from 50k: reduces variance while acca track record builds
                 source_rule_key="acca_leg_system",
                 source_rule_label="AI Acca Leg (Auto)",
                 dual_confidence=ticket.get("confidence"),
@@ -1259,7 +1208,8 @@ async def get_advisor_insights(
         perf_weights = None
     context = _build_context(rows, match_infos, perf_weights)
 
-    # AI-3: Build Skeptic-specific divergence extras (market vs model, thin coverage, drift)
+    # Skeptic divergence extras are kept for the Acca Builder context even though
+    # the Skeptic advisor was retired — the ACCA pool's skeptic-veto filter still uses it.
     skeptic_extras = _build_skeptic_extras(rows)
 
     # ── Acca builder gets its own signal pool (tiered fallbacks) ─────────────
@@ -1270,12 +1220,17 @@ async def get_advisor_insights(
     def _primary_prob(sig: Signal) -> float:
         return max(sig.bayesian_prob or 0.0, sig.poisson_prob or 0.0)
 
-    # Tier 1: best — High+Both+prob≥0.70
+    # Acca pool tiers — all require Both engine agreement (no single-engine legs).
+    # 2026-07-11 audit: removed acca_t4 (Poisson-Only fallback) after loss review
+    # confirmed single-engine legs compound variance unacceptably in multi-leg tickets.
+    # If no Both-agreement pool reaches 3 legs, no acca is built for the day.
+
+    # Tier 1: best — High+Both+prob≥0.72 (raised from 0.70: 2026-07-11 ACCA tightening)
     acca_t1 = [
         (sig, fix) for sig, fix in rows
         if sig.dual_confidence == "High"
         and sig.dual_agreement == "Both"
-        and _primary_prob(sig) >= 0.70
+        and _primary_prob(sig) >= 0.72
     ]
     # Tier 2: High+Both, no prob floor
     acca_t2 = [
@@ -1283,22 +1238,11 @@ async def get_advisor_insights(
         if sig.dual_confidence == "High"
         and sig.dual_agreement == "Both"
     ]
-    # Tier 3: Both agreement at any confidence (no prob floor).
-    # Structurally distinct from T4: requires engine consensus but not a specific
-    # probability level.  T2 (High+Both) is a subset; T3 adds Medium+Both signals
-    # that fall through T2.  T4 (mixed-engine at ≥60%) is the single-engine fallback.
+    # Tier 3: Both agreement at any confidence, prob≥0.60.
     acca_t3 = [
         (sig, fix) for sig, fix in rows
         if sig.dual_agreement == "Both"
-    ]
-    # Tier 4: any signal with max prob ≥ 0.60, excluding Bayesian Only.
-    # Bayesian Only means the Poisson goal model does not confirm — one unvalidated
-    # engine in an ACCA leg compounds across all legs, so single-engine agreement
-    # is not acceptable here even as a last resort.
-    acca_t4 = [
-        (sig, fix) for sig, fix in rows
-        if _primary_prob(sig) >= 0.60
-        and sig.dual_agreement != "Bayesian Only"
+        and _primary_prob(sig) >= 0.60
     ]
 
     if len(acca_t1) >= 3:
@@ -1307,10 +1251,8 @@ async def get_advisor_insights(
         acca_pool = acca_t2
     elif len(acca_t3) >= 3:
         acca_pool = acca_t3
-    elif len(acca_t4) >= 3:
-        acca_pool = acca_t4
     else:
-        acca_pool = list(rows)  # last resort: all signals
+        acca_pool = []  # insufficient Both-agreement legs — no acca today
 
     # ACCA ceiling: enforce DUAL_HIGH_ODDS_CEILING for ANY Both-agreement signal,
     # not just High+Both (which is what the main list endpoint gates).
@@ -1387,23 +1329,20 @@ async def get_advisor_insights(
 
     acca_context = _build_context(acca_pool, match_infos, perf_weights)
 
+    n_advisors = len(ADVISORS)
     all_advisor_coros = [
-        _call_advisor(
-            adv, context, settings,
-            extra_context=skeptic_extras if adv["id"] == "skeptic" else "",
-        )
+        _call_advisor(adv, context, settings)
         for adv in ADVISORS
     ]
-    # Run all 4 advisors (3 council + acca builder) concurrently
+    # Run advisor(s) + acca builder concurrently
     all_advisor_coros.append(_call_advisor(ACCA_BUILDER, acca_context, settings))
 
     all_outputs = await asyncio.gather(*all_advisor_coros)
-    advisor_outputs = all_outputs[:3]
-    acca_model_label, acca_result = all_outputs[3]
+    advisor_outputs = all_outputs[:n_advisors]
+    acca_model_label, acca_result = all_outputs[n_advisors]
 
-    # AI-3: Consensus verdict — aggregate across the advisors that actually
-    # answered. Errored advisors carry a placeholder "Mixed" verdict which
-    # would dilute the consensus, so they're excluded.
+    # Consensus verdict — pass through the single advisor's verdict directly
+    # (averaging only makes sense with multiple advisors).
     _verdict_score = {"Strong": 2, "Mixed": 1, "Caution": 0}
     advisor_verdicts = [
         result.get("verdict", "Mixed")

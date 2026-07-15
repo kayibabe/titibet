@@ -22,18 +22,19 @@ from app.core.config import (
 )
 from app.services.signal_engine import _get_underperforming_leagues
 
-_MIN_PROB = 0.62
+# 2026-07-11 ACCA tightening: raised all probability floors after -33.5% ROI audit.
+# Each compounded leg error hurts more in a multi-leg ticket than in a single;
+# the floors must be higher here than in singles to compensate for that variance.
+_MIN_PROB = 0.68            # was 0.62 — global floor for all ACCA legs
 # HO0.5 legs require higher conviction than other markets in ACCA context.
-# A Both+High HO0.5 at 0.65 primary_prob already passes the global floor but
-# the market's track record of 0-0 losses (especially Tier 2/3) means we need
+# The market's track record of 0-0 losses (especially Tier 2/3) means we need
 # the model to be meaningfully more confident before compounding the leg.
-_HO05_ACCA_MIN_PROB = 0.70
+_HO05_ACCA_MIN_PROB = 0.75  # was 0.70 — stricter gate since HO0.5 is most problematic
 _ALLOWED_CONFIDENCE = {"Medium", "High"}
 # For Both+High ACCA legs both engines must individually clear this floor.
-# Mirrors the auto_tracker gate (DUAL_HIGH_MIN_PROB) so weak Both+High signals
-# that are barred from singles are also barred from ACCA legs — compounding
-# per-leg errors makes the threshold more important, not less, in ACCA context.
-_ACCA_DUAL_HIGH_MIN_PROB = 0.73
+# Raised 0.73 → 0.76 so weak Both+High signals that borderline-qualify for singles
+# are excluded from ACCA legs where the compounding risk is higher.
+_ACCA_DUAL_HIGH_MIN_PROB = 0.76  # was 0.73
 
 
 def _primary_prob(sig: Signal) -> float:

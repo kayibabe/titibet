@@ -394,6 +394,27 @@ DISABLED_LEAGUES: frozenset = frozenset({
     "serie c - promotion - play-offs",
     "serie d",
     "usl championship",
+    # ── Disabled 2026-07-11 (audit: confirmed loss-making leagues) ────────────
+    # Damallsvenskan: -73,500 P&L, 50% WR on 4 bets. Women's league — models
+    # calibrated on men's football overestimate home scoring. Already suppressed
+    # by WOMEN_OVER_SUPPRESSED_MARKETS; hard-blocked here as a belt-and-suspenders guard.
+    "damallsvenskan",
+    # Erovnuli Liga 2 (Georgia second div): -54,000 P&L, 71.4% WR on 7 bets.
+    # Thin bookmaker coverage (2-3 books) makes Bayesian edge estimates unreliable.
+    "erovnuli liga 2",
+    # Superettan (Sweden second div): -39,500 P&L, 60% WR on 5 bets.
+    # Edge exists but smaller than model estimates; paused pending ≥20-bet re-audit.
+    "superettan",
+})
+
+# Leagues where the auto-tracker stake is halved (×0.5) instead of full FLAT_STAKE.
+# Use when the edge appears real but smaller than modelled — reduces variance while
+# keeping the league in the feed until a larger settled-bet sample confirms the edge.
+# Matched via lower(trim(league)) exact match, same as DISABLED_LEAGUES.
+HALVED_STAKE_LEAGUES: frozenset = frozenset({
+    # Serie B (Italy): -47,500 P&L, 62.5% WR on 8 bets. Tactically defensive;
+    # lambda estimates run high vs actual home-scoring rates. Re-audit at 20+ bets.
+    "serie b",
 })
 
 MARKET_PROB_BOUNDS: dict = {

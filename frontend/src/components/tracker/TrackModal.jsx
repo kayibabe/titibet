@@ -73,7 +73,7 @@ export default function TrackModal({ signal, bankroll, onClose, onTracked }) {
         dual_confidence: signal.dual_confidence,
         recommended_stake_pct: signal.dual_recommended_stake_pct,
         signal_grade: signal.poisson?.grade ?? null,
-        source_rule_key: signal.poisson?.rule_key ?? null,
+        source_rule_key: 'manual',
         source_rule_label: signal.tracking_source_family ?? null,
         notes: notes.trim() || null,
       })

@@ -35,7 +35,7 @@ from app.core.config import (
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
     WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
     DISABLED_LEAGUES, DISABLED_MARKETS, OVER_GOALS_SUPPRESSED_LEAGUES,
-    OVER25_SUPPRESSED_TIERS, MARKET_MIN_ODDS,
+    OVER25_SUPPRESSED_TIERS, MARKET_MIN_ODDS, HALVED_STAKE_LEAGUES,
     is_womens_fixture,
 )
 from app.services.acca_builder import build_acca_candidates, build_accumulator
@@ -250,6 +250,9 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
 
         # Apply active kelly_fraction_adj multiplier (from learning proposals).
         kelly_mult = kelly_mults.get(confidence, 1.0)
+        # Halve stake for leagues confirmed to have smaller edge than modelled.
+        if league_lower in HALVED_STAKE_LEAGUES:
+            kelly_mult *= 0.5
         stake = round(FLAT_STAKE * kelly_mult)
         if stake != FLAT_STAKE:
             logger.debug(
