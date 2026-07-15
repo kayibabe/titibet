@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react'
-import { ChevronDown, ChevronUp, Target, Clock, TrendingDown, TrendingUp, Lock, CheckCircle2, Lightbulb, X, Heart, Zap, Bot } from 'lucide-react'
+import { ChevronDown, ChevronUp, Clock, TrendingDown, TrendingUp, Lock, CheckCircle2, Lightbulb, X, Heart, Bot } from 'lucide-react'
 import { ConfidenceBadge, AgreementBadge } from './SignalBadge'
 import EngineBreakdown from './EngineBreakdown'
 import ContradictionAlert from './ContradictionAlert'
@@ -81,102 +81,19 @@ function DriftBadge({ driftPct }) {
   return null
 }
 
-// ── Cross-module synergy badge — high-conviction combos ──────────────────────
-// Fires when two independent models independently confirm the same thesis,
-// which is a much stronger signal than either model alone.
-// Combo A: BOS SI ≥ 85 + BREA RI₁ < 8%   → structural stability AND low BTTS risk
-// Combo B: FHGI FHGMI > 2.5 + BOS passed → strong first-half goal signal with structural support
-function SynergyBadge({ adv, market }) {
-  if (!adv) return null
-
-  const bosSi   = adv.bos_si
-  const bosPassed = adv.bos_passed
-  const breaRi1 = adv.brea_ri1
-  const fhgmv   = adv.fhgi_fhgmi
-
-  // Combo A: high-conviction defensive / under-goals selection
-  if (
-    bosSi != null && bosSi >= 85 &&
-    breaRi1 != null && breaRi1 < 0.08 &&
-    (market === 'BTTS Yes' || market?.startsWith('Under'))
-  ) {
-    return (
-      <span
-        title={`High-conviction combo: BOS SI=${bosSi.toFixed(0)} (≥85) + BREA RI₁=${(breaRi1*100).toFixed(1)}% (<8%) — structural stability and low failure probability confirmed by two independent models`}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border bg-amber-500/15 text-amber-300 border-amber-500/40"
-      >
-        <Zap size={9} />
-        High-Conv · Dual confirmed
-      </span>
-    )
-  }
-
-  // Combo B: high-conviction first-half goal selection
-  if (
-    fhgmv != null && fhgmv > 2.5 &&
-    bosPassed &&
-    market === 'Over 0.5 1H'
-  ) {
-    return (
-      <span
-        title={`High-conviction combo: FHGMI=${fhgmv.toFixed(2)} (>2.50) + BOS structure stable — strong first-half scoring intensity with structural support`}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border bg-violet-500/15 text-violet-300 border-violet-500/40"
-      >
-        <Zap size={9} />
-        High-Conv · FH intensity
-      </span>
-    )
-  }
-
-  return null
-}
-
 function MarketIntentBadge({ market }) {
   let label = null
   let style = ''
 
-  if (
-    market === 'Over 0.5' ||
-    market === 'Over 1.5' ||
-    market === 'Over 2.5' ||
-    market === 'Over 3.5' ||
-    market === 'Home Over 0.5' ||
-    market === 'Home Over 1.5' ||
-    market === 'Away Over 0.5' ||
-    market === 'Away Over 1.5'
-  ) {
+  if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Home Over 0.5') {
     label = 'Goals Lean'
     style = 'bg-rose-500/10 text-rose-600 border-rose-500/30'
-  } else if (market === 'BTTS Yes' || market === 'BTTS No') {
-    label = 'Team Scoring Read'
-    style = 'bg-violet-500/10 text-violet-600 border-violet-500/30'
-  } else if (
-    market === 'Under 1.5' ||
-    market === 'Under 2.5' ||
-    market === 'Under 3.5'
-  ) {
+  } else if (market === 'Under 2.5') {
     label = 'Goals Suppression'
     style = 'bg-sky-500/15 text-sky-400 border-sky-500/35'
-  } else if (market === '1X (Home or Draw)' || market === 'X2 (Draw or Away)' || market === '12 (Home or Away)') {
-    label = 'Safer Market'
-    style = 'bg-blue-500/12 text-blue-500 border-blue-500/30'
-  } else if (
-    market === 'Home Under 0.5' ||
-    market === 'Home Under 1.5' ||
-    market === 'Away Under 0.5' ||
-    market === 'Away Under 1.5'
-  ) {
-    label = 'Inverse Scoring Angle'
-    style = 'bg-sky-500/12 text-sky-400 border-sky-500/30'
   } else if (market === 'Home Win to Nil' || market === 'Away Win to Nil') {
     label = 'Clean Sheet Value'
     style = 'bg-emerald-500/12 text-emerald-600 border-emerald-500/35'
-  } else if (market === 'Exactly 1 Goal' || market === 'Exactly 2 Goals' || market === 'Exactly 3 Goals') {
-    label = 'High Variance Value'
-    style = 'bg-fuchsia-500/10 text-fuchsia-600 border-fuchsia-500/30'
-  } else if (market === 'Underdog Over 1.5 Corners') {
-    label = 'Corner Pressure'
-    style = 'bg-orange-500/10 text-orange-600 border-orange-500/30'
   }
 
   if (!label) return null
@@ -196,32 +113,11 @@ function getWhyMarketChips(signal) {
   const agreement = signal.dual_agreement
   const tier = signal.league_tier
 
-  if (market === '1X (Home or Draw)' || market === 'X2 (Draw or Away)' || market === '12 (Home or Away)') {
-    chips.push('double-chance cover')
-  }
-  if (
-    market === 'Home Under 0.5' ||
-    market === 'Home Under 1.5' ||
-    market === 'Away Under 0.5' ||
-    market === 'Away Under 1.5'
-  ) {
-    chips.push('inverse scoring angle')
-  }
   if (market === 'Home Win to Nil' || market === 'Away Win to Nil') {
     chips.push('clean-sheet setup')
   }
-  if (market === 'Exactly 1 Goal' || market === 'Exactly 2 Goals' || market === 'Exactly 3 Goals') {
-    chips.push('tight exact-goals cluster')
-  }
-  if (
-    market === 'Over 0.5' || market === 'Over 1.5' || market === 'Over 2.5' || market === 'Over 3.5' ||
-    market === 'Home Over 0.5' || market === 'Home Over 1.5' ||
-    market === 'Away Over 0.5' || market === 'Away Over 1.5'
-  ) {
+  if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Home Over 0.5') {
     chips.push('goals expectation')
-  }
-  if (market === 'BTTS Yes' || market === 'BTTS No') {
-    chips.push('team-scoring read')
   }
   if (agreement === 'Both') {
     chips.push('both engines agree')
@@ -244,20 +140,14 @@ function getWhyMarketChips(signal) {
   if (adv?.bos_passed) {
     chips.push('stable match profile')
   }
-  if (adv?.brea_ri1 != null && adv.brea_ri1 < 0.07 && market === 'BTTS Yes') {
-    chips.push('low BTTS risk')
-  }
-  if (adv?.fhgi_p_model != null && adv.fhgi_p_model > 0.55 && market === 'Over 0.5 1H') {
-    chips.push('FHGI confirmed')
-  }
   if (adv?.glicko_r_diff != null && Math.abs(adv.glicko_r_diff) > 150) {
     chips.push('rating gap confirmed')
   }
   if (adv?.zinb_lambda_h != null && adv?.zinb_lambda_a != null) {
     const total = adv.zinb_lambda_h + adv.zinb_lambda_a
-    if (total > 2.8 && (market?.startsWith('Over') || market === 'BTTS Yes')) {
+    if (total > 2.8 && market?.startsWith('Over')) {
       chips.push('high xG match')
-    } else if (total < 1.8 && market?.startsWith('Under')) {
+    } else if (total < 1.8 && market === 'Under 2.5') {
       chips.push('low xG match')
     }
   }
@@ -547,7 +437,7 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
   const primaryProb = Math.max(signal.bayesian?.prob ?? 0, signal.poisson?.prob ?? 0)
   const isMediumConfidence = signal.dual_confidence === 'Medium'
   const isHighProbabilityOutcome = primaryProb >= 0.7 && !isMediumConfidence
-  const isUnderMarket = ['Under 1.5', 'Under 2.5', 'Under 3.5', 'Away Under 1.5', 'Home Under 1.5'].includes(signal.market)
+  const isUnderMarket = signal.market === 'Under 2.5'
 
   return (
     <div className={`rounded-xl border shadow-sm overflow-hidden transition-colors ${
@@ -623,10 +513,6 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
           odd={displayBestOdd}
           bookmaker={displayBookmaker}
         />
-
-        {/* One synthesized conviction chip on the face — fires only when two
-            independent models confirm the same thesis. A real decision input. */}
-        {isPro && <SynergyBadge adv={signal.advanced} market={signal.market} />}
 
         {isContradiction && (
           <ContradictionAlert mixedSignals={signal.poisson?.mixed_signals} />

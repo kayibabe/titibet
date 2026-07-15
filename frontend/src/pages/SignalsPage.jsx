@@ -20,28 +20,17 @@ const AGREEMENT_OPTIONS  = ['', 'Both', 'Bayesian Only', 'Poisson Only', 'Contra
 const MARKET_FAMILY_OPTIONS = [
   '',
   'Goals',
-  'BTTS',
-  'Safer Cover',
   'Team Totals',
   'Clean Sheet',
-  'Exact Goals',
 ]
 const MARKET_OPTIONS     = [
   '',
-  // Full-game totals
-  'Over 0.5', 'Over 1.5', 'Over 2.5', 'Over 3.5',
-  'Under 1.5', 'Under 2.5', 'Under 3.5',
-  // BTTS
-  'BTTS Yes', 'BTTS No',
-  // Double chance
-  '1X (Home or Draw)', 'X2 (Draw or Away)', '12 (Home or Away)',
-  // Team totals
-  'Home Over 0.5', 'Home Under 0.5', 'Home Over 1.5', 'Home Under 1.5',
-  'Away Over 0.5', 'Away Under 0.5', 'Away Over 1.5', 'Away Under 1.5',
-  // Win to nil
+  // Full-game totals (active)
+  'Over 1.5', 'Over 2.5', 'Under 2.5',
+  // Team totals (active)
+  'Home Over 0.5',
+  // Win to nil (active)
   'Home Win to Nil', 'Away Win to Nil',
-  // Exact goals
-  'Exactly 1 Goal', 'Exactly 2 Goals', 'Exactly 3 Goals',
 ]
 
 const SORT_OPTIONS = [
@@ -54,33 +43,9 @@ const SORT_OPTIONS = [
 
 function getMarketFamily(market) {
   if (!market) return 'Other'
-  if (
-    market === 'Over 0.5' ||
-    market === 'Over 1.5' ||
-    market === 'Over 2.5' ||
-    market === 'Over 3.5' ||
-    market === 'Under 1.5' ||
-    market === 'Under 2.5' ||
-    market === 'Under 3.5'
-  ) return 'Goals'
-  if (market === 'BTTS Yes' || market === 'BTTS No') return 'BTTS'
-  if (
-    market === '1X (Home or Draw)' ||
-    market === 'X2 (Draw or Away)' ||
-    market === '12 (Home or Away)'
-  ) return 'Safer Cover'
-  if (
-    market === 'Home Over 0.5' || market === 'Home Under 0.5' ||
-    market === 'Home Over 1.5' || market === 'Home Under 1.5' ||
-    market === 'Away Over 0.5' || market === 'Away Under 0.5' ||
-    market === 'Away Over 1.5' || market === 'Away Under 1.5'
-  ) return 'Team Totals'
+  if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Under 2.5') return 'Goals'
+  if (market === 'Home Over 0.5') return 'Team Totals'
   if (market === 'Home Win to Nil' || market === 'Away Win to Nil') return 'Clean Sheet'
-  if (
-    market === 'Exactly 1 Goal' ||
-    market === 'Exactly 2 Goals' ||
-    market === 'Exactly 3 Goals'
-  ) return 'Exact Goals'
   return 'Other'
 }
 
@@ -743,7 +708,7 @@ const reload = () => load(params)
               </p>
               {isToday && (
                 <p className="text-[11px] text-[var(--text)] opacity-50 max-w-xs">
-                  Auto-syncs run at 04:00, 08:00, 12:00, 18:00 and 22:01 UTC.
+                  Auto-syncs run at 04:00, 19:00 and 23:00 UTC.
                 </p>
               )}
             </div>
