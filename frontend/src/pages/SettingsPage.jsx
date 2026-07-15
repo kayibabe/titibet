@@ -1,5 +1,4 @@
-﻿import { useState } from 'react'
-import { Save, Monitor, Sun, Moon } from 'lucide-react'
+﻿import { Monitor, Sun, Moon } from 'lucide-react'
 
 const THEME_OPTIONS = [
   { value: 'system', label: 'System', Icon: Monitor },
@@ -51,17 +50,10 @@ function RangeField({ label, hint, min, max, step, value, onChange, display }) {
 
 
 export default function SettingsPage({ settings, onUpdate }) {
-  const [saved, setSaved] = useState(false)
-
-  function handleSave(e) {
-    e.preventDefault()
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-  }
-
   return (
     <div className="space-y-6 max-w-xl">
-      <form onSubmit={handleSave} className="space-y-6">
+      <p className="text-xs text-[var(--text)] opacity-50">Changes save automatically.</p>
+      <div className="space-y-6">
 
         {/* ── Appearance ──────────────────────────────────────── */}
         <Section title="Appearance">
@@ -131,14 +123,7 @@ export default function SettingsPage({ settings, onUpdate }) {
           />
         </Section>
 
-        <button
-          type="submit"
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-semibold hover:opacity-90 transition-opacity"
-        >
-          <Save size={14} />
-          {saved ? 'Saved!' : 'Save Settings'}
-        </button>
-      </form>
+      </div>
     </div>
   )
 }

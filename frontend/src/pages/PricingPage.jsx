@@ -107,12 +107,19 @@ function ProCard({ plan, isCurrent, onSelect, loading }) {
 export default function PricingPage() {
   const { user } = useAuth()
   const [plans, setPlans] = useState([])
+  const [plansLoading, setPlansLoading] = useState(true)
+  const [plansError, setPlansError] = useState(false)
   const [interval, setInterval] = useState('monthly')
   const [loading, setLoading] = useState(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    fetchPlans().then(setPlans).catch(() => {})
+    setPlansLoading(true)
+    setPlansError(false)
+    fetchPlans()
+      .then(setPlans)
+      .catch(() => setPlansError(true))
+      .finally(() => setPlansLoading(false))
   }, [])
 
   const proPlan = plans.find(p => p.tier === 'pro' && p.interval === interval)
@@ -182,14 +189,29 @@ export default function PricingPage() {
       {/* Side-by-side comparison cards */}
       <div className="grid grid-cols-2 gap-4">
         <FreeCard isCurrent={isFreeCurrent} />
-        {proPlan && (
+        {plansLoading ? (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-5 animate-pulse space-y-4">
+            <div className="h-8 w-24 rounded-lg bg-[var(--border)]" />
+            <div className="h-8 w-20 rounded bg-[var(--border)]" />
+            <div className="space-y-2">
+              {[...Array(4)].map((_, i) => <div key={i} className="h-3 rounded-full bg-[var(--border)]" />)}
+            </div>
+          </div>
+        ) : plansError ? (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-5 flex items-center justify-center">
+            <p className="text-xs text-[var(--text)] opacity-60 text-center">
+              Could not load Pro plans.<br />
+              <button onClick={() => window.location.reload()} className="text-[var(--accent)] hover:underline mt-1">Retry</button>
+            </p>
+          </div>
+        ) : proPlan ? (
           <ProCard
             plan={proPlan}
             isCurrent={isProCurrent}
             onSelect={handleSelect}
             loading={loading}
           />
-        )}
+        ) : null}
       </div>
 
       <p className="text-xs text-[var(--text)] opacity-70 text-center">

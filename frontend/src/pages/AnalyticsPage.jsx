@@ -122,8 +122,6 @@ function FactorBadge({ factor }) {
   )
 }
 
-const ENGINE_TABS = ['Confidence', 'Market', 'Rules', 'Market x Tier', 'Suppression']
-
 // ── Sortable insight tables ───────────────────────────────────────────────────
 
 function MarketWeightTable({ rows }) {
@@ -264,8 +262,18 @@ function MarketPerformanceContent({ rows, onApplySignalFilter }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+function WeightsSectionHeader({ label, count }) {
+  return (
+    <div className="flex items-center gap-2">
+      <h4 className="text-[11px] font-semibold text-[var(--text-h)] uppercase tracking-wide opacity-70">{label}</h4>
+      {count != null && count > 0 && (
+        <span className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-red-500/20 text-red-400 text-[9px] font-bold">{count}</span>
+      )}
+    </div>
+  )
+}
+
 function ModelInsightsContent({ insights }) {
-  const [tab, setTab] = useState('Confidence')
   if (!insights) return null
 
   const {
@@ -292,7 +300,7 @@ function ModelInsightsContent({ insights }) {
   const suppressCount = auto_suppress_rules.length + auto_suppress_market_tiers.length + auto_suppress_league_markets.length
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <p className="text-xs text-[var(--text)] opacity-70">
         Computed from full settled history (not the date filter above).
         <span className="text-green-400 ml-1">Green = boosted</span>
@@ -302,58 +310,32 @@ function ModelInsightsContent({ insights }) {
         <span className="opacity-80">1.00x = neutral</span>
       </p>
 
-      <div className="flex flex-wrap gap-1 border-b border-[var(--border)]">
-        {ENGINE_TABS.map(t => {
-          const badge = t === 'Suppression' && suppressCount > 0 ? suppressCount : null
-          const active = tab === t
-          return (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={'px-3 py-1.5 text-xs font-medium rounded-t-md border-b-2 transition-colors ' + (
-                active
-                  ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-bg,rgba(99,102,241,0.08))]'
-                  : 'border-transparent text-[var(--text)] opacity-70 hover:opacity-100 hover:text-[var(--text-h)]'
-              )}
-            >
-              {t}
-              {badge && (
-                <span className="ml-1.5 inline-flex items-center justify-center h-4 w-4 rounded-full bg-red-500/20 text-red-400 text-[9px] font-bold">
-                  {badge}
-                </span>
-              )}
-            </button>
-          )
-        })}
-      </div>
-
-      {tab === 'Confidence' && (
-        <div className="space-y-4">
-          {by_confidence.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {by_confidence.map((row, i) => {
-                const roiColor = row.roi >= 10 ? 'text-green-400' : row.roi >= 0 ? 'text-[var(--text-h)]' : 'text-red-400'
-                const hrColor  = row.win_rate >= 60 ? 'text-green-400' : row.win_rate >= 50 ? 'text-yellow-400' : 'text-red-400'
-                return (
-                  <div key={i} className="rounded-lg border border-[var(--border)] bg-[var(--code-bg)] px-3 py-2.5 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-[var(--text-h)]">{row.confidence}</span>
-                      <FactorBadge factor={row.performance_factor} />
-                    </div>
-                    <div className="flex gap-4 text-[11px]">
-                      <span className={hrColor}>{row.win_rate?.toFixed(1)}% hit</span>
-                      <span className={'font-mono ' + roiColor}>{row.roi >= 0 ? '+' : ''}{row.roi?.toFixed(1)}% ROI</span>
-                    </div>
-                    <div className="text-[10px] text-[var(--text)] opacity-70">{row.samples} settled</div>
+      {/* Confidence weights */}
+      {by_confidence.length > 0 && (
+        <div className="space-y-2">
+          <WeightsSectionHeader label="Confidence" />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {by_confidence.map((row, i) => {
+              const roiColor = row.roi >= 10 ? 'text-green-400' : row.roi >= 0 ? 'text-[var(--text-h)]' : 'text-red-400'
+              const hrColor  = row.win_rate >= 60 ? 'text-green-400' : row.win_rate >= 50 ? 'text-yellow-400' : 'text-red-400'
+              return (
+                <div key={i} className="rounded-lg border border-[var(--border)] bg-[var(--code-bg)] px-3 py-2.5 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-[var(--text-h)]">{row.confidence}</span>
+                    <FactorBadge factor={row.performance_factor} />
                   </div>
-                )
-              })}
-            </div>
-          ) : <p className="text-xs text-[var(--text)] opacity-80 py-3">No confidence data yet.</p>}
-
+                  <div className="flex gap-4 text-[11px]">
+                    <span className={hrColor}>{row.win_rate?.toFixed(1)}% hit</span>
+                    <span className={'font-mono ' + roiColor}>{row.roi >= 0 ? '+' : ''}{row.roi?.toFixed(1)}% ROI</span>
+                  </div>
+                  <div className="text-[10px] text-[var(--text)] opacity-70">{row.samples} settled</div>
+                </div>
+              )
+            })}
+          </div>
           {calibration.length > 0 && (
-            <div>
-              <h4 className="text-[11px] font-semibold text-[var(--text-h)] mb-2.5 uppercase tracking-wide opacity-80">Calibration</h4>
+            <div className="space-y-2 pt-1">
+              <p className="text-[10px] font-semibold text-[var(--text)] opacity-70 uppercase tracking-wide">Calibration by confidence tier</p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {calibration.map((row, i) => {
                   const cls = row.is_overconfident
@@ -378,23 +360,34 @@ function ModelInsightsContent({ insights }) {
         </div>
       )}
 
-      {tab === 'Market' && (
-        by_market.length > 0 ? <MarketWeightTable rows={by_market} />
-          : <p className="text-xs text-[var(--text)] opacity-80 py-3">No market weight data yet.</p>
+      {/* Market weights */}
+      {by_market.length > 0 && (
+        <div className="space-y-2">
+          <WeightsSectionHeader label="Market weights" />
+          <MarketWeightTable rows={by_market} />
+        </div>
       )}
 
-      {tab === 'Rules' && (
-        by_rule.length > 0 ? <RuleWeightTable rows={by_rule} />
-          : <p className="text-xs text-[var(--text)] opacity-80 py-3">No rule weight data yet.</p>
+      {/* Rule weights */}
+      {by_rule.length > 0 && (
+        <div className="space-y-2">
+          <WeightsSectionHeader label="Rule weights" />
+          <RuleWeightTable rows={by_rule} />
+        </div>
       )}
 
-      {tab === 'Market x Tier' && (
-        by_market_tier.length > 0 ? <MarketTierTable rows={by_market_tier} />
-          : <p className="text-xs text-[var(--text)] opacity-80 py-3">No market x tier data yet.</p>
+      {/* Market × Tier */}
+      {by_market_tier.length > 0 && (
+        <div className="space-y-2">
+          <WeightsSectionHeader label="Market × Tier" />
+          <MarketTierTable rows={by_market_tier} />
+        </div>
       )}
 
-      {tab === 'Suppression' && (
-        suppressCount > 0 ? (
+      {/* Auto-suppression */}
+      <div className="space-y-2">
+        <WeightsSectionHeader label="Auto-suppression" count={suppressCount} />
+        {suppressCount > 0 ? (
           <div className="space-y-3">
             {auto_suppress_rules.length > 0 && (
               <div>
@@ -408,7 +401,7 @@ function ModelInsightsContent({ insights }) {
             )}
             {auto_suppress_market_tiers.length > 0 && (
               <div>
-                <p className="text-[10px] font-semibold text-[var(--text)] opacity-80 uppercase tracking-wide mb-1.5">Market x League Tier</p>
+                <p className="text-[10px] font-semibold text-[var(--text)] opacity-80 uppercase tracking-wide mb-1.5">Market × League Tier</p>
                 <div className="flex flex-wrap gap-2">
                   {auto_suppress_market_tiers.map((item, i) => (
                     <span key={i} className="inline-flex rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300">
@@ -420,7 +413,7 @@ function ModelInsightsContent({ insights }) {
             )}
             {auto_suppress_league_markets.length > 0 && (
               <div>
-                <p className="text-[10px] font-semibold text-[var(--text)] opacity-80 uppercase tracking-wide mb-1.5">League x Market</p>
+                <p className="text-[10px] font-semibold text-[var(--text)] opacity-80 uppercase tracking-wide mb-1.5">League × Market</p>
                 <div className="flex flex-wrap gap-2">
                   {auto_suppress_league_markets.slice(0, 10).map((item, i) => (
                     <span key={i} className="inline-flex rounded-full border border-fuchsia-500/25 bg-fuchsia-500/10 px-2 py-1 text-[10px] text-fuchsia-300">
@@ -432,11 +425,11 @@ function ModelInsightsContent({ insights }) {
             )}
           </div>
         ) : (
-          <p className="text-xs text-[var(--text)] opacity-80 py-3">
+          <p className="text-xs text-[var(--text)] opacity-80">
             No suppressions active — the engine treats all markets and leagues equally.
           </p>
-        )
-      )}
+        )}
+      </div>
     </div>
   )
 }
@@ -580,7 +573,7 @@ function SignalQualityContent({ byConfidence, byAgreement, showFactor, onApplySi
 const ANALYTICS_TABS = [
   { id: 'overview',  label: 'Overview',  desc: 'P&L and performance summary' },
   { id: 'markets',   label: 'Markets',   desc: 'Market, league and signal breakdown' },
-  { id: 'strategy',  label: 'Engine health',  desc: 'Staking, calibration and self-learning' },
+  { id: 'strategy',  label: 'Strategy',  desc: 'Staking, calibration and self-learning' },
 ]
 
 export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNavigate, settings }) {
@@ -1022,7 +1015,7 @@ function AccaPerformanceCard() {
 function EngineHealth({ insights, onApplySignalFilter }) {
   const [tab, setTab] = useState('weights')
   const TABS = [
-    { id: 'weights',    label: 'Weights & Calibration' },
+    { id: 'weights',    label: 'Weights' },
     { id: 'thresholds', label: 'Threshold Changes' },
     { id: 'parameters', label: 'Active Parameters' },
   ]

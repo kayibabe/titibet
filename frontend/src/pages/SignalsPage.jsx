@@ -512,19 +512,19 @@ const reload = () => load(params)
                 {activeFilterCount}
               </span>
             )}
-            {activeFilterCount > 0 && (
-              <button
-                onClick={e => { e.stopPropagation(); clearAllFilters() }}
-                className="ml-auto text-[10px] text-[var(--text)] opacity-80 hover:opacity-100 hover:text-red-400 flex items-center gap-1 transition-colors"
-              >
-                <X size={10} /> Reset all
-              </button>
-            )}
-            {activeFilterCount === 0 && (
-              <span className="ml-auto text-[var(--text)] opacity-50">
+            <div className="ml-auto flex items-center gap-2">
+              {activeFilterCount > 0 && (
+                <button
+                  onClick={e => { e.stopPropagation(); clearAllFilters() }}
+                  className="text-[10px] text-[var(--text)] opacity-80 hover:opacity-100 hover:text-red-400 flex items-center gap-1 transition-colors"
+                >
+                  <X size={10} /> Reset all
+                </button>
+              )}
+              <span className="text-[var(--text)] opacity-50">
                 {filtersOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
               </span>
-            )}
+            </div>
           </button>
 
           {filtersOpen && (
@@ -577,20 +577,6 @@ const reload = () => load(params)
                     )}
                   </div>
                 </label>
-              </div>
-
-              {/* Saved only toggle */}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowSavedOnly(v => !v)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                    showSavedOnly
-                      ? 'bg-red-500/20 border-red-400/50 text-red-300'
-                      : 'border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)]'
-                  }`}
-                >
-                  ♥ Saved only
-                </button>
               </div>
 
               {/* Row 3: Sort pills */}

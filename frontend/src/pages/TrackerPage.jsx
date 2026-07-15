@@ -236,63 +236,6 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           <span className="sm:hidden">{settling ? '…' : `Settle ${pendingCount > 0 ? `(${pendingCount})` : ''}`}</span>
         </button>
 
-        {/* Settlement result toast */}
-        {settleResult != null && (() => {
-          const r = settleResult
-          const skippedNoFix  = r.skip_no_fixture  ?? 0
-          const skippedNFinal = r.skip_not_final   ?? 0
-          const skippedScore  = r.skip_no_score    ?? 0
-          const skippedMkt    = r.skip_no_market   ?? 0
-          const anySkip = skippedNoFix + skippedNFinal + skippedScore + skippedMkt > 0
-          return (
-            <span className="text-xs font-medium flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-              <span className="text-emerald-400">
-                ✓ {r.settled} settled
-                {r.voided > 0 && ` · ${r.voided} voided`}
-              </span>
-              {anySkip && (
-                <span className="text-slate-400 text-[10px]">
-                  (skipped:
-                  {skippedNoFix  > 0 && ` ${skippedNoFix} no fixture link`}
-                  {skippedNFinal > 0 && ` · ${skippedNFinal} not finished`}
-                  {skippedScore  > 0 && ` · ${skippedScore} awaiting score`}
-                  {skippedMkt    > 0 && ` · ${skippedMkt} unknown market`}
-                  )
-                </span>
-              )}
-            </span>
-          )
-        })()}
-
-        {/* Normalize stakes result toast */}
-        {normalizeResult != null && (
-          <span className="text-xs font-medium text-emerald-400">
-            ✓ {normalizeResult.updated} bet{normalizeResult.updated !== 1 ? 's' : ''} updated to K50,000
-          </span>
-        )}
-
-        {/* Dedup result toast */}
-        {dedupResult != null && (
-          <span className="text-xs font-medium text-emerald-400">
-            ✓ {dedupResult.removed} duplicate{dedupResult.removed !== 1 ? 's' : ''} removed
-          </span>
-        )}
-
-        {/* Action error toast */}
-        {actionError && (
-          <span className="text-xs font-medium text-red-400">
-            ✗ {actionError}
-          </span>
-        )}
-
-        {/* CLV result toast */}
-        {clvResult && (
-          <span className="text-xs text-green-400 font-medium">
-            ✓ {clvResult.updated} updated
-            {clvResult.skipped_no_data > 0 && <span className="hidden sm:inline"> · {clvResult.skipped_no_data} no data</span>}
-          </span>
-        )}
-
         {/* CLV — visible button, promoted from dropdown */}
         <div className="flex items-center gap-2 ml-auto">
           {isPro ? (
@@ -359,6 +302,33 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           </div>
         </div>
       </div>
+
+      {/* Action result status line — sits below the toolbar, never reflows buttons */}
+      {(settleResult != null || normalizeResult != null || dedupResult != null || actionError || clvResult) && (() => {
+        if (actionError) return (
+          <p className="text-xs font-medium text-red-400 px-1">✗ {actionError}</p>
+        )
+        if (settleResult != null) {
+          const r = settleResult
+          const skipped = (r.skip_no_fixture ?? 0) + (r.skip_not_final ?? 0) + (r.skip_no_score ?? 0) + (r.skip_no_market ?? 0)
+          return (
+            <p className="text-xs font-medium text-emerald-400 px-1">
+              ✓ {r.settled} settled{r.voided > 0 ? ` · ${r.voided} voided` : ''}
+              {skipped > 0 && <span className="text-slate-400 ml-1">({skipped} skipped — not finished or missing data)</span>}
+            </p>
+          )
+        }
+        if (normalizeResult != null) return (
+          <p className="text-xs font-medium text-emerald-400 px-1">✓ {normalizeResult.updated} bet{normalizeResult.updated !== 1 ? 's' : ''} updated to K50,000</p>
+        )
+        if (dedupResult != null) return (
+          <p className="text-xs font-medium text-emerald-400 px-1">✓ {dedupResult.removed} duplicate{dedupResult.removed !== 1 ? 's' : ''} removed</p>
+        )
+        if (clvResult) return (
+          <p className="text-xs font-medium text-green-400 px-1">✓ {clvResult.updated} CLV updated{clvResult.skipped_no_data > 0 ? ` · ${clvResult.skipped_no_data} no closing data` : ''}</p>
+        )
+        return null
+      })()}
 
       {/* System performance card — visible when source=system or system bets exist */}
       {systemSummary && systemSummary.total_bets > 0 && (sourceFilter === 'system' || sourceFilter === '') && (
