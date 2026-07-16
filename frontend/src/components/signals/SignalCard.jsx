@@ -353,66 +353,81 @@ function useKickoff(kickoffAt, status) {
   return { localTime, countdown, urgent, isLive, isFinished, statusLabel: normalizedStatus || null }
 }
 
-// ── Probability line (primary row) ───────────────────────────────────────────
-// Market label + confidence pill | probability bar | % | @odds
-// Full bookmaker detail (name, book count, fair-odds compare) stays in Details.
-function ProbabilityLine({ market, confidence, prob, odd, bookmaker }) {
+// ── Probability line (primary block) ─────────────────────────────────────────
+// Full-width bar + large % + market chip + confidence badge.
+// Odds, bookmaker, agreement, and drift are shown below the bar (always visible).
+function ProbabilityLine({ market, confidence, prob, odd, bookmaker, bookmakerCount, agreement, driftPct, isPro }) {
   if (prob == null) return null
 
   const pct = Math.max(0, Math.min(100, prob * 100))
   const pctLabel = Math.round(pct)
 
-  const confColor = {
-    High:   'bg-green-500',
-    Medium: 'bg-yellow-500',
-    Low:    'bg-slate-500',
-  }[confidence] || 'bg-[var(--code-bg)]'
-
   const barColor =
-    pct >= 70 ? 'bg-green-500'  :
-    pct >= 50 ? 'bg-yellow-500' :
-    pct >= 35 ? 'bg-orange-500' :
-    'bg-red-500'
+    pct >= 70 ? 'bg-emerald-500' :
+    pct >= 50 ? 'bg-amber-500'   :
+    pct >= 35 ? 'bg-orange-500'  :
+    'bg-rose-500'
 
-  const showConfPill = confidence && confidence !== 'None'
+  const pctColor =
+    pct >= 70 ? 'text-emerald-400' :
+    pct >= 50 ? 'text-amber-400'   :
+    pct >= 35 ? 'text-orange-400'  :
+    'text-rose-400'
+
+  const confStyle =
+    confidence === 'High'   ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' :
+    confidence === 'Medium' ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'       :
+    confidence === 'Low'    ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'          :
+    'bg-[var(--code-bg)] text-[var(--text)] border-[var(--border)] opacity-60'
 
   return (
-    <div className="flex items-center gap-3">
-      <div className="flex items-center gap-2 min-w-0 shrink-0">
-        <span className={`text-sm font-medium truncate ${marketColor(market)}`}>{market}</span>
-        {showConfPill && (
-          <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold text-white ${confColor}`}>
-            {confidence}
+    <div className="space-y-2">
+      {/* Market chip + confidence badge + big percentage */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full bg-[var(--code-bg)] border border-[var(--border)] ${marketColor(market)}`}>
+            {market}
           </span>
-        )}
+          {confidence && confidence !== 'None' && (
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${confStyle}`}>
+              {confidence}
+            </span>
+          )}
+        </div>
+        <span className={`text-3xl font-black tabular-nums leading-none shrink-0 ${pctColor}`}>
+          {pctLabel}%
+        </span>
       </div>
 
+      {/* Full-width probability bar */}
       <div
-        className="w-20 shrink-0 h-2 bg-[var(--code-bg)] rounded-full overflow-hidden"
+        className="h-2.5 w-full rounded-full bg-[var(--code-bg)] overflow-hidden"
         role="progressbar"
         aria-valuenow={pctLabel}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={`${market} probability ${pctLabel}%`}
       >
-        <div
-          className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${pct}%` }}
-        />
+        <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${pct}%` }} />
       </div>
 
-      <span className="text-sm font-bold font-mono text-[var(--text-h)] w-12 text-right tabular-nums shrink-0">
-        {pctLabel}%
-      </span>
-
-      {odd != null && odd > 1 && (
-        <span
-          title={bookmaker ? `Best market price · ${bookmaker}` : 'Best market price'}
-          className="text-sm font-bold font-mono text-[var(--accent)] tabular-nums shrink-0"
-        >
-          @{Number(odd).toFixed(2)}
-        </span>
-      )}
+      {/* Odds · bookmaker · agreement · drift */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {odd != null && odd > 1 && (
+          <span className="text-sm font-bold font-mono text-[var(--accent)]" title={bookmaker || undefined}>
+            @{Number(odd).toFixed(2)}
+          </span>
+        )}
+        {bookmaker && <span className="text-xs text-[var(--text)] opacity-40">{bookmaker}</span>}
+        {bookmakerCount != null && (
+          <span className="text-xs text-[var(--text)] opacity-30">
+            · {bookmakerCount} {bookmakerCount === 1 ? 'book' : 'books'}
+          </span>
+        )}
+        <div className="flex-1" />
+        <AgreementBadge agreement={agreement} />
+        {isPro && <DriftBadge driftPct={driftPct} />}
+      </div>
     </div>
   )
 }
@@ -556,18 +571,18 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
   const isUnderMarket = signal.market === 'Under 2.5'
 
   return (
-    <div className={`rounded-xl border shadow-sm overflow-hidden transition-colors ${
+    <div className={`rounded-xl border bg-[var(--bg)] overflow-hidden transition-all duration-200 hover:-translate-y-0.5 ${
       isContradiction
-        ? 'border-red-400/40 border-l-4 border-l-red-400'
+        ? 'border-rose-400/40 border-l-4 border-l-rose-400 hover:border-rose-400/60'
         : isBayesianOnly
-          ? 'border-violet-400/35 border-l-4 border-l-violet-400'
+          ? 'border-violet-400/35 border-l-4 border-l-violet-400 hover:border-violet-400/55'
           : isUnderMarket
-            ? 'border-sky-400/40 border-l-4 border-l-sky-400'
+            ? 'border-sky-400/40 border-l-4 border-l-sky-400 hover:border-sky-400/60'
             : isHighProbabilityOutcome
-              ? 'border-emerald-500/40 border-l-4 border-l-emerald-500'
+              ? 'border-emerald-500/50 border-l-4 border-l-emerald-500 shadow-[0_8px_24px_rgba(16,185,129,0.12)] hover:shadow-[0_12px_32px_rgba(16,185,129,0.2)]'
               : isMediumConfidence
-                ? 'border-amber-400/30 hover:border-amber-400/50'
-                : 'border-[var(--border)] hover:border-[var(--accent)]/40'
+                ? 'border-amber-400/30 hover:border-amber-400/50 hover:shadow-[var(--shadow-card)]'
+                : 'border-[var(--border)] hover:border-[var(--accent)]/40 hover:shadow-[var(--shadow-card)]'
     }`}>
 
       {/* ── Header ── */}
@@ -575,12 +590,28 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
 
         {/* ── PRIMARY: Match name — the first thing the eye lands on ── */}
         <div className="flex items-start justify-between gap-2">
-          <h3
-            className="text-base font-semibold text-[var(--text-h)] leading-tight cursor-pointer hover:text-[var(--accent)] transition-colors"
-            onClick={() => onDeepDive?.(signal.fixture_id)}
-          >
-            {signal.home_team} vs {signal.away_team}
-          </h3>
+          <div>
+            <h3
+              className="text-base font-semibold text-[var(--text-h)] leading-tight cursor-pointer hover:text-[var(--accent)] transition-colors"
+              onClick={() => onDeepDive?.(signal.fixture_id)}
+            >
+              {signal.home_team} vs {signal.away_team}
+            </h3>
+            {signal.league && (
+              <div className="flex items-center gap-1.5 mt-0.5">
+                {signal.league_tier != null && (
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+                    signal.league_tier === 1 ? 'bg-amber-400' :
+                    signal.league_tier === 2 ? 'bg-slate-400' :
+                    'bg-slate-600'
+                  }`} />
+                )}
+                <span className="text-[11px] text-[var(--text)] opacity-45 leading-none">
+                  {signal.country ? `${signal.country} · ` : ''}{signal.league}
+                </span>
+              </div>
+            )}
+          </div>
 
           {/* Status + rank float right */}
           <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
@@ -638,13 +669,17 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
           </div>
         </div>
 
-        {/* ── PRIMARY: Market label · Confidence pill · Probability bar · % ── */}
+        {/* ── PRIMARY: Probability block — market chip · bar · big % · odds · agreement ── */}
         <ProbabilityLine
           market={signal.market}
           confidence={signal.dual_confidence}
           prob={primaryProb > 0 ? primaryProb : null}
           odd={displayBestOdd}
           bookmaker={displayBookmaker}
+          bookmakerCount={signal.bayesian?.bookmaker_count}
+          agreement={signal.dual_agreement}
+          driftPct={signal.odds_drift_pct}
+          isPro={isPro}
         />
 
         {isContradiction && (
@@ -666,32 +701,12 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
         </button>
 
         {showDetails && (
-          <div className="space-y-2 border-t border-[var(--border)] pt-2.5">
+          <div className="space-y-2.5 border-t border-[var(--border)] pt-2.5">
 
-            {/* Bookmaker · offered odds · bookmaker count */}
-            {displayBestOdd != null && (
-              <div className="flex items-center gap-2 flex-wrap text-xs text-[var(--text)]">
-                <span className="opacity-75">{displayBookmaker}</span>
-                <span className="font-mono text-[var(--accent)] font-semibold">
-                  {Number(displayBestOdd).toFixed(2)}
-                </span>
-                {signal.bayesian?.bookmaker_count != null && (
-                  <span className="opacity-50">
-                    · {signal.bayesian.bookmaker_count} {signal.bayesian.bookmaker_count === 1 ? 'book' : 'books'}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* Agreement · Drift · MarketIntent */}
+            {/* Market intent context */}
             <div className="flex items-center gap-2 flex-wrap">
-              <AgreementBadge agreement={signal.dual_agreement} />
-              {isPro && <DriftBadge driftPct={signal.odds_drift_pct} />}
               <MarketIntentBadge market={signal.market} />
             </div>
-
-            {/* Advanced-model diagnostics now live one layer deeper, in the
-                Engine breakdown panel — keeping the Details layer decision-focused. */}
 
             {/* Fair odds → offered · book margin */}
             <FairOddsRow
@@ -705,26 +720,6 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
 
             {/* AI Insights Feed */}
             <SignalInsights signal={signal} />
-
-            {/* League · tier dot · country */}
-            <div className="flex items-center gap-2 flex-wrap text-xs text-[var(--text)] opacity-75">
-              {signal.league_tier != null && (
-                <span
-                  title={`Tier ${signal.league_tier} league`}
-                  className={`inline-block w-2 h-2 rounded-full shrink-0 ${
-                    signal.league_tier === 1 ? 'bg-amber-400' :
-                    signal.league_tier === 2 ? 'bg-slate-400' :
-                    'bg-slate-600'
-                  }`}
-                />
-              )}
-              {signal.league && (
-                <span>
-                  {signal.country && <span className="opacity-60">{signal.country} · </span>}
-                  {signal.league}
-                </span>
-              )}
-            </div>
 
             {/* Stake recommendation (pro) or locked pill (free) */}
             {isPro ? (

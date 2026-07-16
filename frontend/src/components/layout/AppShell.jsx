@@ -101,6 +101,9 @@ export default function AppShell({ activePage, onNavigate, children }) {
         {/* Mobile hamburger */}
         <button
           onClick={() => setDrawerOpen(v => !v)}
+          aria-label={drawerOpen ? 'Close navigation' : 'Open navigation'}
+          aria-expanded={drawerOpen}
+          aria-controls="mobile-sidebar"
           className="lg:hidden p-1.5 rounded-lg text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] transition-colors"
         >
           {drawerOpen ? <X size={20} /> : <Menu size={20} />}
@@ -148,9 +151,13 @@ export default function AppShell({ activePage, onNavigate, children }) {
         )}
 
         {/* Mobile slide-in drawer — starts below the top header */}
-        <div className={`lg:hidden fixed left-0 z-50 transition-transform duration-200 ${
-          drawerOpen ? 'translate-x-0' : '-translate-x-full'
-        }`} style={{ top: '3.5rem', height: 'calc(100% - 3.5rem)' }}>
+        <div
+          id="mobile-sidebar"
+          className={`lg:hidden fixed left-0 z-50 transition-transform duration-200 ${
+            drawerOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+          style={{ top: '3.5rem', height: 'calc(100% - 3.5rem)' }}
+        >
           <Sidebar activePage={activePage} onNavigate={navigate} />
         </div>
 
@@ -163,9 +170,14 @@ export default function AppShell({ activePage, onNavigate, children }) {
         <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
           <main className="flex-1 px-4 py-5 lg:px-6 lg:py-6 w-full max-w-5xl mx-auto space-y-5 pb-24 lg:pb-6">
             {pageTitle && (
-              <h1 className="hidden lg:block text-base font-bold text-[var(--text-h)] tracking-tight pb-4 border-b border-[var(--border)] mb-2">
-                {pageTitle}
-              </h1>
+              <>
+                {/* Visible heading on desktop */}
+                <h1 aria-hidden="true" className="hidden lg:block text-base font-bold text-[var(--text-h)] tracking-tight pb-4 border-b border-[var(--border)] mb-2">
+                  {pageTitle}
+                </h1>
+                {/* Screen-reader-only heading on mobile so landmark is always present */}
+                <h1 className="sr-only">{pageTitle}</h1>
+              </>
             )}
             {children}
           </main>

@@ -8,6 +8,7 @@ import ToolsPage from './pages/ToolsPage'
 import PricingPage from './pages/PricingPage'
 import AdminPage from './pages/AdminPage'
 import AccountPage from './pages/AccountPage'
+import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
@@ -19,7 +20,7 @@ import { useAuth } from './context/AuthContext'
 export default function App() {
   const [activePage, setActivePage] = useState('signals')
   const [deepDiveFixtureId, setDeepDiveFixtureId] = useState(null)
-  const [authMode, setAuthMode] = useState('login')
+  const [authMode, setAuthMode] = useState('landing')
   const [pendingSignalFilter, setPendingSignalFilter] = useState(null)
   const { settings, update } = useSettings()
   const { user, loading } = useAuth()
@@ -48,10 +49,11 @@ export default function App() {
     : null
 
   if (!user) {
-    if (resetToken) return <ResetPasswordPage token={resetToken} onDone={() => { window.history.replaceState({}, '', '/'); setAuthMode('login') }} />
+    if (resetToken) return <ResetPasswordPage token={resetToken} onDone={() => { window.history.replaceState({}, '', '/'); setAuthMode('landing') }} />
     if (authMode === 'forgot') return <ForgotPasswordPage onBack={() => setAuthMode('login')} />
-    if (authMode === 'register') return <RegisterPage onSwitch={() => setAuthMode('login')} />
-    return <LoginPage onSwitch={() => setAuthMode('register')} onForgot={() => setAuthMode('forgot')} />
+    if (authMode === 'register') return <RegisterPage onSwitch={() => setAuthMode('login')} onBack={() => setAuthMode('landing')} />
+    if (authMode === 'login') return <LoginPage onSwitch={() => setAuthMode('register')} onForgot={() => setAuthMode('forgot')} onBack={() => setAuthMode('landing')} />
+    return <LandingPage onSignIn={() => setAuthMode('login')} onSignUp={() => setAuthMode('register')} />
   }
 
   if (isPaymentCallback) {
@@ -64,6 +66,12 @@ export default function App() {
       }} />
     )
   }
+
+  useEffect(() => {
+    function handler(e) { setActivePage(e.detail) }
+    window.addEventListener('titibet:navigate', handler)
+    return () => window.removeEventListener('titibet:navigate', handler)
+  }, [])
 
   function handleDeepDive(fixtureId) {
     setDeepDiveFixtureId(fixtureId)

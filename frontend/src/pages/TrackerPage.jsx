@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { RefreshCw, CheckCircle, TrendingUp, Lock, Upload, Settings2, Bot, User, Layers } from 'lucide-react'
+import { RefreshCw, CheckCircle, TrendingUp, Lock, Upload, Settings2, Bot, User, Layers, ListChecks, ArrowRight, FileUp } from 'lucide-react'
 import { useTracker } from '../store/useTracker'
 import { syncData, computeCLV, deduplicateBets, normalizeStakes } from '../api/tracker'
 import { fetchAnalytics } from '../api/analytics'
@@ -509,7 +509,53 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           </button>
         </div>
       )}
-      {!loading && <BetTable bets={filteredBets} summary={analyticsSummary} isPro={isPro} onUpgrade={onUpgrade} onRefresh={() => { invalidate(); loadBets(betFilters) }} />}
+      {!loading && bets.length === 0 && !error ? (
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-10 flex flex-col items-center text-center gap-6">
+          <div className="w-14 h-14 rounded-2xl bg-[var(--accent-bg)] border border-[var(--accent-border)] flex items-center justify-center">
+            <ListChecks size={26} className="text-[var(--accent)]" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-[var(--text-h)] mb-2">No picks tracked yet</h2>
+            <p className="text-sm text-[var(--text)] opacity-65 max-w-sm leading-relaxed">
+              Track a signal and TiTiBet records the odds, monitors the result, and builds your P&amp;L history automatically.
+            </p>
+          </div>
+          <ol className="flex flex-col sm:flex-row items-stretch gap-3 w-full max-w-sm">
+            {[
+              { step: '1', label: 'Open Signals', desc: 'Find today\'s ranked picks' },
+              { step: '2', label: 'Click Track', desc: 'On any signal card' },
+              { step: '3', label: 'Come back here', desc: 'Results update automatically' },
+            ].map(({ step, label, desc }) => (
+              <li key={step} className="flex-1 rounded-xl border border-[var(--border)] bg-[var(--code-bg)] px-4 py-3 text-left list-none">
+                <span className="text-[10px] font-bold text-[var(--accent)] opacity-70 uppercase tracking-widest">Step {step}</span>
+                <p className="text-sm font-semibold text-[var(--text-h)] mt-0.5">{label}</p>
+                <p className="text-xs text-[var(--text)] opacity-50 mt-0.5">{desc}</p>
+              </li>
+            ))}
+          </ol>
+          <div className="flex items-center gap-3 flex-wrap justify-center">
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('titibet:navigate', { detail: 'signals' }))}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--accent)] hover:opacity-90 text-white text-sm font-semibold transition-opacity"
+            >
+              Go to Signals
+              <ArrowRight size={14} />
+            </button>
+            <button
+              onClick={() => setShowImport(true)}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-[var(--border)] hover:bg-[var(--code-bg)] text-[var(--text)] text-sm font-medium transition-colors"
+            >
+              <FileUp size={14} />
+              Import CSV
+            </button>
+          </div>
+          <p className="text-xs text-[var(--text)] opacity-35">
+            Already have picks? Import a CSV from any spreadsheet.
+          </p>
+        </div>
+      ) : (
+        !loading && <BetTable bets={filteredBets} summary={analyticsSummary} isPro={isPro} onUpgrade={onUpgrade} onRefresh={() => { invalidate(); loadBets(betFilters) }} />
+      )}
 
       {/* Import CSV modal */}
       {showImport && (
