@@ -7,10 +7,17 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pydantic import BaseModel as _BM
 from app.core.auth import get_current_user_optional
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.user import User
-from app.services.advisor_service import get_advisor_insights, track_acca_for_user
+from app.services.advisor_service import get_advisor_insights, track_acca_for_user, chat_with_advisor
+
+
+class _ChatRequest(_BM):
+    question: str
+    history: list[dict] = []
 
 router = APIRouter(prefix="/api/advisor", tags=["advisor"])
 
@@ -97,3 +104,35 @@ async def track_acca(
             detail=result.get("message") or "No accumulator available to track.",
         )
     return result
+
+
+_CHAT_COOLDOWN_SECONDS = 3
+_last_chat_at: dict[int, float] = {}
+
+
+@router.post("/chat")
+async def advisor_chat(
+    body: _ChatRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """
+    Conversational AI chat for pro subscribers.
+    Accepts a question + prior conversation history and returns the assistant reply.
+    History items: [{"role": "user"|"assistant", "content": "..."}]
+    """
+    _require_pro(current_user)
+    now = time.monotonic()
+    last = _last_chat_at.get(current_user.id)
+    if last is not None and now - last < _CHAT_COOLDOWN_SECONDS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Slow down — one message at a time.",
+        )
+    _last_chat_at[current_user.id] = now
+
+    if not body.question.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Question cannot be empty.")
+
+    settings = get_settings()
+    answer = await chat_with_advisor(body.question.strip(), body.history[-20:], settings)
+    return {"answer": answer, "role": "assistant"}

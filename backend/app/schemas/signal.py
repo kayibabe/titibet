@@ -104,6 +104,10 @@ class SignalOut(BaseModel):
     # Alternative markets from the same fixture (up to 2, populated in router)
     alternatives: list[AlternativeSignal] = []
 
+    # Fatigue flags — True when the team played 2+ matches in the prior 7 days
+    fatigue_home: Optional[bool] = None
+    fatigue_away: Optional[bool] = None
+
     # Denormalised fixture fields (populated in router)
     home_team: Optional[str] = None
     away_team: Optional[str] = None

@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -560,6 +560,32 @@ async def list_signals(
             for s in _fix_map[r.fixture_id]
             if s.id != r.id
         ][:2]
+
+    # Fatigue annotation — flag teams that played 2+ matches in the prior 7 days
+    _all_teams: set[str] = set()
+    for r in results:
+        if r.home_team: _all_teams.add(r.home_team)
+        if r.away_team: _all_teams.add(r.away_team)
+    if _all_teams:
+        _lookback = datetime.utcnow() - timedelta(days=7)
+        _recent_q = (
+            select(Fixture.home_team, Fixture.away_team)
+            .where(
+                Fixture.kickoff_at >= _lookback,
+                func.upper(Fixture.status).in_(["FT", "AET", "PEN"]),
+            )
+        )
+        _recent_rows = (await db.execute(_recent_q)).all()
+        _team_games: dict[str, int] = {}
+        for _ht, _at in _recent_rows:
+            if _ht: _team_games[_ht] = _team_games.get(_ht, 0) + 1
+            if _at: _team_games[_at] = _team_games.get(_at, 0) + 1
+        _FATIGUE = 2
+        for r in results:
+            if r.home_team and _team_games.get(r.home_team, 0) >= _FATIGUE:
+                r.fatigue_home = True
+            if r.away_team and _team_games.get(r.away_team, 0) >= _FATIGUE:
+                r.fatigue_away = True
 
     # Enforce free-tier signal limit — pro users see all signals
     is_pro = (

@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react'
-import { ChevronDown, ChevronUp, Clock, TrendingDown, TrendingUp, Lock, CheckCircle2, Lightbulb, X, Heart, Bot, Plus } from 'lucide-react'
+import { ChevronDown, ChevronUp, Clock, TrendingDown, TrendingUp, Lock, CheckCircle2, Lightbulb, X, Heart, Bot, Plus, Zap } from 'lucide-react'
 import { ConfidenceBadge, AgreementBadge } from './SignalBadge'
 import EngineBreakdown from './EngineBreakdown'
 import ContradictionAlert from './ContradictionAlert'
@@ -114,7 +114,10 @@ function MarketIntentBadge({ market }) {
   let label = null
   let style = ''
 
-  if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Home Over 0.5' || market === 'Away Over 0.5') {
+  if (market === 'Over 0.5 1H') {
+    label = 'First Half'
+    style = 'bg-violet-500/10 text-violet-400 border-violet-500/30'
+  } else if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Home Over 0.5' || market === 'Away Over 0.5') {
     label = market === 'Away Over 0.5' ? 'Away Scores' : market === 'Home Over 0.5' ? 'Home Scores' : 'Goals Lean'
     style = 'bg-rose-500/10 text-rose-600 border-rose-500/30'
   } else if (market === 'Under 2.5') {
@@ -620,6 +623,15 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
                 className="inline-flex items-center px-2 py-0.5 rounded border border-amber-400/60 bg-amber-400/15 text-[10px] font-extrabold text-amber-400 tracking-wider shrink-0 shadow-[0_0_6px_rgba(251,191,36,0.3)]"
               >
                 BANKER
+              </span>
+            )}
+            {(signal.fatigue_home || signal.fatigue_away) && (
+              <span
+                title={`Fatigue risk: ${[signal.fatigue_home && signal.home_team, signal.fatigue_away && signal.away_team].filter(Boolean).join(' & ')} played 2+ matches in the last 7 days`}
+                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-orange-500/40 bg-orange-500/8 text-[10px] font-medium text-orange-400 shrink-0"
+              >
+                <Zap size={9} />
+                Fatigue
               </span>
             )}
             <RankBadge rank={rank} />

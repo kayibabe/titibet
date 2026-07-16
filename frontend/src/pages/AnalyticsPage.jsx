@@ -1,7 +1,8 @@
 ﻿import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Brain, Activity, BarChart2, Layers, TrendingUp, Zap, TrendingDown, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, Target, Coins, Crosshair } from 'lucide-react'
+import { Brain, Activity, BarChart2, Layers, TrendingUp, Zap, TrendingDown, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, Target, Coins, Crosshair, Users } from 'lucide-react'
 import { fetchAnalytics, fetchAnalyticsIntelligence, fetchStakingSimulation, fetchProbabilityCalibration, fetchAccaPerformance } from '../api/analytics'
 import AccuracyDashboard from '../components/analytics/AccuracyDashboard'
+import Leaderboard from '../components/analytics/Leaderboard'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Cell } from 'recharts'
 import LossAnalysisDashboard from '../components/analytics/LossAnalysisDashboard'
 import BriefingPanel from '../components/analytics/BriefingPanel'
@@ -769,6 +770,10 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
               ) : (
                 <Section icon={BarChart2} title="P&L Trend" subtitle="cumulative profit over time" pro locked onUpgrade={onUpgrade}>{null}</Section>
               )}
+
+              <Section icon={Users} title="Bettor Leaderboard" subtitle="top performers ranked by hit rate">
+                <Leaderboard />
+              </Section>
             </div>
           )}
 

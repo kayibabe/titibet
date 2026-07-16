@@ -1812,3 +1812,99 @@ async def track_acca_for_user(
 
     created = await _create_acca_bet(db, acca, target_date, current_user)
     return {"tracked": True, "created": created, "combined_odds": acca.get("combined_odds")}
+
+
+# ── Conversational chat ───────────────────────────────────────────────────────
+
+_CHAT_SYSTEM = (
+    "You are TiTiBet's AI football betting assistant. "
+    "You help pro subscribers understand today's signals, evaluate picks, and think through betting decisions. "
+    "Be concise (2-4 sentences unless detail is genuinely needed), analytical, and honest about uncertainty. "
+    "You know the system uses Bayesian + Poisson dual-model signals. "
+    "Never recommend stake sizes above 5% of bankroll. "
+    "Do not guarantee outcomes — betting involves risk."
+)
+
+_CHAT_MODELS = {
+    "claude":   "claude-haiku-4-5-20251001",
+    "gemini":   "gemini-2.0-flash",
+    "cerebras": "llama3.1-70b",
+    "groq":     "llama-3.3-70b-versatile",
+    "mistral":  "mistral-small-latest",
+}
+
+
+async def chat_with_advisor(
+    question: str,
+    history: list[dict],
+    settings,
+) -> str:
+    """
+    Single-turn chat call with conversation history.
+    Returns the assistant's reply as a plain string.
+    history items: [{"role": "user"|"assistant", "content": "..."}]
+    """
+    messages = [*history, {"role": "user", "content": question}]
+    keys = {
+        "claude":   settings.titibet_claude_key,
+        "gemini":   settings.gemini_api_key,
+        "cerebras": settings.cerebras_api_key,
+        "groq":     settings.groq_api_key,
+        "mistral":  settings.mistral_api_key,
+    }
+
+    for provider in PROVIDER_CHAIN:
+        key = keys.get(provider, "")
+        if not key:
+            continue
+        try:
+            if provider == "claude":
+                client = anthropic.AsyncAnthropic(
+                    api_key=key,
+                    base_url="https://api.anthropic.com",
+                )
+                msg = await client.messages.create(
+                    model=_CHAT_MODELS["claude"],
+                    max_tokens=600,
+                    system=_CHAT_SYSTEM,
+                    messages=messages,
+                )
+                return next((b.text for b in msg.content if b.type == "text"), "").strip()
+            else:
+                url = {"groq": GROQ_URL, "cerebras": CEREBRAS_URL, "mistral": MISTRAL_URL}.get(provider)
+                if url is None and provider == "gemini":
+                    # Gemini via REST
+                    gemini_url = GEMINI_URL.format(model=_CHAT_MODELS["gemini"])
+                    turns = []
+                    for m in messages:
+                        turns.append({"role": "model" if m["role"] == "assistant" else "user",
+                                      "parts": [{"text": m["content"]}]})
+                    async with httpx.AsyncClient(timeout=30.0) as c:
+                        r = await c.post(gemini_url, json={
+                            "system_instruction": {"parts": [{"text": _CHAT_SYSTEM}]},
+                            "contents": turns,
+                            "generationConfig": {"maxOutputTokens": 600, "temperature": 0.4},
+                        }, params={"key": key})
+                        if r.status_code == 200:
+                            cands = r.json().get("candidates", [])
+                            if cands:
+                                return cands[0]["content"]["parts"][0]["text"].strip()
+                    continue
+                if url is None:
+                    continue
+                headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+                payload = {
+                    "model": _CHAT_MODELS[provider],
+                    "messages": [{"role": "system", "content": _CHAT_SYSTEM}, *messages],
+                    "max_tokens": 600,
+                    "temperature": 0.4,
+                }
+                async with httpx.AsyncClient(timeout=30.0) as c:
+                    r = await c.post(url, json=payload, headers=headers)
+                    if r.status_code == 200:
+                        return r.json()["choices"][0]["message"]["content"].strip()
+        except Exception as exc:
+            logger.info("chat_with_advisor: %s failed — %s", provider, exc)
+            continue
+
+    return "All AI providers are currently at quota. Please try again shortly."

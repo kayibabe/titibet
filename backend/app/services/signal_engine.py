@@ -28,6 +28,7 @@ from app.core.config import (
     WIN_TO_NIL_HOME_MARKET_NAMES, WIN_TO_NIL_AWAY_MARKET_NAMES,
     WIN_TO_NIL_COMBINED_MARKET_NAMES,
     EXACT_GOALS_MARKET_NAMES,
+    FIRST_HALF_GOALS_MARKET_NAMES,
     DISABLED_MARKETS,
     DISABLED_LEAGUES,
     OVER_GOALS_SUPPRESSED_LEAGUES,
@@ -60,6 +61,7 @@ MARKET_TO_POISSON_KEY: dict[str, str] = {
     "Over 2.5":     "over25",
     "Home Over 0.5":  "home_o05",
     "Away Over 0.5":  "away_o05",
+    "Over 0.5 1H":    "over05fh",
     # Double Chance — Poisson bivariate probability from blended λ_h / λ_a
     "1X (Home or Draw)": "dc_1x",
     "X2 (Draw or Away)": "dc_x2",
@@ -262,6 +264,10 @@ def _build_poisson_odds(snapshots: list[MarketSnapshot]) -> tuple[dict, dict]:
             if sel == "Over 0.5":
                 if "away_o05" not in signal_odds or s.odds > signal_odds["away_o05"]:
                     signal_odds["away_o05"] = s.odds
+        elif mt in FIRST_HALF_GOALS_MARKET_NAMES:
+            if sel == "Over 0.5":
+                if "over05fh" not in signal_odds or s.odds > signal_odds["over05fh"]:
+                    signal_odds["over05fh"] = s.odds
 
     return odds, signal_odds
 

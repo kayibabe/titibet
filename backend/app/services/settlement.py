@@ -63,6 +63,23 @@ SCORE_SETTLEABLE_MARKETS: dict[str, Callable[[int, int], bool]] = {
     "Exactly 3 Goals": lambda h, a: (h + a) == 3,
 }
 
+# Markets settled on HT scores (home_score_ht + away_score_ht).
+HT_SETTLEABLE_MARKETS: dict[str, Callable[[int, int], bool]] = {
+    "Over 0.5 1H": lambda h, a: (h + a) >= 1,
+    "Under 0.5 1H": lambda h, a: (h + a) == 0,
+    "Over 1.5 1H": lambda h, a: (h + a) >= 2,
+    "Under 1.5 1H": lambda h, a: (h + a) <= 1,
+}
+
+# Markets settled on corner counts (home_corners + away_corners).
+CORNERS_SETTLEABLE_MARKETS: dict[str, Callable[[int, int], bool]] = {
+    "Over 8.5 Corners":  lambda h, a: (h + a) >= 9,
+    "Over 9.5 Corners":  lambda h, a: (h + a) >= 10,
+    "Over 10.5 Corners": lambda h, a: (h + a) >= 11,
+    "Under 8.5 Corners": lambda h, a: (h + a) <= 8,
+    "Under 9.5 Corners": lambda h, a: (h + a) <= 9,
+}
+
 
 def _settle_bet(bet: TrackedBet, won: bool) -> None:
     if won:
@@ -89,6 +106,22 @@ def _normalize_market(market_type: str | None) -> str:
 def _score_condition(market_type: str | None) -> Callable[[int, int], bool] | None:
     mt = _normalize_market(market_type)
     return SCORE_SETTLEABLE_MARKETS.get(mt)
+
+
+def _settlement_scope(market_type: str | None) -> str:
+    """Return 'ft' | 'ht' | 'corners' for settlement score type."""
+    mt = _normalize_market(market_type)
+    if mt in HT_SETTLEABLE_MARKETS:
+        return "ht"
+    if mt in CORNERS_SETTLEABLE_MARKETS:
+        return "corners"
+    return "ft"
+
+
+def _condition_for_scope(market_type: str | None) -> Callable[[int, int], bool] | None:
+    mt = _normalize_market(market_type)
+    fn = HT_SETTLEABLE_MARKETS.get(mt) or CORNERS_SETTLEABLE_MARKETS.get(mt)
+    return fn or SCORE_SETTLEABLE_MARKETS.get(mt)
 
 
 async def settle_bets_for_date(
@@ -140,16 +173,29 @@ async def settle_bets_for_date(
                 fixture.status if fixture else "not_found",
             )
             continue
-        if fixture.home_score is None or fixture.away_score is None:
-            skip_no_score += 1
-            logger.warning(
-                "settle: skipping bet %s — fixture %s (%s vs %s) is %s but score is null",
-                bet.id, bet.fixture_id,
-                fixture.home_team, fixture.away_team, fixture.status,
-            )
-            continue
+        scope = _settlement_scope(bet.market_type)
+        if scope == "ht":
+            if fixture.home_score_ht is None or fixture.away_score_ht is None:
+                skip_no_score += 1
+                continue
+            score_h, score_a = fixture.home_score_ht, fixture.away_score_ht
+        elif scope == "corners":
+            if fixture.home_corners is None or fixture.away_corners is None:
+                skip_no_score += 1
+                continue
+            score_h, score_a = fixture.home_corners, fixture.away_corners
+        else:
+            if fixture.home_score is None or fixture.away_score is None:
+                skip_no_score += 1
+                logger.warning(
+                    "settle: skipping bet %s — fixture %s (%s vs %s) is %s but score is null",
+                    bet.id, bet.fixture_id,
+                    fixture.home_team, fixture.away_team, fixture.status,
+                )
+                continue
+            score_h, score_a = fixture.home_score, fixture.away_score
 
-        condition = _score_condition(bet.market_type)
+        condition = _condition_for_scope(bet.market_type)
         if condition is None:
             skip_no_market += 1
             logger.debug(
@@ -158,7 +204,7 @@ async def settle_bets_for_date(
             )
             continue
 
-        won = condition(fixture.home_score, fixture.away_score)
+        won = condition(score_h, score_a)
         _settle_bet(bet, won)
         just_settled.append(bet)
         settled += 1

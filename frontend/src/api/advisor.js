@@ -20,6 +20,16 @@ export async function fetchAdvisorInsights(date, { force = false } = {}) {
   return res.json()
 }
 
+export async function chatWithAdvisor(question, history = []) {
+  const res = await apiFetch('/api/advisor/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, history }),
+  })
+  if (!res.ok) await throwApiError(res, 'Chat request failed')
+  return res.json()
+}
+
 export async function trackAcca(date, expectedOdds) {
   const params = new URLSearchParams()
   if (date) params.set('date', date)

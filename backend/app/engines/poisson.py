@@ -310,6 +310,56 @@ def _marginal_team_over_result(
     )
 
 
+_FH_FRACTION = 0.42  # historical average: ~42% of FT goals scored in first half
+
+
+def _evaluate_over05fh_signal(odds: dict, signal_odds: dict) -> PoissonResult:
+    """
+    First Half Over 0.5 Goals — independent Poisson on λ_total × FH_FRACTION.
+    Fires when the scaled lambda implies ≥ 60% chance of at least one first-half goal.
+    """
+    s00 = odds.get("s00")
+    if s00 is None:
+        return PoissonResult(
+            rule_key="over05fh", market="Over 0.5 1H",
+            rule_pass=False, rule_strong=False,
+            poisson_prob=None, edge_pct=None, has_edge=False,
+            grade="N", lambda_h=None, lambda_a=None, lambda_total=None,
+            missing_markets=["CS 0-0"],
+        )
+    lam_total = lambda_from_cs00(s00, R["cs_overround_factor"])
+    if lam_total is None:
+        return PoissonResult(
+            rule_key="over05fh", market="Over 0.5 1H",
+            rule_pass=False, rule_strong=False,
+            poisson_prob=None, edge_pct=None, has_edge=False,
+            grade="N", lambda_h=None, lambda_a=None, lambda_total=None,
+        )
+    lam_fh = lam_total * _FH_FRACTION
+    # P(FH goals >= 1) = 1 - P(FH goals = 0) = 1 - e^(-λ_fh)
+    p = team_side_over_poisson_prob(lam_fh, 0.5)
+    mo = signal_odds.get("over05fh")
+    min_odd = MARKET_MIN_ODDS.get("Over 0.5 1H")
+    if mo is not None and min_odd is not None and mo < min_odd:
+        return PoissonResult(
+            rule_key="over05fh", market="Over 0.5 1H",
+            rule_pass=False, rule_strong=False,
+            poisson_prob=p, edge_pct=None, has_edge=False,
+            grade="N", lambda_h=None, lambda_a=None, lambda_total=lam_total,
+        )
+    min_p = float(R.get("fh_over05_min_prob", 0.60))
+    strong_p = float(R.get("fh_over05_strong_prob", 0.72))
+    rule_pass = p is not None and p >= min_p
+    strong = rule_pass and p >= strong_p
+    return PoissonResult(
+        rule_key="over05fh", market="Over 0.5 1H",
+        rule_pass=rule_pass, rule_strong=strong,
+        poisson_prob=p, edge_pct=None, has_edge=False,
+        grade=_grade(rule_pass, strong),
+        lambda_h=None, lambda_a=None, lambda_total=lam_total,
+    )
+
+
 def _evaluate_cs_cascade(odds: dict, signal_odds: dict, form_lambdas: Optional[dict] = None) -> list[PoissonResult]:
     """0-0 CS cascade rules mapping odds ranges to markets."""
     s00 = odds.get("s00")
@@ -543,6 +593,7 @@ def analyse_fixture(
         rule_key="away_o05", market="Away Over 0.5", side="a", line=0.5, odds_key="away_o05",
         odds=odds, signal_odds=signal_odds, form_lambdas=form_lambdas,
     )
+    over05fh_r = _evaluate_over05fh_signal(odds, signal_odds)
     cascade = _evaluate_cs_cascade(odds, signal_odds, form_lambdas)
     over15_r = _evaluate_over15_signal(odds, signal_odds)
     over25_r = _evaluate_over25_signal(odds, signal_odds)
@@ -553,6 +604,7 @@ def analyse_fixture(
     all_results = {
         "home_o05": home_o05_r,
         "away_o05": away_o05_r,
+        "over05fh": over05fh_r,
         "over15": over15_r, "over25": over25_r,
         **cascade_map,
         **dc_map,

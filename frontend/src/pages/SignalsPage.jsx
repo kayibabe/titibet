@@ -7,6 +7,7 @@ import SignalCard from '../components/signals/SignalCard'
 import TrackModal from '../components/tracker/TrackModal'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import AIAdvisorPanel from '../components/signals/AIAdvisorPanel'
+import AIChatPanel from '../components/signals/AIChatPanel'
 import UpgradePrompt from '../components/shared/UpgradePrompt'
 import useTier from '../hooks/useTier'
 import { useAuth } from '../context/AuthContext'
@@ -20,6 +21,7 @@ const AGREEMENT_OPTIONS  = ['', 'Both', 'Bayesian Only', 'Poisson Only', 'Contra
 const MARKET_FAMILY_OPTIONS = [
   '',
   'Goals',
+  'First Half',
   'Team Totals',
   'Double Chance',
   'Clean Sheet',
@@ -28,6 +30,8 @@ const MARKET_OPTIONS     = [
   '',
   // Full-game totals (active)
   'Over 1.5', 'Over 2.5', 'Under 2.5',
+  // First half (active)
+  'Over 0.5 1H',
   // Team totals (active)
   'Home Over 0.5', 'Away Over 0.5',
   // Double Chance (active)
@@ -49,6 +53,7 @@ const DC_MARKETS = new Set(['1X (Home or Draw)', 'X2 (Draw or Away)', '12 (Home 
 function getMarketFamily(market) {
   if (!market) return 'Other'
   if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Under 2.5') return 'Goals'
+  if (market === 'Over 0.5 1H') return 'First Half'
   if (market === 'Home Over 0.5' || market === 'Away Over 0.5') return 'Team Totals'
   if (DC_MARKETS.has(market)) return 'Double Chance'
   if (market === 'Home Win to Nil' || market === 'Away Win to Nil') return 'Clean Sheet'
@@ -875,14 +880,27 @@ const reload = () => load(params)
       {/* ── AI ADVISORY TAB ───────────────────────────────────────────────── */}
       <div className={activeTab === 'advisor' ? '' : 'hidden'}>
         {isPro ? (
-          <AIAdvisorPanel
-            date={date}
-            tabMode
-            onFilterPick={(pick) => {
-              if (pick.market) setMarket(pick.market)
-              setActiveTab('signals')
-            }}
-          />
+          <div className="space-y-6">
+            <AIAdvisorPanel
+              date={date}
+              tabMode
+              onFilterPick={(pick) => {
+                if (pick.market) setMarket(pick.market)
+                setActiveTab('signals')
+              }}
+            />
+
+            {/* Chat divider */}
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-[var(--border)]" />
+              <span className="text-[10px] font-bold text-[var(--text)] opacity-40 tracking-widest uppercase">Ask the AI</span>
+              <div className="flex-1 h-px bg-[var(--border)]" />
+            </div>
+
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-5">
+              <AIChatPanel />
+            </div>
+          </div>
         ) : (
           <UpgradePrompt
             required="pro"

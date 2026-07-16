@@ -121,6 +121,12 @@ export async function fetchAccaPerformance() {
   return res.json()
 }
 
+export async function fetchLeaderboard() {
+  const res = await apiFetch('/api/leaderboard')
+  if (!res.ok) throw new Error(`Leaderboard fetch failed: ${res.status}`)
+  return res.json()
+}
+
 export async function fetchSignalAccuracy(lookbackDays = 90) {
   const res = await apiFetch(`${BASE}/signal-accuracy?lookback_days=${lookbackDays}`)
   if (!res.ok) throw new Error(`Signal accuracy fetch failed: ${res.status}`)

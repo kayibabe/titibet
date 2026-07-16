@@ -277,6 +277,30 @@ EXACT_GOALS_MARKET_NAMES: frozenset = frozenset({
     "Exact Goals",
 })
 
+FIRST_HALF_GOALS_MARKET_NAMES: frozenset = frozenset({
+    "Goals First Half",
+    "First Half Goals",
+    "Over/Under First Half",
+    "First Half Over/Under",
+    "1st Half Goals",
+    "Goals Half Time",
+    "HT Goals Over/Under",
+})
+
+CORNERS_MARKET_NAMES: frozenset = frozenset({
+    "Corner Kicks",
+    "Total Corners",
+    "Corners Over/Under",
+    "Total Corner Kicks",
+    "Corners",
+})
+
+CARDS_MARKET_NAMES: frozenset = frozenset({
+    "Cards Over/Under",
+    "Total Cards",
+    "Bookings",
+})
+
 
 # =============================================================================
 # Market definitions
@@ -348,7 +372,7 @@ DISABLED_MARKETS: frozenset = frozenset({
     "Away Under 1.5", # retired 2026-06-15: au15_flip rule removed
     "Over 0.5",       # retired 2026-06-15: over05ft rule removed
     "Over 3.5",       # retired 2026-06-15: over35ft rule removed
-    "Over 0.5 1H",    # retired 2026-06-15: over05fh rule removed
+    # "Over 0.5 1H" — re-enabled: FH Poisson rule using 0.42×λ_total; settles on home_score_ht + away_score_ht
     "Underdog Over 1.5 Corners",  # retired 2026-06-15: WTCPM engine removed
     # ── Bayesian-only markets retired 2026-06-15 ─────────────────────────────
     # No Poisson rule → dual-model agreement defaults to "Bayesian Only" with no
@@ -602,6 +626,12 @@ MARKET_MIN_ODDS: dict = {
     "1X (Home or Draw)": 1.10,
     "X2 (Draw or Away)": 1.10,
     "12 (Home or Away)": 1.15,
+    # First half goals: 1.65 floor reflects the ~40-50% probability of first half being goalless
+    "Over 0.5 1H":  1.65,
+    # Corner markets: 1.60 floor — over/under markets near even money need minimum EV
+    "Over 9.5 Corners": 1.60,
+    "Over 8.5 Corners": 1.40,
+    "Under 9.5 Corners": 1.60,
 }
 
 
@@ -928,4 +958,7 @@ POISSON_RULES = {
     # Strong at 0.80 = implied fair DC odds of 1.25 or better.
     "dc_min_prob":    0.70,
     "dc_strong_prob": 0.80,
+    # First Half Over 0.5 — scaled λ_total × 0.42; moderate bar since FH goals are rarer
+    "fh_over05_min_prob":    0.60,
+    "fh_over05_strong_prob": 0.72,
 }
