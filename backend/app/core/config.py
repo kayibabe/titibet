@@ -623,10 +623,11 @@ MARKET_MIN_ODDS: dict = {
     "Away Over 0.5":   1.30,
     "Home Win to Nil": 1.40,
     "Away Win to Nil": 1.40,
-    # Double Chance: minimum floor prevents near-certainty picks with no useful EV.
-    "1X (Home or Draw)": 1.10,
-    "X2 (Draw or Away)": 1.10,
-    "12 (Home or Away)": 1.15,
+    # Double Chance: raised from 1.10/1.15 → 1.25/1.30 (2026-07-16).
+    # At 1.01-1.09 a single loss wipes 100+ wins; no practical EV for subscribers.
+    "1X (Home or Draw)": 1.25,
+    "X2 (Draw or Away)": 1.25,
+    "12 (Home or Away)": 1.30,
     # First half goals: 1.65 floor reflects the ~40-50% probability of first half being goalless
     "Over 0.5 1H":  1.65,
     # Corner markets: 1.60 floor — over/under markets near even money need minimum EV
