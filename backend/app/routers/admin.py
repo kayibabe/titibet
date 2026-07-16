@@ -914,22 +914,30 @@ async def cleanup_tracked_bets(
 
     # 7. Below MARKET_MIN_ODDS floors
     min_odds_clause = (
-        "(market_type = 'Over 1.5'       AND odds IS NOT NULL AND odds < :o15_min)"
-        " OR (market_type = 'Over 2.5'   AND odds IS NOT NULL AND odds < :o25_min)"
-        " OR (market_type = 'Under 2.5'  AND odds IS NOT NULL AND odds < :u25_min)"
-        " OR (market_type = 'Home Over 0.5' AND odds IS NOT NULL AND odds < :ho05_min)"
+        "(market_type = 'Over 1.5'           AND odds IS NOT NULL AND odds < :o15_min)"
+        " OR (market_type = 'Over 2.5'       AND odds IS NOT NULL AND odds < :o25_min)"
+        " OR (market_type = 'Under 2.5'      AND odds IS NOT NULL AND odds < :u25_min)"
+        " OR (market_type = 'Home Over 0.5'  AND odds IS NOT NULL AND odds < :ho05_min)"
+        " OR (market_type = 'Away Over 0.5'  AND odds IS NOT NULL AND odds < :ao05_min)"
         " OR (market_type = 'Home Win to Nil' AND odds IS NOT NULL AND odds < :hwtn_min)"
         " OR (market_type = 'Away Win to Nil' AND odds IS NOT NULL AND odds < :awtn_min)"
+        " OR (market_type = '1X (Home or Draw)' AND odds IS NOT NULL AND odds < :dc1x_min)"
+        " OR (market_type = 'X2 (Draw or Away)' AND odds IS NOT NULL AND odds < :dcx2_min)"
+        " OR (market_type = '12 (Home or Away)' AND odds IS NOT NULL AND odds < :dc12_min)"
     )
     results["below_min_odds"] = await _count_and_delete(
         f"({min_odds_clause})",
         {
-            "o15_min":  MARKET_MIN_ODDS.get("Over 1.5", 1.50),
-            "o25_min":  MARKET_MIN_ODDS.get("Over 2.5", 1.55),
-            "u25_min":  MARKET_MIN_ODDS.get("Under 2.5", 2.10),
-            "ho05_min": MARKET_MIN_ODDS.get("Home Over 0.5", 1.30),
-            "hwtn_min": MARKET_MIN_ODDS.get("Home Win to Nil", 1.40),
-            "awtn_min": MARKET_MIN_ODDS.get("Away Win to Nil", 1.40),
+            "o15_min":   MARKET_MIN_ODDS.get("Over 1.5", 1.50),
+            "o25_min":   MARKET_MIN_ODDS.get("Over 2.5", 1.55),
+            "u25_min":   MARKET_MIN_ODDS.get("Under 2.5", 2.10),
+            "ho05_min":  MARKET_MIN_ODDS.get("Home Over 0.5", 1.30),
+            "ao05_min":  MARKET_MIN_ODDS.get("Away Over 0.5", 1.30),
+            "hwtn_min":  MARKET_MIN_ODDS.get("Home Win to Nil", 1.40),
+            "awtn_min":  MARKET_MIN_ODDS.get("Away Win to Nil", 1.40),
+            "dc1x_min":  MARKET_MIN_ODDS.get("1X (Home or Draw)", 1.25),
+            "dcx2_min":  MARKET_MIN_ODDS.get("X2 (Draw or Away)", 1.25),
+            "dc12_min":  MARKET_MIN_ODDS.get("12 (Home or Away)", 1.30),
         },
         "below min odds",
     )
@@ -1035,6 +1043,30 @@ async def cleanup_tracked_bets(
         f"(SELECT 1 FROM fixtures f WHERE f.id = s.fixture_id AND "
         f"({fix_wk_like} OR lower(f.home_team) LIKE '% w' OR lower(f.away_team) LIKE '% w'))",
         {**ogm_params, **swk_params},
+    )
+    sig_results["below_min_odds"] = await _cads(
+        "(s.market = 'Over 1.5'           AND s.bayesian_best_odd IS NOT NULL AND s.bayesian_best_odd < :o15_min)"
+        " OR (s.market = 'Over 2.5'       AND s.bayesian_best_odd IS NOT NULL AND s.bayesian_best_odd < :o25_min)"
+        " OR (s.market = 'Under 2.5'      AND s.bayesian_best_odd IS NOT NULL AND s.bayesian_best_odd < :u25_min)"
+        " OR (s.market = 'Home Over 0.5'  AND s.bayesian_best_odd IS NOT NULL AND s.bayesian_best_odd < :ho05_min)"
+        " OR (s.market = 'Away Over 0.5'  AND s.bayesian_best_odd IS NOT NULL AND s.bayesian_best_odd < :ao05_min)"
+        " OR (s.market = 'Home Win to Nil' AND s.bayesian_best_odd IS NOT NULL AND s.bayesian_best_odd < :hwtn_min)"
+        " OR (s.market = 'Away Win to Nil' AND s.bayesian_best_odd IS NOT NULL AND s.bayesian_best_odd < :awtn_min)"
+        " OR (s.market = '1X (Home or Draw)' AND s.bayesian_best_odd IS NOT NULL AND s.bayesian_best_odd < :dc1x_min)"
+        " OR (s.market = 'X2 (Draw or Away)' AND s.bayesian_best_odd IS NOT NULL AND s.bayesian_best_odd < :dcx2_min)"
+        " OR (s.market = '12 (Home or Away)' AND s.bayesian_best_odd IS NOT NULL AND s.bayesian_best_odd < :dc12_min)",
+        {
+            "o15_min":  MARKET_MIN_ODDS.get("Over 1.5", 1.50),
+            "o25_min":  MARKET_MIN_ODDS.get("Over 2.5", 1.55),
+            "u25_min":  MARKET_MIN_ODDS.get("Under 2.5", 2.10),
+            "ho05_min": MARKET_MIN_ODDS.get("Home Over 0.5", 1.30),
+            "ao05_min": MARKET_MIN_ODDS.get("Away Over 0.5", 1.30),
+            "hwtn_min": MARKET_MIN_ODDS.get("Home Win to Nil", 1.40),
+            "awtn_min": MARKET_MIN_ODDS.get("Away Win to Nil", 1.40),
+            "dc1x_min": MARKET_MIN_ODDS.get("1X (Home or Draw)", 1.25),
+            "dcx2_min": MARKET_MIN_ODDS.get("X2 (Draw or Away)", 1.25),
+            "dc12_min": MARKET_MIN_ODDS.get("12 (Home or Away)", 1.30),
+        },
     )
     total_signals_deleted = sum(sig_results.values())
 
