@@ -172,6 +172,84 @@ function WhyMarketChips({ signal }) {
   )
 }
 
+// ── AI Insights Feed — contextual stat blurbs derived from signal fields ─────
+function buildInsights(signal) {
+  const insights = []
+  const adv = signal.advanced
+  const market = signal.market || ''
+
+  // xG / expected goals
+  const zinbTotal = adv?.zinb_lambda_h != null && adv?.zinb_lambda_a != null
+    ? adv.zinb_lambda_h + adv.zinb_lambda_a : null
+  const poissonTotal = signal.poisson?.lambda_total ?? null
+  const xgTotal = zinbTotal ?? poissonTotal
+
+  if (xgTotal != null) {
+    if (market.startsWith('Over') && xgTotal >= 2.5) {
+      insights.push(`xG projection ${xgTotal.toFixed(1)} goals — model sees a high-scoring game`)
+    } else if (market === 'Under 2.5' && xgTotal < 2.0) {
+      insights.push(`xG projection only ${xgTotal.toFixed(1)} goals — both sides expected to keep it tight`)
+    } else if (xgTotal != null) {
+      insights.push(`Expected goals: ${xgTotal.toFixed(1)} total (${(adv?.zinb_lambda_h ?? signal.poisson?.lambda_h ?? 0).toFixed(1)} home · ${(adv?.zinb_lambda_a ?? signal.poisson?.lambda_a ?? 0).toFixed(1)} away)`)
+    }
+  }
+
+  // Sharp money / drift
+  const drift = signal.odds_drift_pct
+  if (drift != null && drift < -3) {
+    insights.push(`Odds shortened ${Math.abs(drift).toFixed(1)}% since market open — sharp money confirmed our side`)
+  } else if (drift != null && drift > 4) {
+    insights.push(`Odds drifted +${drift.toFixed(1)}% — market moving against this pick (proceed cautiously)`)
+  }
+
+  // Bookmaker consensus
+  const books = signal.bayesian?.bookmaker_count
+  if (books != null && books >= 3) {
+    insights.push(`${books} bookmakers pricing this market — strong independent consensus`)
+  } else if (books === 1) {
+    insights.push('Only 1 bookmaker covers this market — thin consensus, size down')
+  }
+
+  // Glicko-2 rating gap
+  if (adv?.glicko_r_diff != null && Math.abs(adv.glicko_r_diff) > 200) {
+    const stronger = adv.glicko_r_diff > 0 ? signal.home_team : signal.away_team
+    insights.push(`${Math.abs(adv.glicko_r_diff).toFixed(0)}-pt Glicko-2 gap — ${stronger} is significantly stronger form-wise`)
+  }
+
+  // Both-engines agreement
+  if (signal.dual_agreement === 'Both' && signal.dual_confidence === 'High') {
+    insights.push('Both Bayesian (market consensus) and Poisson (goal model) engines agree — maximum dual confirmation')
+  } else if (signal.dual_agreement === 'Poisson Only') {
+    insights.push('Poisson goal model sees value the bookmaker prices haven\'t fully priced in')
+  }
+
+  // Tier 1 league
+  if (signal.league_tier === 1 && !insights.some(i => i.includes('Poisson') || i.includes('Bayesian'))) {
+    insights.push('Tier 1 league — model is best-calibrated on this competition')
+  }
+
+  return insights.slice(0, 3)
+}
+
+function SignalInsights({ signal }) {
+  const insights = buildInsights(signal)
+  if (!insights.length) return null
+  return (
+    <div className="rounded-lg border border-[var(--accent)]/15 bg-[var(--accent)]/5 px-3 py-2.5 space-y-1.5">
+      <span className="flex items-center gap-1.5 text-[10px] font-bold text-[var(--accent)] uppercase tracking-wider">
+        <Lightbulb size={10} />
+        Signal Intelligence
+      </span>
+      {insights.map((insight, i) => (
+        <p key={i} className="text-[11px] text-[var(--text)] opacity-80 leading-relaxed flex items-start gap-1.5">
+          <span className="text-[var(--accent)] opacity-60 shrink-0 mt-0.5">›</span>
+          {insight}
+        </p>
+      ))}
+    </div>
+  )
+}
+
 // ── Kickoff display — always shows local time; adds live countdown when < 24 h ──
 function useKickoff(kickoffAt, status) {
   const localTime = fmtKickoff(kickoffAt)
@@ -501,6 +579,14 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
                 )}
               </span>
             )}
+            {signal.is_banker && (
+              <span
+                title="Top banker pick — highest-conviction signal of the day"
+                className="inline-flex items-center px-2 py-0.5 rounded border border-amber-400/60 bg-amber-400/15 text-[10px] font-extrabold text-amber-400 tracking-wider shrink-0 shadow-[0_0_6px_rgba(251,191,36,0.3)]"
+              >
+                BANKER
+              </span>
+            )}
             <RankBadge rank={rank} />
           </div>
         </div>
@@ -566,6 +652,9 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
 
             {/* Why-market context chips */}
             <WhyMarketChips signal={signal} />
+
+            {/* AI Insights Feed */}
+            <SignalInsights signal={signal} />
 
             {/* League · tier dot · country */}
             <div className="flex items-center gap-2 flex-wrap text-xs text-[var(--text)] opacity-75">

@@ -558,23 +558,38 @@ const reload = () => load(params)
                 </label>
 
                 {/* Min Prob% */}
-                <label className="flex flex-col gap-1 text-sm text-[var(--text)] w-28">
+                <label className="flex flex-col gap-1 text-sm text-[var(--text)]">
                   <span className="font-medium opacity-85 text-xs flex items-center gap-1">
                     <SlidersHorizontal size={10} /> Min Prob %
                   </span>
-                  <div className="relative">
-                    <input
-                      type="number"
-                      placeholder="e.g. 60"
-                      min="0"
-                      max="100"
-                      value={minProb}
-                      onChange={e => setMinProb(e.target.value)}
-                      className="w-full pl-3 pr-6 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--text-h)] text-sm focus:outline-none focus:border-[var(--accent)] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-                    />
-                    {minProb && (
-                      <button onClick={() => setMinProb('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text)] opacity-65 hover:opacity-100 text-xs">✕</button>
-                    )}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {['70', '80', '90'].map(v => (
+                      <button
+                        key={v}
+                        onClick={() => setMinProb(minProb === v ? '' : v)}
+                        className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-colors ${
+                          minProb === v
+                            ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
+                            : 'border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)]'
+                        }`}
+                      >
+                        {v}%+
+                      </button>
+                    ))}
+                    <div className="relative">
+                      <input
+                        type="number"
+                        placeholder="Custom"
+                        min="0"
+                        max="100"
+                        value={minProb}
+                        onChange={e => setMinProb(e.target.value)}
+                        className="w-20 pl-2 pr-6 py-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--text-h)] text-xs focus:outline-none focus:border-[var(--accent)] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      {minProb && (
+                        <button onClick={() => setMinProb('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--text)] opacity-65 hover:opacity-100 text-xs">✕</button>
+                      )}
+                    </div>
                   </div>
                 </label>
               </div>

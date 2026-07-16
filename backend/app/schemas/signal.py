@@ -91,6 +91,9 @@ class SignalOut(BaseModel):
     # Advanced model enrichment (BOS, ZINB, Glicko-2, BREA, FHGI)
     advanced: Optional[AdvancedModelsOut] = None
 
+    # Banker designation — top-ranked High-confidence picks for the day
+    is_banker: Optional[bool] = None
+
     # Denormalised fixture fields (populated in router)
     home_team: Optional[str] = None
     away_team: Optional[str] = None

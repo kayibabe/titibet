@@ -526,6 +526,21 @@ async def list_signals(
             mkt_capped.append(r)
         results = mkt_capped
 
+    # ── Banker annotation ─────────────────────────────────────────────────────
+    # Top 3 High-confidence Both-engines signals with prob ≥ 0.70 are flagged as
+    # "Banker" picks — the day's highest-conviction recommendations.
+    banker_count = 0
+    for r in results:
+        if banker_count >= 3:
+            break
+        primary = max(
+            (r.bayesian.prob if r.bayesian else None) or 0.0,
+            (r.poisson.prob  if r.poisson  else None) or 0.0,
+        )
+        if r.dual_confidence == "High" and r.dual_agreement == "Both" and primary >= 0.70:
+            r.is_banker = True
+            banker_count += 1
+
     # Enforce free-tier signal limit — pro users see all signals
     is_pro = (
         current_user is not None
