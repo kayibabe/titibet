@@ -81,6 +81,35 @@ function DriftBadge({ driftPct }) {
   return null
 }
 
+function AlternativeChips({ alternatives }) {
+  if (!alternatives || alternatives.length === 0) return null
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="text-[10px] text-[var(--text)] opacity-40 shrink-0">Also:</span>
+      {alternatives.map(alt => {
+        const prob = alt.primary_prob != null ? `${Math.round(alt.primary_prob * 100)}%` : null
+        const odd = alt.best_odd != null ? Number(alt.best_odd).toFixed(2) : null
+        const conf = alt.dual_confidence
+        const chipStyle = conf === 'High'
+          ? 'border-emerald-500/35 text-emerald-500 bg-emerald-500/5'
+          : conf === 'Medium'
+          ? 'border-amber-400/35 text-amber-400 bg-amber-400/5'
+          : 'border-[var(--border)] text-[var(--text)] opacity-60'
+        return (
+          <span
+            key={alt.market}
+            title={[alt.market, prob, odd ? `@ ${odd}` : null].filter(Boolean).join(' · ')}
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-medium ${chipStyle}`}
+          >
+            {alt.market}
+            {prob && <span className="opacity-70">{prob}</span>}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 function MarketIntentBadge({ market }) {
   let label = null
   let style = ''
@@ -609,6 +638,9 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
         {isContradiction && (
           <ContradictionAlert mixedSignals={signal.poisson?.mixed_signals} />
         )}
+
+        {/* ── ALTERNATIVES: other markets for this fixture ── */}
+        <AlternativeChips alternatives={signal.alternatives} />
 
         {/* ── SECONDARY: collapsed by default — expand with "Details" ── */}
         <button

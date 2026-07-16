@@ -21,7 +21,7 @@ from app.core.config import (
 from app.models import Signal, Fixture, TrackedBet
 from app.models.odds import MarketSnapshot
 from app.models.user import User
-from app.schemas.signal import SignalOut, BayesianOut, PoissonOut, AdvancedModelsOut, BookmakerOdds
+from app.schemas.signal import SignalOut, BayesianOut, PoissonOut, AdvancedModelsOut, BookmakerOdds, AlternativeSignal
 from pydantic import BaseModel as _BaseModel
 
 class SignalsResponse(_BaseModel):
@@ -540,6 +540,26 @@ async def list_signals(
         if r.dual_confidence == "High" and r.dual_agreement == "Both" and primary >= 0.70:
             r.is_banker = True
             banker_count += 1
+
+    # Attach alternative markets from the same fixture as compact chips.
+    # Groups results by fixture_id; each signal gets up to 2 sibling markets.
+    _fix_map: dict[int, list] = {}
+    for r in results:
+        _fix_map.setdefault(r.fixture_id, []).append(r)
+    for r in results:
+        r.alternatives = [
+            AlternativeSignal(
+                market=s.market,
+                dual_confidence=s.dual_confidence,
+                primary_prob=max(
+                    (s.bayesian.prob if s.bayesian else None) or 0.0,
+                    (s.poisson.prob  if s.poisson  else None) or 0.0,
+                ) or None,
+                best_odd=s.best_odd,
+            )
+            for s in _fix_map[r.fixture_id]
+            if s.id != r.id
+        ][:2]
 
     # Enforce free-tier signal limit — pro users see all signals
     is_pro = (

@@ -60,6 +60,13 @@ class AdvancedModelsOut(BaseModel):
 
 
 
+class AlternativeSignal(BaseModel):
+    market: str
+    dual_confidence: Optional[str] = None
+    primary_prob: Optional[float] = None
+    best_odd: Optional[float] = None
+
+
 class SignalOut(BaseModel):
     id: int
     fixture_id: int
@@ -93,6 +100,9 @@ class SignalOut(BaseModel):
 
     # Banker designation — top-ranked High-confidence picks for the day
     is_banker: Optional[bool] = None
+
+    # Alternative markets from the same fixture (up to 2, populated in router)
+    alternatives: list[AlternativeSignal] = []
 
     # Denormalised fixture fields (populated in router)
     home_team: Optional[str] = None
