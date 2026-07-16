@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Brain, Activity, BarChart2, Layers, TrendingUp, Zap, TrendingDown, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, Target, Coins, Crosshair } from 'lucide-react'
 import { fetchAnalytics, fetchAnalyticsIntelligence, fetchStakingSimulation, fetchProbabilityCalibration, fetchAccaPerformance } from '../api/analytics'
+import AccuracyDashboard from '../components/analytics/AccuracyDashboard'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Cell } from 'recharts'
 import LossAnalysisDashboard from '../components/analytics/LossAnalysisDashboard'
 import BriefingPanel from '../components/analytics/BriefingPanel'
@@ -738,6 +739,10 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
           ══════════════════════════════════════════════════════════════════ */}
           {analyticsTab === 'overview' && (
             <div className="space-y-5">
+              <Section icon={Target} title="Model Accuracy" subtitle="how often each signal prediction was correct across all settled fixtures">
+                <AccuracyDashboard />
+              </Section>
+
               <Section icon={Activity} title="Your Performance" subtitle={activePreset === 'All' ? 'All-time' : activePreset ? `Last ${activePreset}` : dateFrom && dateTo ? formatPeriodLabel(dateFrom, dateTo) : 'period summary'}>
                 <div className="space-y-4">
                   <KPIRow summary={data.summary} />

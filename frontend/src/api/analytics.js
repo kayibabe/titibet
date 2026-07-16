@@ -120,3 +120,9 @@ export async function fetchAccaPerformance() {
   if (!res.ok) throw new Error(`ACCA performance fetch failed: ${res.status}`)
   return res.json()
 }
+
+export async function fetchSignalAccuracy(lookbackDays = 90) {
+  const res = await apiFetch(`${BASE}/signal-accuracy?lookback_days=${lookbackDays}`)
+  if (!res.ok) throw new Error(`Signal accuracy fetch failed: ${res.status}`)
+  return res.json()
+}
