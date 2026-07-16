@@ -421,8 +421,14 @@ def _evaluate_over15_signal(odds: dict, signal_odds: dict) -> PoissonResult:
         s02 is not None and s02 <= R["over15_support_max_02"],
     ]
     pass_ = base_ok and any(supports)
+    # Market min-odds floor — Bayesian gate in signal_engine misses this when the
+    # Bayesian candidate was itself rejected for being below the floor.
+    _o15_odd = signal_odds.get("over1_5")
+    _o15_min = MARKET_MIN_ODDS.get("Over 1.5")
+    if pass_ and _o15_odd is not None and _o15_min is not None and _o15_odd < _o15_min:
+        pass_ = False
     lam = lambda_from_cs00(s00, R["cs_overround_factor"])
-    edge_result = compute_edge("over1_5", lam, signal_odds.get("over1_5"), min_edge_pct=0.0)
+    edge_result = compute_edge("over1_5", lam, _o15_odd, min_edge_pct=0.0)
     rule_strong15 = pass_ and sum(supports) >= 2
     has_edge15 = edge_result.get("has_edge", False)
     return PoissonResult(
@@ -446,8 +452,13 @@ def _evaluate_over25_signal(odds: dict, signal_odds: dict) -> PoissonResult:
     support_ok = ((s21 is not None and s21 <= R["over25_support_max_21"]) or
                   (s12 is not None and s12 <= R["over25_support_max_12"]))
     pass_ = core_ok and support_ok
+    # Market min-odds floor — same gap as over15: Bayesian gate misses Poisson-only paths.
+    _o25_odd = signal_odds.get("over2_5")
+    _o25_min = MARKET_MIN_ODDS.get("Over 2.5")
+    if pass_ and _o25_odd is not None and _o25_min is not None and _o25_odd < _o25_min:
+        pass_ = False
     lam = lambda_from_cs00(s00, R["cs_overround_factor"])
-    edge_result = compute_edge("over2_5", lam, signal_odds.get("over2_5"), min_edge_pct=0.0)
+    edge_result = compute_edge("over2_5", lam, _o25_odd, min_edge_pct=0.0)
     has_edge25 = edge_result.get("has_edge", False)
     return PoissonResult(
         rule_key="over25", market="Over 2.5", rule_pass=pass_, rule_strong=pass_,
