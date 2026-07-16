@@ -408,6 +408,110 @@ def _evaluate_over25_signal(odds: dict, signal_odds: dict) -> PoissonResult:
     )
 
 
+# ── Double Chance Poisson evaluators ─────────────────────────────────────────
+
+def _bivariate_poisson_dc(lh: float, la: float, max_goals: int = 10) -> tuple[float, float, float]:
+    """
+    Compute P(1X), P(X2), P(12) from independent Poisson(lh) × Poisson(la).
+
+    Independent home/away scoring: overround cancels in the λ ratio so these
+    lambdas are already calibrated to the true scoring rates.
+
+    Returns: (p_1x, p_x2, p_12)
+      1X — home win or draw  (h >= a)
+      X2 — draw or away win  (h <= a)
+      12 — home or away win  (h != a)
+    """
+    if lh <= 0 or la <= 0:
+        return 0.0, 0.0, 0.0
+
+    p_1x = p_x2 = p_12 = 0.0
+    exp_h = math.exp(-lh)
+    exp_a = math.exp(-la)
+
+    ph_terms: list[float] = []
+    term = exp_h
+    for h in range(max_goals + 1):
+        ph_terms.append(term)
+        term = term * lh / (h + 1)
+
+    pa_terms: list[float] = []
+    term = exp_a
+    for a in range(max_goals + 1):
+        pa_terms.append(term)
+        term = term * la / (a + 1)
+
+    for h in range(max_goals + 1):
+        for a in range(max_goals + 1):
+            p_ha = ph_terms[h] * pa_terms[a]
+            if h >= a:
+                p_1x += p_ha
+            if h <= a:
+                p_x2 += p_ha
+            if h != a:
+                p_12 += p_ha
+
+    return p_1x, p_x2, p_12
+
+
+def _evaluate_dc_signals(
+    odds: dict,
+    form_lambdas: Optional[dict] = None,
+) -> list[PoissonResult]:
+    """
+    Double Chance Poisson rules: 1X, X2, 12.
+
+    Lambdas are derived from CS ratios (same as team-over rules) and blended
+    with rolling form data. Rule passes when the bivariate Poisson probability
+    meets the threshold — no separate market-price requirement, since the
+    Bayesian engine handles the bookmaker odds comparison for DC.
+    """
+    d = derive_lambdas(odds.get("s00"), odds.get("s10"), odds.get("s01"))
+    if not d:
+        missing = ["CS 0-0 / 1-0 / 0-1"]
+        return [
+            PoissonResult(
+                rule_key=rk, market=mkt, rule_pass=False, rule_strong=False,
+                poisson_prob=None, edge_pct=None, has_edge=False,
+                grade="N", lambda_h=None, lambda_a=None, lambda_total=None,
+                missing_markets=missing,
+            )
+            for rk, mkt in [
+                ("dc_1x", "1X (Home or Draw)"),
+                ("dc_x2", "X2 (Draw or Away)"),
+                ("dc_12", "12 (Home or Away)"),
+            ]
+        ]
+
+    fw = _form_lambda_weight()
+    lh = _blend_lam(d["lambda_h"], form_lambdas.get("lambda_h") if form_lambdas else None, fw)
+    la = _blend_lam(d["lambda_a"], form_lambdas.get("lambda_a") if form_lambdas else None, fw)
+
+    p_1x, p_x2, p_12 = _bivariate_poisson_dc(lh, la)
+
+    min_p  = float(R.get("dc_min_prob",    0.70))
+    strong = float(R.get("dc_strong_prob", 0.80))
+
+    results: list[PoissonResult] = []
+    for rule_key, market, prob in [
+        ("dc_1x", "1X (Home or Draw)", p_1x),
+        ("dc_x2", "X2 (Draw or Away)", p_x2),
+        ("dc_12", "12 (Home or Away)", p_12),
+    ]:
+        pass_ = prob >= min_p
+        pass_strong = prob >= strong
+        results.append(PoissonResult(
+            rule_key=rule_key, market=market,
+            rule_pass=pass_, rule_strong=pass_strong,
+            poisson_prob=round(prob, 6),
+            edge_pct=None, has_edge=False,
+            grade=_grade(pass_, pass_strong),
+            lambda_h=lh, lambda_a=la, lambda_total=d["lambda_total"],
+            form_blended=bool(form_lambdas),
+        ))
+    return results
+
+
 # ── Contradiction detection ───────────────────────────────────────────────────
 
 def detect_contradictions(results: dict[str, PoissonResult]) -> list[str]:
@@ -438,12 +542,15 @@ def analyse_fixture(
     cascade = _evaluate_cs_cascade(odds, signal_odds, form_lambdas)
     over15_r = _evaluate_over15_signal(odds, signal_odds)
     over25_r = _evaluate_over25_signal(odds, signal_odds)
+    dc_results = _evaluate_dc_signals(odds, form_lambdas)
 
     cascade_map = {r.rule_key: r for r in cascade}
+    dc_map = {r.rule_key: r for r in dc_results}
     all_results = {
         "home_o05": home_o05_r,
         "over15": over15_r, "over25": over25_r,
         **cascade_map,
+        **dc_map,
     }
 
     mixed = detect_contradictions(all_results)

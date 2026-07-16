@@ -94,6 +94,12 @@ function MarketIntentBadge({ market }) {
   } else if (market === 'Home Win to Nil' || market === 'Away Win to Nil') {
     label = 'Clean Sheet Value'
     style = 'bg-emerald-500/12 text-emerald-600 border-emerald-500/35'
+  } else if (market === '1X (Home or Draw)' || market === 'X2 (Draw or Away)') {
+    label = 'Safer Cover'
+    style = 'bg-indigo-500/12 text-indigo-400 border-indigo-500/30'
+  } else if (market === '12 (Home or Away)') {
+    label = 'No Draw'
+    style = 'bg-purple-500/12 text-purple-400 border-purple-500/30'
   }
 
   if (!label) return null

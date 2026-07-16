@@ -357,9 +357,9 @@ DISABLED_MARKETS: frozenset = frozenset({
     "Home Win",
     "Draw",
     "Away Win",
-    "1X (Home or Draw)",
-    "X2 (Draw or Away)",
-    "12 (Home or Away)",
+    # "1X (Home or Draw)" — re-enabled: Poisson DC evaluator now provides dual-model confirmation
+    # "X2 (Draw or Away)" — re-enabled: same
+    # "12 (Home or Away)" — re-enabled: same
     "Under 1.5",
     "Home Under 0.5",
     "Away Under 0.5",
@@ -598,6 +598,10 @@ MARKET_MIN_ODDS: dict = {
     "Home Over 0.5":   1.30,
     "Home Win to Nil": 1.40,
     "Away Win to Nil": 1.40,
+    # Double Chance: minimum floor prevents near-certainty picks with no useful EV.
+    "1X (Home or Draw)": 1.10,
+    "X2 (Draw or Away)": 1.10,
+    "12 (Home or Away)": 1.15,
 }
 
 
@@ -919,4 +923,9 @@ POISSON_RULES = {
     # odds ceiling (2.49 → prob ≥ 0.44).
     "team_over_min_prob": 0.60,
     "team_over_strong_prob": 0.72,
+    # Double Chance Poisson probability thresholds (bivariate Poisson from λ_h / λ_a).
+    # 0.70 matches the "High confidence" floor used across the rest of the system.
+    # Strong at 0.80 = implied fair DC odds of 1.25 or better.
+    "dc_min_prob":    0.70,
+    "dc_strong_prob": 0.80,
 }

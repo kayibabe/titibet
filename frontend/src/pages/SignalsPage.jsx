@@ -21,6 +21,7 @@ const MARKET_FAMILY_OPTIONS = [
   '',
   'Goals',
   'Team Totals',
+  'Double Chance',
   'Clean Sheet',
 ]
 const MARKET_OPTIONS     = [
@@ -29,6 +30,8 @@ const MARKET_OPTIONS     = [
   'Over 1.5', 'Over 2.5', 'Under 2.5',
   // Team totals (active)
   'Home Over 0.5',
+  // Double Chance (active)
+  '1X (Home or Draw)', 'X2 (Draw or Away)', '12 (Home or Away)',
   // Win to nil (active)
   'Home Win to Nil', 'Away Win to Nil',
 ]
@@ -41,10 +44,13 @@ const SORT_OPTIONS = [
   { value: 'stake',       label: 'Stake %' },
 ]
 
+const DC_MARKETS = new Set(['1X (Home or Draw)', 'X2 (Draw or Away)', '12 (Home or Away)'])
+
 function getMarketFamily(market) {
   if (!market) return 'Other'
   if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Under 2.5') return 'Goals'
   if (market === 'Home Over 0.5') return 'Team Totals'
+  if (DC_MARKETS.has(market)) return 'Double Chance'
   if (market === 'Home Win to Nil' || market === 'Away Win to Nil') return 'Clean Sheet'
   return 'Other'
 }
@@ -678,6 +684,7 @@ const reload = () => load(params)
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-violet-500/60 border border-violet-400 shrink-0"></span> Bayesian only</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500/60 border border-amber-400 shrink-0"></span> Medium conf</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-500/60 border border-red-400 shrink-0"></span> Contradiction</span>
+          <span className="flex items-center gap-1"><span className="inline-flex items-center px-1.5 rounded bg-indigo-500/20 border border-indigo-400/50 text-[9px] font-bold text-indigo-300 shrink-0">1X/X2/12</span> Safer cover</span>
         </div>
 
         {loading && signals.length === 0 && (
