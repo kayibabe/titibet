@@ -796,6 +796,7 @@ const reload = () => load(params)
           return (
             <div className="space-y-3">
               {/* Primary signals — Both + Poisson Only */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {visiblePrimary.map((signal, idx) => (
                 <SignalCard
                   key={signal.id}
@@ -808,6 +809,7 @@ const reload = () => load(params)
                   onDeepDive={onDeepDive}
                 />
               ))}
+              </div>
 
               {/* Supplemental section — Bayesian Only picks */}
               {supplementalSignals.length > 0 && (
@@ -823,6 +825,7 @@ const reload = () => load(params)
                     <span className="font-semibold text-violet-300">Bayesian model only</span>
                     {' — '}our Bayesian engine found High-confidence value here, but the Poisson model didn&apos;t confirm. One engine vs two: treat these as lower-conviction picks and size stakes accordingly.
                   </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {visibleSupplemental.map((signal, idx) => (
                     <SignalCard
                       key={signal.id}
@@ -835,6 +838,7 @@ const reload = () => load(params)
                       onDeepDive={onDeepDive}
                     />
                   ))}
+                  </div>
                 </>
               )}
 

@@ -620,6 +620,7 @@ MARKET_MIN_ODDS: dict = {
     # error flips EV, while readmitting the market. Re-audit on corrected odds
     # before trusting a data-derived floor again.
     "Home Over 0.5":   1.30,
+    "Away Over 0.5":   1.30,
     "Home Win to Nil": 1.40,
     "Away Win to Nil": 1.40,
     # Double Chance: minimum floor prevents near-certainty picks with no useful EV.
