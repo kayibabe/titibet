@@ -405,15 +405,6 @@ async def list_signals(
             )
         ]
 
-    # Global minimum odds floor — suppress any signal whose bookmaker price is
-    # below 1.30 regardless of market type. At odds < 1.30 the implied probability
-    # exceeds 77%; any model calibration error destroys edge and EV is negative.
-    # This catches markets not listed in MARKET_MIN_ODDS (e.g. Away Over 0.5).
-    rows = [
-        (sig, fix) for sig, fix in rows
-        if sig.bayesian_best_odd is None or sig.bayesian_best_odd >= 1.30
-    ]
-
     # Women's league over-goals suppression.
     # Models are calibrated on men's football; women's leagues have structurally
     # lower scoring rates and weaker home advantage — systematic overestimation.
