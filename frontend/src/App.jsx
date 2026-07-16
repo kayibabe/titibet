@@ -35,6 +35,12 @@ export default function App() {
     }
   }, [isPaymentCallback, user])
 
+  useEffect(() => {
+    function handler(e) { setActivePage(e.detail) }
+    window.addEventListener('titibet:navigate', handler)
+    return () => window.removeEventListener('titibet:navigate', handler)
+  }, [])
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[var(--bg-page)]">
@@ -66,12 +72,6 @@ export default function App() {
       }} />
     )
   }
-
-  useEffect(() => {
-    function handler(e) { setActivePage(e.detail) }
-    window.addEventListener('titibet:navigate', handler)
-    return () => window.removeEventListener('titibet:navigate', handler)
-  }, [])
 
   function handleDeepDive(fixtureId) {
     setDeepDiveFixtureId(fixtureId)
