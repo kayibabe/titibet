@@ -29,7 +29,7 @@ const MARKET_OPTIONS     = [
   // Full-game totals (active)
   'Over 1.5', 'Over 2.5', 'Under 2.5',
   // Team totals (active)
-  'Home Over 0.5',
+  'Home Over 0.5', 'Away Over 0.5',
   // Double Chance (active)
   '1X (Home or Draw)', 'X2 (Draw or Away)', '12 (Home or Away)',
   // Win to nil (active)
@@ -49,7 +49,7 @@ const DC_MARKETS = new Set(['1X (Home or Draw)', 'X2 (Draw or Away)', '12 (Home 
 function getMarketFamily(market) {
   if (!market) return 'Other'
   if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Under 2.5') return 'Goals'
-  if (market === 'Home Over 0.5') return 'Team Totals'
+  if (market === 'Home Over 0.5' || market === 'Away Over 0.5') return 'Team Totals'
   if (DC_MARKETS.has(market)) return 'Double Chance'
   if (market === 'Home Win to Nil' || market === 'Away Win to Nil') return 'Clean Sheet'
   return 'Other'

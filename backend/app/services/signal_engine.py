@@ -59,6 +59,7 @@ MARKET_TO_POISSON_KEY: dict[str, str] = {
     "Over 1.5":     "over15",    # dedicated evaluator (rule_strong capable); cs00o15 cascade hardcodes rule_strong=False
     "Over 2.5":     "over25",
     "Home Over 0.5":  "home_o05",
+    "Away Over 0.5":  "away_o05",
     # Double Chance — Poisson bivariate probability from blended λ_h / λ_a
     "1X (Home or Draw)": "dc_1x",
     "X2 (Draw or Away)": "dc_x2",

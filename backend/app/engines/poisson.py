@@ -539,6 +539,10 @@ def analyse_fixture(
         rule_key="home_o05", market="Home Over 0.5", side="h", line=0.5, odds_key="home_o05",
         odds=odds, signal_odds=signal_odds, form_lambdas=form_lambdas,
     )
+    away_o05_r = _marginal_team_over_result(
+        rule_key="away_o05", market="Away Over 0.5", side="a", line=0.5, odds_key="away_o05",
+        odds=odds, signal_odds=signal_odds, form_lambdas=form_lambdas,
+    )
     cascade = _evaluate_cs_cascade(odds, signal_odds, form_lambdas)
     over15_r = _evaluate_over15_signal(odds, signal_odds)
     over25_r = _evaluate_over25_signal(odds, signal_odds)
@@ -548,6 +552,7 @@ def analyse_fixture(
     dc_map = {r.rule_key: r for r in dc_results}
     all_results = {
         "home_o05": home_o05_r,
+        "away_o05": away_o05_r,
         "over15": over15_r, "over25": over25_r,
         **cascade_map,
         **dc_map,

@@ -341,7 +341,7 @@ DISABLED_MARKETS: frozenset = frozenset({
     "BTTS No",        # poor historical strike rate
     "BTTS Yes",       # retired 2026-06-15: btts rule removed
     "Away Over 1.5",  # retired 2026-06-02: 41.1% hit (-15.5% ROI) across 73 bets
-    "Away Over 0.5",  # retired 2026-06-15: away_o05 rule removed
+    # "Away Over 0.5" — re-enabled: away_o05 Poisson rule restored (mirrors home_o05, side="a")
     "Home Over 1.5",  # retired 2026-06-15: home_o15 rule removed
     "Under 3.5",      # retired 2026-06-15: under35 + u35_flip rules removed
     "Home Under 1.5", # retired 2026-06-15: hu15_flip rule removed

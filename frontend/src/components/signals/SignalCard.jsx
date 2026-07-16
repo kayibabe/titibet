@@ -85,8 +85,8 @@ function MarketIntentBadge({ market }) {
   let label = null
   let style = ''
 
-  if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Home Over 0.5') {
-    label = 'Goals Lean'
+  if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Home Over 0.5' || market === 'Away Over 0.5') {
+    label = market === 'Away Over 0.5' ? 'Away Scores' : market === 'Home Over 0.5' ? 'Home Scores' : 'Goals Lean'
     style = 'bg-rose-500/10 text-rose-600 border-rose-500/30'
   } else if (market === 'Under 2.5') {
     label = 'Goals Suppression'
@@ -122,7 +122,7 @@ function getWhyMarketChips(signal) {
   if (market === 'Home Win to Nil' || market === 'Away Win to Nil') {
     chips.push('clean-sheet setup')
   }
-  if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Home Over 0.5') {
+  if (market === 'Over 1.5' || market === 'Over 2.5' || market === 'Home Over 0.5' || market === 'Away Over 0.5') {
     chips.push('goals expectation')
   }
   if (agreement === 'Both') {
