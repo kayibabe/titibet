@@ -30,11 +30,12 @@ const SOURCE_OPTIONS = [
 ]
 
 const DATE_PRESETS = [
-  { label: '7d',  days: 7  },
-  { label: '14d', days: 14 },
-  { label: '30d', days: 30 },
-  { label: '90d', days: 90 },
-  { label: 'All', days: null },
+  { label: 'Today',    fromOffset: 0,   toOffset: 0    },
+  { label: 'Tomorrow', fromOffset: 1,   toOffset: 1    },
+  { label: '7d',       fromOffset: -7,  toOffset: 0    },
+  { label: '14d',      fromOffset: -14, toOffset: 0    },
+  { label: '30d',      fromOffset: -30, toOffset: 0    },
+  { label: 'All',      fromOffset: null, toOffset: null },
 ]
 
 function toYMD(d) {
@@ -133,15 +134,17 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
 
   function handlePreset(preset) {
     setActivePreset(preset.label)
-    if (preset.days === null) {
+    if (preset.fromOffset === null) {
       setDateFrom('')
       setDateTo('')
     } else {
       const today = new Date()
       const from  = new Date(today)
-      from.setDate(today.getDate() - preset.days)
+      from.setDate(today.getDate() + preset.fromOffset)
+      const to = new Date(today)
+      to.setDate(today.getDate() + preset.toOffset)
       setDateFrom(toYMD(from))
-      setDateTo(toYMD(today))
+      setDateTo(toYMD(to))
     }
   }
 
