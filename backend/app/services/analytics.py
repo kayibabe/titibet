@@ -41,7 +41,10 @@ def build_analytics(bets: list) -> dict:
     avg_odds = (total_odds / len(settled)) if settled else 0.0
 
     # ── Streaks ──────────────────────────────────────────────────────────────
-    sorted_settled = sorted(settled, key=lambda b: (b.event_date or b.settled_at or b.created_at, b.id))
+    sorted_settled = sorted(
+        settled,
+        key=lambda b: (str(b.event_date or b.settled_at or b.created_at)[:10], b.id),
+    )
     longest_win = longest_loss = 0
     run = 0
     current_type = None
