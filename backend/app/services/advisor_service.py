@@ -100,8 +100,6 @@ ACCA_BUILDER: dict = {
 # 2026-07-11 audit: Scout and Skeptic retired (paper WR 42.9% / 50%).
 # 2026-07-17: Restored — paper sample was too small (5/8 picks) to justify
 # retirement; all three advisors run as paper-trade shadow picks going forward.
-# Strategist retains its real stake for live performance tracking.
-STRATEGIST_REAL_STAKE: float = 10_000.0
 
 ADVISORS: list[dict] = [
     {
@@ -751,9 +749,7 @@ async def auto_track_advisor_picks(
             if key in existing_keys:
                 continue
 
-            # Strategist uses a real stake for live performance tracking;
-            # all other advisors remain at zero (paper-trade only).
-            advisor_stake = STRATEGIST_REAL_STAKE if adv_id == "strategist" else 0.0
+            advisor_stake = 0.0  # all advisors are paper-trade only
             db.add(TrackedBet(
                 user_id=None,
                 fixture_id=fix.id,
