@@ -16,7 +16,7 @@ from app.core.config import (
     MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING,
     WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
     COPA_HO05_SUPPRESSED_LEAGUES, PROVISIONAL_LEAGUE_MIN_BETS,
-    is_womens_fixture, OVER25_SUPPRESSED_TIERS, MARKET_MIN_ODDS,
+    is_womens_fixture, OVER25_SUPPRESSED_TIERS,
 )
 from app.models import Signal, Fixture, TrackedBet
 from app.models.odds import MarketSnapshot
@@ -406,20 +406,6 @@ async def list_signals(
                 and sig.dual_agreement == "Both"
                 and sig.market in DUAL_HIGH_ODDS_CEILING
                 and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
-            )
-        ]
-
-    # Per-market minimum odds floor — safety net for signals that bypass
-    # generation-time checks (e.g. Poisson-only DC signals where the Bayesian
-    # candidate was already rejected and no DC price is available in signal_odds).
-    # Uses each market's own floor from MARKET_MIN_ODDS, not a blanket value.
-    if MARKET_MIN_ODDS:
-        rows = [
-            (sig, fix) for sig, fix in rows
-            if (
-                sig.market not in MARKET_MIN_ODDS
-                or sig.bayesian_best_odd is None
-                or sig.bayesian_best_odd >= MARKET_MIN_ODDS[sig.market]
             )
         ]
 
