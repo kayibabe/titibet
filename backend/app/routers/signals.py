@@ -620,10 +620,10 @@ async def list_signals(
             if r.away_team and _team_games.get(r.away_team, 0) >= _FATIGUE:
                 r.fatigue_away = True
 
-    # Enforce free-tier signal limit — pro users see all signals
+    # Enforce free-tier signal limit — pro/elite users see all signals
     is_pro = (
         current_user is not None
-        and current_user.tier == "pro"
+        and current_user.tier in ("pro", "elite")
         and current_user.subscription_status == "active"
     )
     hidden_count = 0

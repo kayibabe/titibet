@@ -182,7 +182,11 @@ async def sync_date(
         fixture_rows = await api_client.fetch_fixtures(date_str, force=force or past_with_live)
         fixtures_upserted = 0
 
-        SKIP_STATUSES = {"CANC", "PST", "TBD", "AWD", "ABD", "WO", "INT", "SUSP"}
+        # Statuses that signal a fixture is not playable (cancelled, postponed, etc.)
+        # For new fixtures: skip entirely — no point creating a row for a dead game.
+        # For existing fixtures: update the status so settlement can void pending bets.
+        VOID_STATUSES = {"CANC", "AWD", "ABD", "WO", "INT", "SUSP"}
+        POSTPONED_STATUSES = {"PST", "TBD"}
 
         for row in fixture_rows:
             ext_id = row["external_fixture_id"]
@@ -190,15 +194,30 @@ async def sync_date(
                 continue
 
             fixture_status_short = row.get("status", "")
-            if fixture_status_short in SKIP_STATUSES:
-                logger.debug(
-                    "Skipping fixture %s with status %s", ext_id, fixture_status_short
-                )
-                continue
+            all_non_playable = VOID_STATUSES | POSTPONED_STATUSES
 
             existing = await db.scalar(
                 select(Fixture).where(Fixture.external_fixture_id == ext_id)
             )
+
+            if fixture_status_short in all_non_playable:
+                if existing and fixture_status_short in VOID_STATUSES:
+                    # Fixture was cancelled/abandoned after bets may have been placed.
+                    # Update status so settle_bets_for_date() can void pending bets.
+                    await db.execute(
+                        update(Fixture)
+                        .where(Fixture.external_fixture_id == ext_id)
+                        .values(status=fixture_status_short)
+                    )
+                    logger.debug(
+                        "Updated existing fixture %s to void status %s",
+                        ext_id, fixture_status_short,
+                    )
+                else:
+                    logger.debug(
+                        "Skipping fixture %s with status %s", ext_id, fixture_status_short
+                    )
+                continue
             tier = get_league_tier(row.get("league") or "", row.get("country") or "")
 
             if existing:

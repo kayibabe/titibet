@@ -154,6 +154,7 @@ async def settle_bets_for_date(
     bets: list[TrackedBet] = list(result.scalars().all())
 
     settled           = 0
+    voided            = 0
     skip_no_fixture   = 0
     skip_not_final    = 0
     skip_no_score     = 0
@@ -165,12 +166,27 @@ async def settle_bets_for_date(
             skip_no_fixture += 1
             continue
         fixture = await db.get(Fixture, bet.fixture_id)
-        if fixture is None or not _fixture_is_final(fixture):
+        if fixture is None:
+            skip_not_final += 1
+            logger.debug("settle: skipping bet %s — fixture %s not found", bet.id, bet.fixture_id)
+            continue
+        # Void bets on cancelled/abandoned fixtures — ingestion updates status in DB
+        # when a fixture transitions to a void state after bets were placed.
+        if (fixture.status or "").strip().upper() in VOID_STATUSES:
+            bet.result_status = "Void"
+            bet.profit_loss = 0.0
+            bet.settled_at = datetime.now(timezone.utc)
+            voided += 1
+            logger.info(
+                "settle: voided bet %s — fixture %s status=%s",
+                bet.id, bet.fixture_id, fixture.status,
+            )
+            continue
+        if not _fixture_is_final(fixture):
             skip_not_final += 1
             logger.debug(
                 "settle: skipping bet %s — fixture %s status=%s",
-                bet.id, bet.fixture_id,
-                fixture.status if fixture else "not_found",
+                bet.id, bet.fixture_id, fixture.status,
             )
             continue
         scope = _settlement_scope(bet.market_type)
@@ -210,9 +226,9 @@ async def settle_bets_for_date(
         settled += 1
 
     logger.info(
-        "settle_bets_for_date: settled=%d  skip_no_fixture=%d  "
+        "settle_bets_for_date: settled=%d  voided=%d  skip_no_fixture=%d  "
         "skip_not_final=%d  skip_no_score=%d  skip_no_market=%d",
-        settled, skip_no_fixture, skip_not_final, skip_no_score, skip_no_market,
+        settled, voided, skip_no_fixture, skip_not_final, skip_no_score, skip_no_market,
     )
 
     await db.commit()
@@ -236,6 +252,7 @@ async def settle_bets_for_date(
 
     return {
         "settled":          settled + acca_info["acca_settled"],
+        "voided":           voided,
         "acca_settled":     acca_info["acca_settled"],
         "skip_no_fixture":  skip_no_fixture,
         "skip_not_final":   skip_not_final,

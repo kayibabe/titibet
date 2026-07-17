@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime, date
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TrackPickRequest(BaseModel):
@@ -13,7 +13,7 @@ class TrackPickRequest(BaseModel):
     market_type: str
     selection_name: str
     odds: float
-    stake: float = 1.0
+    stake: float = Field(default=1.0, ge=0.01)
     recommended_stake_pct: Optional[float] = None
     source_rule_key: Optional[str] = None
     source_rule_label: Optional[str] = None

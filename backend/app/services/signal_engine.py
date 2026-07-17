@@ -964,6 +964,12 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 # Audit 2026-06-03: 80-90% bucket showed -6.9pp calibration error.
                 if _raw_prob > _shrink_threshold_hi:
                     _raw_prob = _shrink_threshold_hi + (_raw_prob - _shrink_threshold_hi) * _shrink_factor_hi
+                # Write corrected probability back to the source engine so all downstream
+                # consumers (ranking, staking, displayed prob) see the calibrated value.
+                if b is not None:
+                    b.derived_prob = _raw_prob
+                elif p is not None:
+                    p.poisson_prob = _raw_prob
 
             # ── BOS quality boost / penalty ───────────────────────────────────
             # BOS high SI = stable, LOW-scoring fixture.  Apply a boost only to

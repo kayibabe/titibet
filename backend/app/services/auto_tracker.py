@@ -36,6 +36,7 @@ from app.core.config import (
     WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
     DISABLED_LEAGUES, DISABLED_MARKETS, OVER_GOALS_SUPPRESSED_LEAGUES,
     OVER25_SUPPRESSED_TIERS, MARKET_MIN_ODDS, HALVED_STAKE_LEAGUES,
+    COPA_HO05_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
     is_womens_fixture,
 )
 from app.services.acca_builder import build_acca_candidates, build_accumulator
@@ -174,6 +175,25 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             continue
 
+        # Copa/cup gate: Home Over 0.5 suppressed in South American cup competitions.
+        # Rotation/reserve line-ups + knockout incentives depress home-scoring rates.
+        # Mirrors the serving-time gate in routers/signals.py.
+        if (
+            signal.market == "Home Over 0.5"
+            and COPA_HO05_SUPPRESSED_LEAGUES
+            and any(kw in league_lower for kw in COPA_HO05_SUPPRESSED_LEAGUES)
+        ):
+            continue
+
+        # Away-goals suppression: primera b metropolitana and other leagues where
+        # away-scoring model overestimates hit rate. Mirrors router serving gate.
+        if (
+            signal.market in {"Away Over 0.5", "Away Over 1.5"}
+            and AWAY_GOALS_SUPPRESSED_LEAGUES
+            and any(kw in league_lower for kw in AWAY_GOALS_SUPPRESSED_LEAGUES)
+        ):
+            continue
+
         # Skip women's league over-goals picks — models calibrated on men's
         # football systematically overestimate scoring in women's fixtures.
         if (
@@ -214,6 +234,12 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
             and signal.dual_confidence != "High"
             and prob_for_gate < 0.80
         ):
+            continue
+
+        # B-4 gate (mirrors router): Both+Medium signals have 55.6% WR / -8.7% ROI
+        # (9-bet backtest) and are suppressed from subscriber serving. Tracking them
+        # here would pollute analytics with phantom losses subscribers never placed.
+        if signal.dual_agreement == "Both" and signal.dual_confidence == "Medium":
             continue
 
         # Over 1.5 confidence gate: only track High-confidence signals.

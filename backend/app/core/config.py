@@ -454,9 +454,10 @@ DISABLED_LEAGUES: frozenset = frozenset({
 # keeping the league in the feed until a larger settled-bet sample confirms the edge.
 # Matched via lower(trim(league)) exact match, same as DISABLED_LEAGUES.
 HALVED_STAKE_LEAGUES: frozenset = frozenset({
-    # Serie B (Italy): -47,500 P&L, 62.5% WR on 8 bets. Tactically defensive;
-    # lambda estimates run high vs actual home-scoring rates. Re-audit at 20+ bets.
-    "serie b",
+    # "serie b" removed: it is already in DISABLED_LEAGUES (hard-banned) so this
+    # entry was dead code — the DISABLED_LEAGUES check fires first in auto_tracker.
+    # Add new entries here only for leagues confirmed to have smaller-than-modelled
+    # edge that still belong in the feed at reduced stake.
 })
 
 MARKET_PROB_BOUNDS: dict = {

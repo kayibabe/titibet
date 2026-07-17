@@ -130,7 +130,7 @@ tuple is built in `routers/signals.py:_system_rank()` — keep this in sync.
 7. `drift_rank` — odds-drift signal (market moving in our favour)
 8. `dual_model_probability_flag` — 1 if both engines ≥ 0.65
 9. `glicko_certainty` — Glicko-2 rating-gap confidence (higher = more reliable)
-10. `tier_rank` — 1 if Tier 1 league
+10. `tier_rank` — 1 if Tier 3+ league (Tier 3 boosted: 93.1% WR for Poisson Only+Medium, stronger than Tier 1)
 11. `avg_prob` — (bayesian + poisson) / 2
 12. `dual_quality_score` — fused quality score from dual_engine
 13. `goals_expectation` — poisson_lambda_total (final tie-breaker)
