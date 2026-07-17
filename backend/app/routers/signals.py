@@ -340,6 +340,13 @@ async def list_signals(
         .where(Signal.is_candidate == False)  # noqa: E712 — exclude data-collection candidates
     )
 
+    # For today's date: suppress signals for fixtures that have already finished.
+    # Showing a completed-game signal could lead a subscriber to attempt a bet on a
+    # game that is over. Historical date queries are left unfiltered so signal review works.
+    _FINAL_STATUSES_TUPLE = ("FT", "AET", "PEN")
+    if target_date == date.today():
+        query = query.where(func.upper(func.trim(Fixture.status)).notin_(list(_FINAL_STATUSES_TUPLE)))
+
     # confidence / agreement params are accepted for API backwards-compatibility
     # but no longer applied — all signals are returned regardless of tier.
     if market:
