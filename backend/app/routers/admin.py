@@ -1229,19 +1229,42 @@ async def backfill_dates(
         }
         async with AsyncSessionLocal() as db:
             try:
-                run = await asyncio.wait_for(sync_date(db, current, force=True), timeout=120)
-                entry["ingested"] = run.status == "success"
-                entry["fixtures_pulled"] = getattr(run, "fixtures_pulled", 0)
-                if run.status == "success":
-                    n_sig = await asyncio.wait_for(
-                        compute_signals_for_date(db, current), timeout=90
-                    )
-                    entry["signals_computed"] = n_sig
-                    await db.commit()
-                    n_track = await auto_track_date(db, current)
-                    entry["bets_tracked"] = n_track
+                # Check for existing market snapshots — skip API call if data is already in DB.
+                # Past dates have no live odds so sync_date() stalls; recomputing from snapshots
+                # is both faster and produces the same result.
+                snap_count: int = (await db.execute(sqltxt(
+                    "SELECT COUNT(*) FROM market_snapshots ms "
+                    "JOIN fixtures f ON f.id = ms.fixture_id "
+                    "WHERE f.event_date = :d"
+                ), {"d": date_str})).scalar() or 0
+
+                if snap_count > 0:
+                    # Snapshots exist — recompute signals without touching the API
+                    fix_count: int = (await db.execute(sqltxt(
+                        "SELECT COUNT(DISTINCT ms.fixture_id) FROM market_snapshots ms "
+                        "JOIN fixtures f ON f.id = ms.fixture_id WHERE f.event_date = :d"
+                    ), {"d": date_str})).scalar() or 0
+                    entry["ingested"] = True
+                    entry["fixtures_pulled"] = fix_count
+                    entry["skipped_ingestion"] = True
                 else:
-                    entry["error"] = f"ingestion status: {run.status}"
+                    # No snapshots — try API ingestion (only useful for future/recent dates)
+                    run = await asyncio.wait_for(sync_date(db, current, force=True), timeout=120)
+                    entry["ingested"] = run.status == "success"
+                    entry["fixtures_pulled"] = getattr(run, "fixtures_pulled", 0)
+                    if run.status != "success":
+                        entry["error"] = f"ingestion status: {run.status}"
+                        results.append(entry)
+                        current += timedelta(days=1)
+                        continue
+
+                n_sig = await asyncio.wait_for(
+                    compute_signals_for_date(db, current), timeout=90
+                )
+                entry["signals_computed"] = n_sig
+                await db.commit()
+                n_track = await auto_track_date(db, current)
+                entry["bets_tracked"] = n_track
             except asyncio.TimeoutError:
                 entry["error"] = "timed out (>120s)"
             except Exception as exc:
