@@ -192,29 +192,33 @@ def _sort_metric(
 
 
 _UNDER_MARKETS: frozenset[str] = frozenset({"Under 2.5", "Under 3.5", "Under 1.5", "Away Under 1.5", "Home Under 1.5"})
-_OVER_MARKETS: frozenset[str] = frozenset({
-    "Over 1.5", "Over 2.5",
-    "Home Over 0.5", "Home Over 1.5", "Away Over 0.5", "Away Over 1.5",
-})
+_OVER_MARKETS: frozenset[str] = frozenset({"Over 1.5", "Over 2.5"})
+_HOME_SCORING_MARKETS: frozenset[str] = frozenset({"Home Over 0.5", "Home Over 1.5"})
+_AWAY_SCORING_MARKETS: frozenset[str] = frozenset({"Away Over 0.5", "Away Over 1.5"})
 
 
 def _market_slot(market: str) -> str:
     """
     Map a market to a deduplication slot.
 
-    Under markets and Over/team-scoring markets are independent betting positions —
-    you can back both 'Home Over 0.5' AND 'Under 3.5' on the same fixture.
-    Collapsing them to one signal loses valid, orthogonal picks.
-
     Slots:
-      "under"  — Under X.5 goals (total or team)
-      "over"   — Over X.5 goals or team-scoring markets
-      "other"  — BTTS, corners, match winner, etc.
+      "under"      — Under X.5 goals (total or team)
+      "over"       — Over 1.5 / Over 2.5 total goals
+      "over_home"  — Home Over 0.5 / 1.5 (home team scores)
+      "over_away"  — Away Over 0.5 / 1.5 (away team scores)
+      "other"      — BTTS, corners, match winner, DC, etc.
+
+    Home-scoring and away-scoring are orthogonal bets — both can appear
+    for the same fixture without overlap.
     """
     if market in _UNDER_MARKETS:
         return "under"
     if market in _OVER_MARKETS:
         return "over"
+    if market in _HOME_SCORING_MARKETS:
+        return "over_home"
+    if market in _AWAY_SCORING_MARKETS:
+        return "over_away"
     return "other"
 
 

@@ -447,17 +447,17 @@ async def autobet_catchup(
         raise HTTPException(400, "date_to must be >= date_from")
 
     # ── helpers ───────────────────────────────────────────────────────────────
-    _OVER_MARKETS = frozenset({
-        "Over 1.5", "Over 2.5",
-        "Home Over 0.5", "Home Over 1.5", "Away Over 0.5", "Away Over 1.5",
-    })
     _UNDER_MARKETS = frozenset({"Under 2.5", "Under 3.5", "Under 1.5"})
 
     def _slot(market: str) -> str:
         if market in _UNDER_MARKETS:
             return "under"
-        if market in _OVER_MARKETS:
+        if market in {"Over 1.5", "Over 2.5"}:
             return "over"
+        if market in {"Home Over 0.5", "Home Over 1.5"}:
+            return "over_home"
+        if market in {"Away Over 0.5", "Away Over 1.5"}:
+            return "over_away"
         return "other"
 
     def _rank(sig: Signal, fix: Fixture) -> tuple:
