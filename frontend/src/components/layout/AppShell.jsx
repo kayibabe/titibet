@@ -168,7 +168,7 @@ export default function AppShell({ activePage, onNavigate, children }) {
 
         {/* Main content */}
         <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-          <main className="flex-1 px-4 py-5 lg:px-6 lg:py-6 w-full max-w-5xl mx-auto space-y-5 pb-24 lg:pb-6">
+          <main className="flex-1 px-4 py-5 lg:px-6 lg:py-6 w-full space-y-5 pb-24 lg:pb-6">
             {pageTitle && (
               <>
                 {/* Visible heading on desktop */}
