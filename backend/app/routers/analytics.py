@@ -299,6 +299,7 @@ async def full(
     league: Optional[str] = Query(None),
     result_status: Optional[str] = Query(None),
     source: Optional[str] = Query(None, description="'system' or 'manual' — filters by source_rule_key bucket"),
+    scope: Optional[str] = Query(None, description="'system' = system picks only (user_id IS NULL), 'personal' = user's own bets only"),
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
@@ -326,6 +327,10 @@ async def full(
         q = q.where(TrackedBet.market_type == "Accumulator")
     elif source == "advisory":
         q = q.where(TrackedBet.source_rule_key.in_(_ADVISORY_KEYS))
+    if scope == "system":
+        q = q.where(TrackedBet.user_id.is_(None))
+    elif scope == "personal" and current_user:
+        q = q.where(TrackedBet.user_id == current_user.id)
     rows = await db.execute(q)
     bets = list(rows.scalars().all())
     return build_analytics(bets)

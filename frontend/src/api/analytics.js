@@ -10,6 +10,7 @@ function buildParams(filters) {
   if (filters.league) params.set('league', filters.league)
   if (filters.result_status) params.set('result_status', filters.result_status)
   if (filters.source) params.set('source', filters.source)
+  if (filters.scope)  params.set('scope',  filters.scope)
   return params.toString() ? `?${params}` : ''
 }
 

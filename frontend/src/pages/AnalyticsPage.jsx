@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Brain, Activity, BarChart2, Layers, TrendingUp, Zap, TrendingDown, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, Target, Coins, Crosshair, Users } from 'lucide-react'
+import { Brain, Activity, BarChart2, Layers, TrendingUp, Zap, TrendingDown, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, Target, Coins, Crosshair, Users, Bot, User } from 'lucide-react'
 import { fetchAnalytics, fetchAnalyticsIntelligence, fetchStakingSimulation, fetchProbabilityCalibration, fetchAccaPerformance } from '../api/analytics'
 import AccuracyDashboard from '../components/analytics/AccuracyDashboard'
 import Leaderboard from '../components/analytics/Leaderboard'
@@ -646,8 +646,10 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
   const [dateFrom,     setDateFrom]   = useState('')
   const [dateTo,       setDateTo]     = useState(todayStr)
   const [activePreset, setActivePreset] = useState('All')
-  const [refreshKey,   setRefreshKey] = useState(0)
-  const [data,         setData]       = useState(null)
+  const [refreshKey,   setRefreshKey]   = useState(0)
+  const [data,         setData]         = useState(null)
+  const [systemSummary,   setSystemSummary]   = useState(null)
+  const [personalSummary, setPersonalSummary] = useState(null)
   const [insights,     setInsights]   = useState(null)
   const [loading,      setLoading]    = useState(true)
   const [refreshing,   setRefreshing] = useState(false)
@@ -667,11 +669,14 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
     else setRefreshing(true)
     setError(null)
 
+    const dateFilters = { date_from: dateFrom || undefined, date_to: dateTo || undefined }
     Promise.all([
-      fetchAnalytics({ date_from: dateFrom || undefined, date_to: dateTo || undefined }),
+      fetchAnalytics(dateFilters),
       fetchAnalyticsIntelligence().catch(() => null),
+      fetchAnalytics({ ...dateFilters, scope: 'system' }).catch(() => null),
+      fetchAnalytics({ ...dateFilters, scope: 'personal' }).catch(() => null),
     ])
-      .then(([result, intelligence]) => {
+      .then(([result, intelligence, systemResult, personalResult]) => {
         setData({
           summary:      result,
           byMarket:     result.by_market     ?? [],
@@ -690,6 +695,8 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
           },
         })
         setInsights(intelligence)
+        setSystemSummary(systemResult)
+        setPersonalSummary(personalResult)
       })
       .catch(e => setError(e.message))
       .finally(() => { setLoading(false); setRefreshing(false) })
@@ -807,12 +814,47 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
                 <AccuracyDashboard />
               </Section>
 
-              <Section icon={Activity} title="Your Performance" subtitle={activePreset === 'All' ? 'All-time' : activePreset ? `Last ${activePreset}` : dateFrom && dateTo ? formatPeriodLabel(dateFrom, dateTo) : 'period summary'}>
-                <div className="space-y-4">
-                  <KPIRow summary={data.summary} />
-                  <div className="pt-2 border-t border-[var(--border)]">
-                    <StreakBadge streaks={data.streaks} />
+              <Section icon={Activity} title="Performance Breakdown" subtitle={activePreset === 'All' ? 'All-time' : activePreset ? `Last ${activePreset}` : dateFrom && dateTo ? formatPeriodLabel(dateFrom, dateTo) : 'period summary'}>
+                <div className="space-y-5">
+
+                  {/* System Auto-Tracked panel */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-1.5">
+                      <Bot size={12} className="text-violet-400 shrink-0" />
+                      <span className="text-xs font-semibold text-[var(--text-h)]">System Auto-Tracked</span>
+                      <span className="ml-2 text-[10px] text-[var(--text)] opacity-50">picks auto-tracked by the model</span>
+                    </div>
+                    {systemSummary
+                      ? <>
+                          <KPIRow summary={systemSummary} />
+                          <div className="pt-1 border-t border-[var(--border)]">
+                            <StreakBadge streaks={{
+                              current_streak_type: systemSummary.current_streak_type,
+                              current_streak_len:  systemSummary.current_streak_len,
+                              longest_win_streak:  systemSummary.longest_win_streak,
+                              longest_loss_streak: systemSummary.longest_loss_streak,
+                            }} />
+                          </div>
+                        </>
+                      : <p className="text-xs text-[var(--text)] opacity-50">No system picks yet.</p>
+                    }
                   </div>
+
+                  <div className="border-t border-[var(--border)]" />
+
+                  {/* Personal Bets panel */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-1.5">
+                      <User size={12} className="text-blue-400 shrink-0" />
+                      <span className="text-xs font-semibold text-[var(--text-h)]">Your Personal Bets</span>
+                      <span className="ml-2 text-[10px] text-[var(--text)] opacity-50">bets you added yourself</span>
+                    </div>
+                    {personalSummary && (personalSummary.settled_bets ?? 0) > 0
+                      ? <KPIRow summary={personalSummary} />
+                      : <p className="text-xs text-[var(--text)] opacity-50">No personal bets tracked yet — add picks in the Tracker.</p>
+                    }
+                  </div>
+
                   {clvMissing && (
                     <p className="text-[11px] text-[var(--text)] opacity-80 pt-1">
                       <span className="text-amber-400 font-medium">Tip:</span>{' '}
