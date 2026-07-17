@@ -363,16 +363,16 @@ function ProbabilityLine({ market, confidence, prob, odd, bookmaker, bookmakerCo
   const pctLabel = Math.round(pct)
 
   const barColor =
-    pct >= 70 ? 'bg-emerald-500' :
-    pct >= 50 ? 'bg-amber-500'   :
-    pct >= 35 ? 'bg-orange-500'  :
-    'bg-rose-500'
+    pct >= 70 ? 'bg-emerald-400/70' :
+    pct >= 50 ? 'bg-amber-400/70'   :
+    pct >= 35 ? 'bg-orange-400/70'  :
+    'bg-rose-400/70'
 
   const pctColor =
-    pct >= 70 ? 'text-emerald-400' :
-    pct >= 50 ? 'text-amber-400'   :
-    pct >= 35 ? 'text-orange-400'  :
-    'text-rose-400'
+    pct >= 70 ? 'text-emerald-500' :
+    pct >= 50 ? 'text-amber-500'   :
+    pct >= 35 ? 'text-orange-500'  :
+    'text-rose-500'
 
   const confStyle =
     confidence === 'High'   ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' :
@@ -385,30 +385,23 @@ function ProbabilityLine({ market, confidence, prob, odd, bookmaker, bookmakerCo
       {/* Market chip + confidence badge + big percentage */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-          <span className={`text-[10px] font-medium ${marketColor(market)} opacity-80`}>
+          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full bg-[var(--code-bg)] border border-[var(--border)] ${marketColor(market)}`}>
             {market}
           </span>
           {confidence && confidence !== 'None' && (
-            <>
-              <span className="text-[var(--text)] opacity-25 text-[10px]">·</span>
-              <span className={`text-[10px] font-medium ${
-                confidence === 'High'   ? 'text-emerald-400' :
-                confidence === 'Medium' ? 'text-amber-400'   :
-                'text-rose-400'
-              } opacity-75`}>
-                {confidence}
-              </span>
-            </>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${confStyle}`}>
+              {confidence}
+            </span>
           )}
         </div>
-        <span className={`text-3xl font-black tabular-nums leading-none shrink-0 ${pctColor}`}>
+        <span className={`text-xl font-bold tabular-nums leading-none shrink-0 ${pctColor}`}>
           {pctLabel}%
         </span>
       </div>
 
       {/* Full-width probability bar */}
       <div
-        className="h-2.5 w-full rounded-full bg-[var(--code-bg)] overflow-hidden"
+        className="h-1.5 w-full rounded-full bg-[var(--code-bg)] overflow-hidden"
         role="progressbar"
         aria-valuenow={pctLabel}
         aria-valuemin={0}
