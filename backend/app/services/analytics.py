@@ -7,6 +7,8 @@ from collections import defaultdict
 from datetime import date
 from typing import Optional
 
+from app.core.config import get_league_tier
+
 
 def _bet_source_label(bet) -> str:
     label = (getattr(bet, "source_rule_label", "") or "").strip()
@@ -285,6 +287,44 @@ def build_analytics(bets: list) -> dict:
             "avg_odds": round(d["odds_sum"] / d["bets"], 2) if d["bets"] else 0.0,
         })
 
+    # ── By league tier ───────────────────────────────────────────────────────
+    by_tier: dict[int, dict] = defaultdict(
+        lambda: {"bets": 0, "wins": 0, "losses": 0, "settled": 0,
+                 "profit_loss": 0.0, "stake": 0.0, "odds_sum": 0.0}
+    )
+    for b in bets:
+        tier = get_league_tier(b.league or "")
+        by_tier[tier]["bets"] += 1
+        by_tier[tier]["stake"] += b.stake
+        by_tier[tier]["odds_sum"] += b.odds
+        if b.result_status in ("Won", "Lost"):
+            by_tier[tier]["settled"] += 1
+            by_tier[tier]["profit_loss"] += b.profit_loss
+        if b.result_status == "Won":
+            by_tier[tier]["wins"] += 1
+        elif b.result_status == "Lost":
+            by_tier[tier]["losses"] += 1
+
+    tier_breakdown = []
+    for tier in sorted(by_tier.keys()):
+        d = by_tier[tier]
+        s = d["settled"]
+        stake_s = sum(
+            b.stake for b in bets
+            if get_league_tier(b.league or "") == tier and b.result_status in ("Won", "Lost")
+        )
+        tier_breakdown.append({
+            "tier": tier,
+            "label": f"Tier {tier}",
+            "bets": d["bets"],
+            "wins": d["wins"],
+            "losses": d["losses"],
+            "win_rate": round(d["wins"] / s * 100, 1) if s else 0.0,
+            "roi": round(d["profit_loss"] / stake_s * 100, 1) if stake_s else 0.0,
+            "profit_loss": round(d["profit_loss"], 2),
+            "avg_odds": round(d["odds_sum"] / d["bets"], 2) if d["bets"] else 0.0,
+        })
+
     by_source: dict[str, dict] = defaultdict(
         lambda: {"bets": 0, "wins": 0, "losses": 0, "settled": 0, "profit_loss": 0.0, "stake": 0.0, "odds_sum": 0.0}
     )
@@ -358,6 +398,7 @@ def build_analytics(bets: list) -> dict:
         "daily_trend": daily_trend,
         "by_market": market_breakdown,
         "by_league": league_breakdown,
+        "by_tier": tier_breakdown,
         "by_rule": rule_breakdown,
         "by_confidence": confidence_breakdown,
         "by_agreement": agreement_breakdown,

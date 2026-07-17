@@ -572,6 +572,68 @@ function SignalQualityContent({ byConfidence, byAgreement, showFactor, onApplySi
   )
 }
 
+function TierBreakdown({ rows = [] }) {
+  if (!rows.length) return null
+
+  const TIER_META = {
+    1: { label: 'Tier 1', sub: 'Top-flight / international',  ring: 'border-amber-500/30',  bg: 'bg-amber-500/5',  text: 'text-amber-400',  bar: 'bg-amber-400' },
+    2: { label: 'Tier 2', sub: 'Second division / major cup', ring: 'border-blue-500/30',   bg: 'bg-blue-500/5',   text: 'text-blue-400',   bar: 'bg-blue-400'  },
+    3: { label: 'Tier 3', sub: 'Lower league / minor cup',    ring: 'border-violet-500/30', bg: 'bg-violet-500/5', text: 'text-violet-400', bar: 'bg-violet-400' },
+  }
+
+  const totalBets = rows.reduce((s, r) => s + (r.bets ?? 0), 0)
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {rows.map(row => {
+          const meta = TIER_META[row.tier] || TIER_META[3]
+          const roiColor  = row.roi >= 20 ? 'text-green-400' : row.roi >= 0 ? 'text-[var(--text-h)]' : 'text-red-400'
+          const hrColor   = row.win_rate >= 60 ? 'text-green-400' : row.win_rate >= 50 ? 'text-yellow-400' : 'text-red-400'
+          const sharePct  = totalBets > 0 ? Math.round(row.bets / totalBets * 100) : 0
+          return (
+            <div key={row.tier} className={`rounded-xl border ${meta.ring} ${meta.bg} p-4 space-y-3`}>
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className={`text-xs font-bold ${meta.text}`}>{meta.label}</p>
+                  <p className="text-[10px] text-[var(--text)] opacity-60 mt-0.5">{meta.sub}</p>
+                </div>
+                <span className="text-[10px] text-[var(--text)] opacity-50 tabular-nums">{sharePct}% of picks</span>
+              </div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                <div>
+                  <span className="text-[var(--text)] opacity-55">Hit Rate</span>
+                  <p className={`font-bold tabular-nums ${hrColor}`}>{row.win_rate.toFixed(1)}%</p>
+                </div>
+                <div>
+                  <span className="text-[var(--text)] opacity-55">ROI</span>
+                  <p className={`font-bold tabular-nums ${roiColor}`}>{row.roi >= 0 ? '+' : ''}{row.roi.toFixed(1)}%</p>
+                </div>
+                <div>
+                  <span className="text-[var(--text)] opacity-55">Bets</span>
+                  <p className="font-semibold tabular-nums text-[var(--text-h)]">{row.bets}</p>
+                </div>
+                <div>
+                  <span className="text-[var(--text)] opacity-55">Avg odds</span>
+                  <p className="font-semibold tabular-nums text-[var(--text-h)]">{row.avg_odds.toFixed(2)}</p>
+                </div>
+              </div>
+              <div>
+                <div className="h-1.5 rounded-full bg-[var(--border)] overflow-hidden">
+                  <div className={`h-full rounded-full opacity-70 ${meta.bar}`} style={{ width: `${Math.min(100, row.win_rate)}%` }} />
+                </div>
+                <p className="text-[10px] text-[var(--text)] opacity-45 mt-1 text-right">
+                  {row.wins}W · {row.losses}L
+                </p>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 const ANALYTICS_TABS = [
   { id: 'overview',  label: 'Overview',  desc: 'P&L and performance summary' },
   { id: 'markets',   label: 'Markets',   desc: 'Market, league and signal breakdown' },
@@ -614,6 +676,7 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
           summary:      result,
           byMarket:     result.by_market     ?? [],
           byLeague:     result.by_league     ?? [],
+          byTier:       result.by_tier       ?? [],
           byRule:       result.by_rule       ?? [],
           byConfidence: result.by_confidence ?? [],
           byAgreement:  result.by_agreement  ?? [],
@@ -783,9 +846,9 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
           ══════════════════════════════════════════════════════════════════ */}
           {analyticsTab === 'markets' && (
             <div className="space-y-5">
-              {data.byMarket.length > 0 && (
-                <Section icon={Target} title="Market Performance" subtitle="where your money is won and lost">
-                  <MarketPerformanceContent rows={data.byMarket} onApplySignalFilter={onApplySignalFilter} />
+              {data.byTier.length > 0 && (
+                <Section icon={Layers} title="League Tier Breakdown" subtitle="Home Over 0.5 performance by league tier">
+                  <TierBreakdown rows={data.byTier} />
                 </Section>
               )}
 
