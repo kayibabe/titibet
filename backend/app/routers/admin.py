@@ -1292,6 +1292,90 @@ async def backfill_dates(
     }
 
 
+@router.post("/resettle-all")
+async def resettle_all(
+    source: str = Query("system", description="'system' resets user_id=NULL bets; 'all' includes advisory"),
+    dry_run: bool = Query(False, description="Preview counts — no DB writes"),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Reset every settled system bet back to Pending, then re-run full settlement.
+
+    This is a full re-evaluation from day 1:
+      1. Reset all Won/Lost rows (user_id IS NULL) → Pending (clears profit_loss, settled_at).
+      2. Run settle_bets_for_date(db, None) which re-settles every Pending bet against
+         the current fixture scores in the DB.
+
+    Use this when settlement logic has been corrected, scores were updated, or gates
+    changed and you want the analytics to reflect the true historical picture.
+    """
+    from app.services.settlement import settle_bets_for_date
+
+    count_q = text("""
+        SELECT COUNT(*) FROM tracked_bets
+        WHERE user_id IS NULL
+          AND result_status IN ('Won', 'Lost')
+          AND market_type != 'Accumulator'
+    """)
+    to_reset = (await db.execute(count_q)).scalar() or 0
+
+    acca_q = text("""
+        SELECT COUNT(*) FROM tracked_bets
+        WHERE user_id IS NULL
+          AND result_status IN ('Won', 'Lost')
+          AND market_type = 'Accumulator'
+    """)
+    acca_to_reset = (await db.execute(acca_q)).scalar() or 0
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "singles_to_reset": to_reset,
+            "accas_to_reset": acca_to_reset,
+            "total_to_reset": to_reset + acca_to_reset,
+            "note": "Run without dry_run=true to execute.",
+        }
+
+    # Reset singles
+    await db.execute(text("""
+        UPDATE tracked_bets
+        SET result_status = 'Pending',
+            profit_loss   = 0.0,
+            settled_at    = NULL
+        WHERE user_id IS NULL
+          AND result_status IN ('Won', 'Lost')
+          AND market_type != 'Accumulator'
+    """))
+    # Reset accas separately — profit_loss formula differs but reset is the same
+    await db.execute(text("""
+        UPDATE tracked_bets
+        SET result_status = 'Pending',
+            profit_loss   = 0.0,
+            settled_at    = NULL
+        WHERE user_id IS NULL
+          AND result_status IN ('Won', 'Lost')
+          AND market_type = 'Accumulator'
+    """))
+    await db.commit()
+
+    # Re-settle all pending bets (all dates, all markets)
+    settle_info = await settle_bets_for_date(db, None)
+
+    return {
+        "dry_run": False,
+        "singles_reset": to_reset,
+        "accas_reset": acca_to_reset,
+        "total_reset": to_reset + acca_to_reset,
+        "settled": settle_info.get("settled", 0),
+        "voided": settle_info.get("voided", 0),
+        "skip_no_fixture": settle_info.get("skip_no_fixture", 0),
+        "skip_not_final": settle_info.get("skip_not_final", 0),
+        "skip_no_score": settle_info.get("skip_no_score", 0),
+        "skip_no_market": settle_info.get("skip_no_market", 0),
+    }
+
+
 @router.post("/sync/trigger")
 async def trigger_sync(
     run_date: Optional[str] = Query(None, description="ISO date to sync (default: today)"),
