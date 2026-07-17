@@ -4,7 +4,7 @@ backend/.env
 
 # Dev artefacts
 backend/.cache
-backend/titibet.db
+backend/*.db
 backend/*.db.live
 backend/*.db.live-shm
 backend/*.db.live-wal
