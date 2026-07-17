@@ -111,10 +111,21 @@ function formatGroupDate(dateStr) {
   return d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
 }
 
+function betDate(bet) {
+  if (bet.event_date) return bet.event_date
+  if (bet.kickoff_at) {
+    const utc = bet.kickoff_at.endsWith('Z') || bet.kickoff_at.includes('+')
+      ? bet.kickoff_at : `${bet.kickoff_at}Z`
+    const d = new Date(utc)
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10)
+  }
+  return null
+}
+
 function groupByYearMonthDate(bets) {
   const tree = {}
   for (const bet of bets) {
-    const dateStr = bet.event_date ?? 'unknown'
+    const dateStr = betDate(bet) ?? 'unknown'
     const yearKey  = dateStr === 'unknown' ? 'Unknown' : dateStr.slice(0, 4)
     const monthKey = dateStr === 'unknown' ? 'Unknown' : dateStr.slice(0, 7)
     if (!tree[yearKey]) tree[yearKey] = {}
@@ -386,7 +397,7 @@ function BetRow({ bet, onRefresh }) {
           <span>·</span>
           <span>{bet.league}</span>
           <span>·</span>
-          <span>{formatEventDate(bet.event_date)}</span>
+          <span>{formatEventDate(betDate(bet))}</span>
           {formatKickoff(bet.kickoff_at) && (
             <>
               <span>·</span>
@@ -492,7 +503,7 @@ function AccaRow({ bet, onRefresh }) {
               <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/25 text-[10px] font-semibold">
                 <Ticket size={9} /> Acca
               </span>
-              <span>{formatEventDate(bet.event_date)}</span>
+              <span>{formatEventDate(betDate(bet))}</span>
               <span>·</span>
               <span>K{Number(bet.stake).toLocaleString()}</span>
               {bet.dual_confidence && <><span>·</span><span>{bet.dual_confidence} confidence</span></>}
