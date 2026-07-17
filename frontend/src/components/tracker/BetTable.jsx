@@ -1,5 +1,5 @@
-﻿import { useState } from 'react'
-import { Download, Lock, Ticket, Bot, Pencil, Trash2, X, Clock, CheckCircle, AlertTriangle, MinusCircle, ClipboardList } from 'lucide-react'
+﻿import { useState, useMemo } from 'react'
+import { Download, Lock, Ticket, Bot, Pencil, Trash2, X, Clock, CheckCircle, AlertTriangle, MinusCircle, ClipboardList, ChevronDown } from 'lucide-react'
 import { fmtK, fmtPL, fmtPLCompact, marketColor } from '../../utils/format'
 import { updateBet, deleteBet } from '../../api/tracker'
 
@@ -111,18 +111,30 @@ function formatGroupDate(dateStr) {
   return d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
 }
 
-function groupByDate(bets) {
-  const map = {}
+function groupByYearMonthDate(bets) {
+  const tree = {}
   for (const bet of bets) {
-    const key = bet.event_date ?? 'unknown'
-    if (!map[key]) map[key] = []
-    map[key].push(bet)
+    const dateStr = bet.event_date ?? 'unknown'
+    const yearKey  = dateStr === 'unknown' ? 'Unknown' : dateStr.slice(0, 4)
+    const monthKey = dateStr === 'unknown' ? 'Unknown' : dateStr.slice(0, 7)
+    if (!tree[yearKey]) tree[yearKey] = {}
+    if (!tree[yearKey][monthKey]) tree[yearKey][monthKey] = {}
+    if (!tree[yearKey][monthKey][dateStr]) tree[yearKey][monthKey][dateStr] = []
+    tree[yearKey][monthKey][dateStr].push(bet)
   }
-  return Object.entries(map).sort(([a], [b]) => {
-    if (a === 'unknown') return 1
-    if (b === 'unknown') return -1
-    return b > a ? 1 : b < a ? -1 : 0
-  })
+  return Object.keys(tree)
+    .sort((a, b) => b.localeCompare(a))
+    .map(yearKey => ({
+      yearKey,
+      months: Object.keys(tree[yearKey])
+        .sort((a, b) => b.localeCompare(a))
+        .map(monthKey => ({
+          monthKey,
+          dates: Object.entries(tree[yearKey][monthKey])
+            .sort(([a], [b]) => b.localeCompare(a))
+            .map(([dateKey, bets]) => ({ dateKey, bets })),
+        })),
+    }))
 }
 
 function actualPL(bet) {
@@ -540,38 +552,139 @@ function AccaRow({ bet, onRefresh }) {
   )
 }
 
-// ── Unified date-grouped view (accas + singles together per date) ─────────────
-function UnifiedDateGroupedBets({ bets, onRefresh }) {
-  const groups = groupByDate(bets)
+function plColor(pl) {
+  return pl > 0 ? 'text-green-400' : pl < 0 ? 'text-red-400' : 'text-[var(--text)]'
+}
+
+function sumPL(bets) {
+  return bets
+    .filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
+    .reduce((s, b) => s + (b.profit_loss ?? 0), 0)
+}
+
+function monthLabel(monthKey) {
+  if (monthKey === 'Unknown') return 'Unknown'
+  return new Date(`${monthKey}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+}
+
+// ── Year → Month → Date grouped view ─────────────────────────────────────────
+function UnifiedGroupedBets({ bets, onRefresh }) {
+  const tree = useMemo(() => groupByYearMonthDate(bets), [bets])
+
+  const now = new Date()
+  const curYear  = String(now.getFullYear())
+  const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+
+  // Older years collapsed by default; older months within each year collapsed
+  const [collapsedYears, setCollapsedYears] = useState(() =>
+    new Set(tree.filter(y => y.yearKey < curYear).map(y => y.yearKey))
+  )
+  const [collapsedMonths, setCollapsedMonths] = useState(() =>
+    new Set(tree.flatMap(y => y.months.filter(m => m.monthKey < curMonth).map(m => m.monthKey)))
+  )
+
+  function toggleYear(key) {
+    setCollapsedYears(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
+  }
+  function toggleMonth(key) {
+    setCollapsedMonths(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
+  }
+
   return (
-    <div className="space-y-4">
-      {groups.map(([dateKey, groupBets]) => {
-        const groupPL = groupBets
-          .filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
-          .reduce((sum, b) => sum + (b.profit_loss ?? 0), 0)
-        const gColor = groupPL > 0 ? 'text-green-500' : groupPL < 0 ? 'text-red-500' : 'text-[var(--text)]'
-        const pickCount = groupBets.length
+    <div className="space-y-3">
+      {tree.map(({ yearKey, months }) => {
+        const yearCollapsed = collapsedYears.has(yearKey)
+        const allYearBets   = months.flatMap(m => m.dates.flatMap(d => d.bets))
+        const yearPL        = sumPL(allYearBets)
+
         return (
-          <div key={dateKey}>
-            <div className="flex items-center justify-between px-4 py-2 mb-2 rounded-lg bg-[var(--accent-bg)] border border-[var(--accent-border)]">
-              <span className="text-xs font-bold text-[var(--accent)] uppercase tracking-wider">
-                {formatGroupDate(dateKey === 'unknown' ? null : dateKey)}
-              </span>
-              <span className="text-xs text-[var(--text)] opacity-75">
-                {pickCount} {pickCount !== 1 ? 'picks' : 'pick'}
-                {' · '}
-                <span className={`font-mono font-semibold ${gColor}`} title={fmtPL(groupPL)}>
-                  {fmtPLCompact(groupPL)}
+          <div key={yearKey} className="rounded-xl border border-[var(--border)] overflow-hidden">
+
+            {/* ── Year header ── */}
+            <button
+              onClick={() => toggleYear(yearKey)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-[var(--code-bg)] hover:bg-[var(--accent)]/5 transition-colors"
+            >
+              <span className="text-sm font-bold text-[var(--text-h)]">{yearKey}</span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-[var(--text)] opacity-55">{allYearBets.length} picks</span>
+                <span className={`text-xs font-mono font-semibold ${plColor(yearPL)}`}>
+                  {yearPL >= 0 ? '+' : ''}{fmtK(yearPL)}
                 </span>
-              </span>
-            </div>
-            <div className="rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
-              {groupBets.map(bet =>
-                bet.source_rule_key === 'acca_advisory' || bet.source_rule_key === 'system_acca'
-                  ? <AccaRow key={bet.id} bet={bet} onRefresh={onRefresh} />
-                  : <BetRow  key={bet.id} bet={bet} onRefresh={onRefresh} />
-              )}
-            </div>
+                <ChevronDown
+                  size={14}
+                  className={`text-[var(--accent)] transition-transform duration-200 ${yearCollapsed ? '' : 'rotate-180'}`}
+                />
+              </div>
+            </button>
+
+            {!yearCollapsed && (
+              <div className="divide-y divide-[var(--border)]">
+                {months.map(({ monthKey, dates }) => {
+                  const monthCollapsed = collapsedMonths.has(monthKey)
+                  const allMonthBets   = dates.flatMap(d => d.bets)
+                  const mPL            = sumPL(allMonthBets)
+
+                  return (
+                    <div key={monthKey}>
+
+                      {/* ── Month header ── */}
+                      <button
+                        onClick={() => toggleMonth(monthKey)}
+                        className="w-full flex items-center justify-between px-4 py-2.5 bg-[var(--bg)] hover:bg-[var(--code-bg)] transition-colors"
+                      >
+                        <span className="text-xs font-semibold text-[var(--accent)] uppercase tracking-wider">
+                          {monthLabel(monthKey)}
+                        </span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-[var(--text)] opacity-55">{allMonthBets.length} picks</span>
+                          <span className={`text-xs font-mono font-semibold ${plColor(mPL)}`}>
+                            {mPL >= 0 ? '+' : ''}{fmtK(mPL)}
+                          </span>
+                          <ChevronDown
+                            size={12}
+                            className={`text-[var(--accent)] transition-transform duration-200 ${monthCollapsed ? '' : 'rotate-180'}`}
+                          />
+                        </div>
+                      </button>
+
+                      {!monthCollapsed && (
+                        <div className="p-3 space-y-3 bg-[var(--bg)]">
+                          {dates.map(({ dateKey, bets: dateBets }) => {
+                            const dPL    = sumPL(dateBets)
+                            const dColor = plColor(dPL)
+                            return (
+                              <div key={dateKey}>
+                                {/* Date sub-header */}
+                                <div className="flex items-center justify-between px-3 py-1.5 mb-1.5 rounded-lg bg-[var(--accent-bg)] border border-[var(--accent-border)]">
+                                  <span className="text-xs font-bold text-[var(--accent)] uppercase tracking-wider">
+                                    {formatGroupDate(dateKey === 'unknown' ? null : dateKey)}
+                                  </span>
+                                  <span className="text-xs text-[var(--text)] opacity-75">
+                                    {dateBets.length} {dateBets.length !== 1 ? 'picks' : 'pick'}
+                                    {' · '}
+                                    <span className={`font-mono font-semibold ${dColor}`} title={fmtPL(dPL)}>
+                                      {fmtPLCompact(dPL)}
+                                    </span>
+                                  </span>
+                                </div>
+                                <div className="rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
+                                  {dateBets.map(bet =>
+                                    bet.source_rule_key === 'acca_advisory' || bet.source_rule_key === 'system_acca'
+                                      ? <AccaRow key={bet.id} bet={bet} onRefresh={onRefresh} />
+                                      : <BetRow  key={bet.id} bet={bet} onRefresh={onRefresh} />
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )
       })}
@@ -702,7 +815,7 @@ export default function BetTable({ bets, summary, isPro = true, onUpgrade, onRef
         )}
       </div>
 
-      <UnifiedDateGroupedBets bets={bets} onRefresh={onRefresh} />
+      <UnifiedGroupedBets bets={bets} onRefresh={onRefresh} />
     </div>
   )
 }
