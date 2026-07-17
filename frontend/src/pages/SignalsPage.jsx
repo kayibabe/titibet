@@ -1,9 +1,10 @@
 ﻿import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { RefreshCw, Download, Calendar, Sparkles, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Radio, Search, Heart } from 'lucide-react'
+import { RefreshCw, Download, Calendar, Sparkles, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Radio, Search, Heart, Bot, Clock } from 'lucide-react'
 import { useSignals } from '../store/useSignals'
 import { computeSignals, fetchSignals } from '../api/signals'
 import { syncData, fetchBets } from '../api/tracker'
 import SignalCard from '../components/signals/SignalCard'
+import { marketColor } from '../utils/format'
 import TrackModal from '../components/tracker/TrackModal'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import AIAdvisorPanel from '../components/signals/AIAdvisorPanel'
@@ -113,6 +114,123 @@ const TABS = [
   { id: 'signals',   label: 'Signals',     icon: TrendingUp },
   { id: 'advisor',   label: 'AI Advisory', icon: Sparkles   },
 ]
+
+// ── Fallback card for system bets whose signal isn't in the loaded list ────────
+// Mirrors SignalCard's visual structure using only TrackedBet fields.
+function SystemBetFallbackCard({ bet }) {
+  const hasScore  = bet.home_score != null && bet.away_score != null
+  const kickoffStr = bet.kickoff_at
+    ? new Date(bet.kickoff_at + (bet.kickoff_at.endsWith('Z') ? '' : 'Z'))
+        .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null
+
+  // Parse "Home vs Away" from match_name
+  const vsSplit  = (bet.match_name || '').split(' vs ')
+  const homeTeam = vsSplit[0] ?? bet.match_name
+  const awayTeam = vsSplit.slice(1).join(' vs ') ?? ''
+
+  // Implied probability from odds
+  const impliedProb = bet.odds > 1 ? Math.round((1 / Number(bet.odds)) * 100) : null
+  const pct         = impliedProb ?? 50
+  const barColor    = pct >= 70 ? 'bg-emerald-400/70' : pct >= 50 ? 'bg-amber-400/70' : 'bg-orange-400/70'
+  const pctColor    = pct >= 70 ? 'text-emerald-500'  : pct >= 50 ? 'text-amber-500'  : 'text-orange-500'
+
+  const confidence = bet.dual_confidence
+  const confStyle  = confidence === 'High'   ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                   : confidence === 'Medium' ? 'bg-amber-500/15   text-amber-400   border-amber-500/30'
+                   : confidence === 'Low'    ? 'bg-rose-500/15    text-rose-400    border-rose-500/30'
+                   : null
+
+  const isWon     = bet.result_status === 'Won'
+  const isLost    = bet.result_status === 'Lost'
+  const statusCls = isWon ? 'text-green-400' : isLost ? 'text-red-400' : 'text-amber-400'
+  const borderCls = isWon
+    ? 'border-emerald-500/40 border-l-4 border-l-emerald-500'
+    : isLost
+      ? 'border-red-400/30 border-l-4 border-l-red-400'
+      : 'border-amber-400/30 border-l-4 border-l-amber-400'
+
+  return (
+    <div className={`rounded-xl border bg-[var(--bg)] overflow-hidden ${borderCls}`}>
+      <div className="px-4 py-3 space-y-2.5">
+        {/* Match header */}
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h3 className="text-base font-semibold text-[var(--text-h)] leading-tight">
+              {homeTeam}{awayTeam ? ` vs ${awayTeam}` : ''}
+            </h3>
+            {bet.league && (
+              <span className="text-[11px] text-[var(--text)] opacity-45 leading-none">{bet.league}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+            {hasScore ? (
+              <>
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-500">
+                  <Clock size={10} />
+                  FT
+                </span>
+                <span className="inline-flex items-center rounded-md border border-emerald-500/25 bg-emerald-500/8 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                  {bet.home_score}-{bet.away_score}
+                </span>
+              </>
+            ) : kickoffStr ? (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--text)] opacity-75">
+                <Clock size={10} />
+                {kickoffStr}
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Market + confidence + probability */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+              <span className={`text-xs font-semibold px-2.5 py-1 rounded-full bg-[var(--code-bg)] border border-[var(--border)] ${marketColor(bet.market_type)}`}>
+                {bet.market_type}
+              </span>
+              {confStyle && (
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${confStyle}`}>
+                  {confidence}
+                </span>
+              )}
+            </div>
+            {impliedProb != null && (
+              <span className={`text-xl font-bold tabular-nums leading-none shrink-0 ${pctColor}`}>
+                {impliedProb}%
+              </span>
+            )}
+          </div>
+
+          {/* Probability bar */}
+          <div className="h-1.5 w-full rounded-full bg-[var(--code-bg)] overflow-hidden">
+            <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${pct}%` }} />
+          </div>
+
+          {/* Odds + result */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold font-mono text-[var(--accent)]">
+              @{Number(bet.odds).toFixed(2)}
+            </span>
+            <div className="flex-1" />
+            <span className={`text-xs font-bold ${statusCls}`}>{bet.result_status}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="px-4 py-2 border-t border-[var(--border)] flex items-center gap-2">
+        <span className="flex items-center gap-1 text-xs text-violet-400 font-semibold">
+          <Bot size={11} />
+          System Pick
+        </span>
+        <div className="flex-1" />
+        <span className="text-[10px] text-[var(--text)] opacity-35">Stats Model</span>
+      </div>
+    </div>
+  )
+}
 
 export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigateToTracker, initialFilter, onFilterConsumed }) {
   const { isPro } = useTier()
@@ -527,25 +645,8 @@ const reload = () => load(params)
                           />
                         )
                       }
-                      // Fallback compact row for bets whose signal isn't in the current date's list
-                      const hasScore   = bet.home_score != null && bet.away_score != null
-                      const kickoffStr = bet.kickoff_at
-                        ? new Date(bet.kickoff_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                        : null
-                      const statusCls = bet.result_status === 'Won' ? 'text-green-400'
-                        : bet.result_status === 'Lost' ? 'text-red-400' : 'text-amber-400'
-                      return (
-                        <div key={bet.id} className="rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center gap-3 px-4 py-3 text-xs">
-                          <span className="text-[var(--text-h)] font-medium truncate flex-1 min-w-0">{bet.match_name}</span>
-                          <span className="text-[var(--text)] opacity-55 shrink-0 hidden sm:block">{bet.market_type}</span>
-                          <span className="text-[var(--accent)] font-semibold shrink-0">@{bet.odds}</span>
-                          {hasScore
-                            ? <span className="bg-violet-600 text-white px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums shrink-0">{bet.home_score}–{bet.away_score}</span>
-                            : kickoffStr && <span className="text-[var(--text)] opacity-55 shrink-0">{kickoffStr}</span>
-                          }
-                          <span className={`font-semibold shrink-0 ${statusCls}`}>{bet.result_status}</span>
-                        </div>
-                      )
+                      // Fallback card for bets whose signal isn't in the current loaded list
+                      return <SystemBetFallbackCard key={bet.id} bet={bet} />
                     })}
                   </div>
                 </div>
