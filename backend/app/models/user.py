@@ -44,4 +44,4 @@ class User(Base):
 
     @property
     def is_pro(self) -> bool:
-        return self.tier == "pro" and self._subscription_valid()
+        return self.tier in ("pro", "elite") and self._subscription_valid()

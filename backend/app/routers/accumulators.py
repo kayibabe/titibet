@@ -39,7 +39,7 @@ async def get_accumulators(
 
     is_pro = (
         current_user is not None
-        and current_user.tier == "pro"
+        and current_user.tier in ("pro", "elite")
         and current_user.subscription_status == "active"
     )
 

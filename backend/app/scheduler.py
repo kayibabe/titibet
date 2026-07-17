@@ -67,11 +67,15 @@ async def catchup_past_dates() -> int:
         today = date.today()
 
         # Find distinct past dates that still have Pending bets.
+        # Cap lookback to 60 days to avoid burning API quota on a DB restore with
+        # many old pending bets that will never settle (cancelled leagues, stale data).
+        lookback_cutoff = today - timedelta(days=60)
         pending_dates_result = await db.execute(
             select(distinct(TrackedBet.event_date))
             .where(
                 TrackedBet.result_status == "Pending",
                 TrackedBet.event_date < today,
+                TrackedBet.event_date >= lookback_cutoff,
                 TrackedBet.event_date.isnot(None),
             )
         )
