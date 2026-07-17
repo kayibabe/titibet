@@ -643,9 +643,9 @@ const ANALYTICS_TABS = [
 export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNavigate, settings }) {
   const { isPro } = useTier()
   const [analyticsTab, setAnalyticsTab] = useState('overview')
-  const [dateFrom,     setDateFrom]   = useState(() => daysAgo(90))
+  const [dateFrom,     setDateFrom]   = useState('')
   const [dateTo,       setDateTo]     = useState(todayStr)
-  const [activePreset, setActivePreset] = useState('90d')
+  const [activePreset, setActivePreset] = useState('All')
   const [refreshKey,   setRefreshKey] = useState(0)
   const [data,         setData]       = useState(null)
   const [insights,     setInsights]   = useState(null)
