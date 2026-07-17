@@ -158,12 +158,15 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
 
   // Load today's bets once so we can badge already-tracked signals and show system stats
   const [systemStats, setSystemStats] = useState(null) // { total, won, lost, pending }
+  const [systemBets, setSystemBets]   = useState([])
+  const [showSystemBets, setShowSystemBets] = useState(true)
   useEffect(() => {
     fetchBets({ date_from: today, date_to: today })
       .then(bets => {
         setTrackedKeys(new Set(bets.map(b => `${b.fixture_id}:${b.market_type}`)))
         const sys = bets.filter(b => b.source_rule_key === 'system_auto' || b.source_rule_key === 'system_dual')
         setSystemTrackedKeys(new Set(sys.map(b => `${b.fixture_id}:${b.market_type}`)))
+        setSystemBets(sys)
         if (sys.length > 0) {
           const won     = sys.filter(b => b.result_status === 'Won').length
           const lost    = sys.filter(b => b.result_status === 'Lost').length
@@ -455,38 +458,77 @@ const reload = () => load(params)
           const settled = won + lost
           const hitRate = settled > 0 ? Math.round(won / settled * 100) : null
           return (
-            <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-[var(--accent)]/20 bg-[var(--accent)]/6 text-xs flex-wrap">
-              <span className="flex items-center gap-1.5 text-[var(--accent)] font-semibold shrink-0">
-                <Zap size={11} />
-                System Auto-Tracking
-              </span>
-              <span className="text-[var(--text)] opacity-80">
-                <span className="font-semibold text-[var(--text-h)]">{tracked}</span> pick{tracked !== 1 ? 's' : ''} tracked today
-              </span>
-              {settled > 0 && (
-                <>
-                  <span className="text-[var(--text)] opacity-40">·</span>
-                  <span className="text-[var(--text)] opacity-80">
-                    <span className="font-semibold text-green-400">{won}W</span>{' / '}
-                    <span className="font-semibold text-red-400">{lost}L</span>
-                    {hitRate !== null && (
-                      <span className="ml-1 font-semibold text-[var(--text-h)]">({hitRate}%)</span>
-                    )}
-                  </span>
-                </>
-              )}
-              {systemStats?.pending > 0 && (
-                <>
-                  <span className="text-[var(--text)] opacity-40">·</span>
-                  <span className="text-[var(--text)] opacity-60">{systemStats.pending} pending</span>
-                </>
-              )}
-              <button
-                onClick={onNavigateToTracker}
-                className="ml-auto text-[var(--accent)] font-semibold hover:underline shrink-0"
+            <div className="rounded-xl border border-[var(--accent)]/20 bg-[var(--accent)]/6 overflow-hidden">
+              {/* Header bar */}
+              <div
+                className="flex items-center gap-3 px-4 py-2.5 text-xs flex-wrap cursor-pointer select-none"
+                onClick={() => setShowSystemBets(s => !s)}
               >
-                View in Tracker →
-              </button>
+                <span className="flex items-center gap-1.5 text-[var(--accent)] font-semibold shrink-0">
+                  <Zap size={11} />
+                  System Auto-Tracking
+                </span>
+                <span className="text-[var(--text)] opacity-80">
+                  <span className="font-semibold text-[var(--text-h)]">{tracked}</span> pick{tracked !== 1 ? 's' : ''} tracked today
+                </span>
+                {settled > 0 && (
+                  <>
+                    <span className="text-[var(--text)] opacity-40">·</span>
+                    <span className="text-[var(--text)] opacity-80">
+                      <span className="font-semibold text-green-400">{won}W</span>{' / '}
+                      <span className="font-semibold text-red-400">{lost}L</span>
+                      {hitRate !== null && (
+                        <span className="ml-1 font-semibold text-[var(--text-h)]">({hitRate}%)</span>
+                      )}
+                    </span>
+                  </>
+                )}
+                {systemStats?.pending > 0 && (
+                  <>
+                    <span className="text-[var(--text)] opacity-40">·</span>
+                    <span className="text-[var(--text)] opacity-60">{systemStats.pending} pending</span>
+                  </>
+                )}
+                <button
+                  onClick={e => { e.stopPropagation(); onNavigateToTracker() }}
+                  className="ml-auto text-[var(--accent)] font-semibold hover:underline shrink-0"
+                >
+                  View in Tracker →
+                </button>
+                <ChevronDown
+                  size={13}
+                  className={`text-[var(--accent)] transition-transform duration-200 ${showSystemBets ? 'rotate-180' : ''}`}
+                />
+              </div>
+
+              {/* Expandable bet list */}
+              {showSystemBets && systemBets.length > 0 && (
+                <div className="border-t border-[var(--accent)]/15 divide-y divide-[var(--border)]/40">
+                  {systemBets.map(bet => {
+                    const hasScore   = bet.home_score != null && bet.away_score != null
+                    const kickoffStr = bet.kickoff_at
+                      ? new Date(bet.kickoff_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                      : null
+                    const statusCls  = bet.result_status === 'Won'
+                      ? 'text-green-400'
+                      : bet.result_status === 'Lost'
+                        ? 'text-red-400'
+                        : 'text-amber-400'
+                    return (
+                      <div key={bet.id} className="flex items-center gap-3 px-4 py-2 text-xs">
+                        <span className="text-[var(--text-h)] font-medium truncate flex-1 min-w-0">{bet.match_name}</span>
+                        <span className="text-[var(--text)] opacity-55 shrink-0 hidden sm:block">{bet.market_type}</span>
+                        <span className="text-[var(--accent)] font-semibold shrink-0">@{bet.odds}</span>
+                        {hasScore
+                          ? <span className="bg-violet-600 text-white px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums shrink-0">{bet.home_score}–{bet.away_score}</span>
+                          : kickoffStr && <span className="text-[var(--text)] opacity-55 shrink-0">{kickoffStr}</span>
+                        }
+                        <span className={`font-semibold shrink-0 ${statusCls}`}>{bet.result_status}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )
         })()}
