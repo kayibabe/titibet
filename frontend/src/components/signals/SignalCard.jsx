@@ -385,13 +385,20 @@ function ProbabilityLine({ market, confidence, prob, odd, bookmaker, bookmakerCo
       {/* Market chip + confidence badge + big percentage */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--code-bg)] border border-[var(--border)] ${marketColor(market)}`}>
+          <span className={`text-[10px] font-medium ${marketColor(market)} opacity-80`}>
             {market}
           </span>
           {confidence && confidence !== 'None' && (
-            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full border ${confStyle}`}>
-              {confidence}
-            </span>
+            <>
+              <span className="text-[var(--text)] opacity-25 text-[10px]">·</span>
+              <span className={`text-[10px] font-medium ${
+                confidence === 'High'   ? 'text-emerald-400' :
+                confidence === 'Medium' ? 'text-amber-400'   :
+                'text-rose-400'
+              } opacity-75`}>
+                {confidence}
+              </span>
+            </>
           )}
         </div>
         <span className={`text-3xl font-black tabular-nums leading-none shrink-0 ${pctColor}`}>
