@@ -536,7 +536,11 @@ PROVISIONAL_LEAGUE_MIN_BETS: int = 8
 # Maximum signals to surface from any single Tier 3 league per day.
 # Prevents catastrophic cluster losses when one lower-tier league misbehaves
 # (e.g. all 7 Austrian Regionalliga Ost fixtures going 0-0 on the same day).
-MAX_SIGNALS_PER_TIER3_LEAGUE: int = 3
+# Raised 3 → 8 (2026-07-17): pre-Jul-2 data shows Tier 3 hit 87.7% WR / +35.5% ROI
+# on 73 HO0.5 bets — stronger than Tier 1 (79.2%) or Tier 2 (76.8%). The cap of 3
+# was throttling the system's best-performing pool. Specific bad leagues remain
+# hard-disabled; surgical suppressions cover the real cluster-loss risk, not this cap.
+MAX_SIGNALS_PER_TIER3_LEAGUE: int = 8
 
 # Per-market daily signal cap enforced at serving time (after ranking).
 # Highest-ranked signals get priority. Markets not listed are uncapped.

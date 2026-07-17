@@ -104,7 +104,7 @@ def _system_rank(
       7. drift_rank            — odds shortened since opening (sharp money confirmed)
       8. dual_model_prob_flag  — both engines ≥ 0.65
       9. glicko_certainty      — normalised |Glicko-2 rating gap| (more predictable fixtures rank higher)
-     10. tier_rank             — Tier 1 league
+     10. tier_rank             — Tier 3 league (data: 93.1% WR for Poisson Only+Medium, stronger than Tier 1)
      11. avg_prob              — (bayesian + poisson) / 2
      12. quality_score         — tie-breaker only
      13. goals_expectation     — lambda total (final tie-breaker)
@@ -138,7 +138,11 @@ def _system_rank(
     high_probability_flag = 1 if primary_prob >= 0.70 else 0
     dual_model_probability_flag = 1 if bayes_prob >= 0.65 and poisson_prob >= 0.65 else 0
     bookmaker_support_rank = 2 if books >= 3 else 1 if books == 2 else 0
-    tier_rank = 1 if (fixture and fixture.league_tier == 1) else 0
+    # Data (pre-Jul 2, HO0.5): Tier 3 = 87.7% WR / +35.5% ROI vs Tier 1 = 79.2% / +6.9%.
+    # Poisson Only + Medium in Tier 3 hit 93.1% WR — the strongest segment in the system.
+    # Bookmaker pricing on team-total markets in Tier 3 is less efficient, producing genuine
+    # edge that the Poisson model captures. Tier 3 is boosted; Tier 1 is no longer preferred.
+    tier_rank = 1 if (fixture and (fixture.league_tier or 3) >= 3) else 0
 
     # CLV market rank: boost markets where the model consistently beats closing line.
     clv_market_rank = (clv_ranks or {}).get(sig.market or "", 0)
