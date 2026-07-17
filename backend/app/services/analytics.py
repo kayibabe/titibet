@@ -13,6 +13,8 @@ from app.core.config import get_league_tier
 def _bet_source_label(bet) -> str:
     label = (getattr(bet, "source_rule_label", "") or "").strip()
     if label:
+        if label == "System Auto Pick":
+            label = "System Auto-Pick"
         return label
     if getattr(bet, "source_rule_key", None):
         return "Signals Rule"
@@ -39,7 +41,7 @@ def build_analytics(bets: list) -> dict:
     avg_odds = (total_odds / len(settled)) if settled else 0.0
 
     # ── Streaks ──────────────────────────────────────────────────────────────
-    sorted_settled = sorted(settled, key=lambda b: (b.settled_at or b.created_at, b.id))
+    sorted_settled = sorted(settled, key=lambda b: (b.event_date or b.settled_at or b.created_at, b.id))
     longest_win = longest_loss = 0
     run = 0
     current_type = None

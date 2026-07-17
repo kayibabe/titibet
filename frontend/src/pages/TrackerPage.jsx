@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { RefreshCw, CheckCircle, TrendingUp, Lock, Upload, Settings2, Bot, User, Layers, ListChecks, ArrowRight, FileUp } from 'lucide-react'
 import { useTracker } from '../store/useTracker'
-import { syncData, computeCLV, deduplicateBets, normalizeStakes, fetchBets } from '../api/tracker'
+import { syncData, computeCLV, deduplicateBets, normalizeStakes } from '../api/tracker'
 import { fetchAnalytics } from '../api/analytics'
 import { triggerAdminSettle } from '../api/admin'
 import BetTable from '../components/tracker/BetTable'
@@ -16,17 +16,11 @@ import useTier from '../hooks/useTier'
 const STATUS_OPTIONS = ['', 'Pending', 'Won', 'Lost', 'Void']
 
 const ADVISORY_KEYS = ['scout_pick', 'strategist_pick', 'skeptic_pick']
-const ADVISOR_META = {
-  scout_pick:      { label: 'The Scout',      emoji: '🔭', color: 'blue'   },
-  strategist_pick: { label: 'The Strategist', emoji: '♟️', color: 'violet' },
-  skeptic_pick:    { label: 'The Skeptic',    emoji: '🧐', color: 'amber'  },
-}
 
 const SOURCE_OPTIONS = [
-  { value: '',         label: 'All Picks',    icon: null },
-  { value: 'system',   label: 'System Picks', icon: Bot  },
-  { value: 'advisory', label: 'AI Advisory',  icon: Bot  },
-  { value: 'manual',   label: 'Manual Picks', icon: User },
+  { value: '',       label: 'All Picks',    icon: null },
+  { value: 'system', label: 'System Picks', icon: Bot  },
+  { value: 'manual', label: 'Manual Picks', icon: User },
 ]
 
 const DATE_PRESETS = [
@@ -49,15 +43,12 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const [activePreset, setActivePreset] = useState('All')
   const [statusFilter, setStatusFilter] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
-  const [advisorFilter, setAdvisorFilter] = useState('')
   const [syncing, setSyncing]           = useState(false)
   const [settling, setSettling]         = useState(false)
   const [settleResult, setSettleResult] = useState(null)
   const [computingCLV, setComputingCLV] = useState(false)
   const [showImport, setShowImport]     = useState(false)
   const [moreOpen, setMoreOpen]         = useState(false)
-  const [refreshCount, setRefreshCount] = useState(0)
-  const [allAdvisoryBets, setAllAdvisoryBets] = useState([])
   const [clvResult, setClvResult]       = useState(null)
   const [deduping, setDeduping]           = useState(false)
   const [dedupResult, setDedupResult]     = useState(null)
@@ -84,14 +75,10 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
 
   // Client-side source filter
   const filteredBets = useMemo(() => {
-    if (sourceFilter === 'advisory') {
-      const advisory = bets.filter(isAdvisoryPick)
-      return advisorFilter ? advisory.filter(b => b.source_rule_key === advisorFilter) : advisory
-    }
     if (sourceFilter === 'system') return bets.filter(isSystemPick)
     if (sourceFilter === 'manual') return bets.filter(b => !isSystemPick(b) && !isAdvisoryPick(b))
     return bets.filter(b => !isAdvisoryPick(b))
-  }, [bets, sourceFilter, advisorFilter]) // eslint-disable-line
+  }, [bets, sourceFilter]) // eslint-disable-line
 
   // Analytics summary for the currently filtered view — same backend
   // build_analytics() implementation the Analytics page uses, scoped with
@@ -112,11 +99,6 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   useEffect(() => {
     fetchAnalytics({}).then(setSystemSummary).catch(() => setSystemSummary(null))
   }, [bets])
-
-  // Advisory performance — always all-time; refreshes after settle/sync, not on date filter changes.
-  useEffect(() => {
-    fetchBets({}).then(all => setAllAdvisoryBets(all.filter(isAdvisoryPick))).catch(() => {})
-  }, [refreshCount]) // eslint-disable-line
 
   useEffect(() => {
     loadBets(betFilters)
@@ -169,7 +151,6 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     setSyncing(true)
     try { await syncData() } catch (e) { console.error(e) } finally { setSyncing(false) }
     invalidate()
-    setRefreshCount(c => c + 1)
     await loadBets(betFilters)
   }
 
@@ -186,7 +167,6 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
       setSettling(false)
     }
     invalidate()
-    setRefreshCount(c => c + 1)
     await loadBets(betFilters)
   }
 
@@ -198,7 +178,6 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
       setNormalizeResult(res)
       setTimeout(() => setNormalizeResult(null), 6000)
       invalidate()
-      setRefreshCount(c => c + 1)
       await loadBets(betFilters)
     } catch (e) {
       setActionError(e.message || 'Failed — are you logged in?')
@@ -214,7 +193,6 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
       setDedupResult(res)
       setTimeout(() => setDedupResult(null), 5000)
       invalidate()
-      setRefreshCount(c => c + 1)
       await loadBets(betFilters)
     } catch (e) {
       setActionError(e.message || 'Failed — are you logged in?')
@@ -393,65 +371,6 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
         </div>
       )}
 
-      {/* AI Advisory performance card — always all-time, unaffected by the date filter */}
-      {(sourceFilter === 'advisory' || sourceFilter === '') && allAdvisoryBets.length > 0 && (
-        <div className="rounded-xl border border-blue-500/25 bg-blue-500/5 px-4 py-3 space-y-3">
-          <div className="flex items-center gap-2">
-            <Bot size={13} className="text-blue-400 shrink-0" />
-            <span className="text-xs font-semibold text-blue-300">AI Advisory Performance</span>
-            <span className="text-[10px] font-medium text-[var(--text)] opacity-50 bg-[var(--code-bg)] px-1.5 py-0.5 rounded">All-time</span>
-            <span className="ml-auto text-xs text-[var(--text)] opacity-60">{allAdvisoryBets.length} shadow picks</span>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            {ADVISORY_KEYS.map(key => {
-              const meta    = ADVISOR_META[key]
-              const picks   = allAdvisoryBets.filter(b => b.source_rule_key === key)
-              const settled = picks.filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
-              const wins    = settled.filter(b => b.result_status === 'Won')
-              const pending = picks.filter(b => b.result_status === 'Pending').length
-              const hasEnough = settled.length >= 3
-              const hitRate = hasEnough ? Math.round(wins.length / settled.length * 100) : null
-              // ROI: theoretical flat-stake return across settled picks
-              const roi = hasEnough
-                ? Math.round(((wins.reduce((s, b) => s + (b.odds - 1), 0) - (settled.length - wins.length)) / settled.length) * 100)
-                : null
-              const colorMap = { blue: 'text-blue-400 border-blue-500/30', violet: 'text-violet-400 border-violet-500/30', amber: 'text-amber-400 border-amber-500/30' }
-              const clr = colorMap[meta.color] || 'text-slate-400 border-slate-500/30'
-              return (
-                <button
-                  key={key}
-                  onClick={() => { setSourceFilter('advisory'); setAdvisorFilter(advisorFilter === key ? '' : key) }}
-                  className={`rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-white/5 ${advisorFilter === key ? 'bg-white/8 ' + clr : 'border-[var(--border)]'}`}
-                >
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className="text-base leading-none">{meta.emoji}</span>
-                    <span className={`text-xs font-semibold ${advisorFilter === key ? clr.split(' ')[0] : 'text-[var(--text-h)]'}`}>{meta.label}</span>
-                  </div>
-                  <div className="flex items-end gap-3 flex-wrap text-xs">
-                    <div className="flex flex-col">
-                      <span className={`text-lg font-bold tabular-nums ${hitRate === null ? 'text-[var(--text-h)]' : hitRate >= 55 ? 'text-green-400' : hitRate >= 45 ? 'text-amber-400' : 'text-red-400'}`}>
-                        {hitRate !== null ? `${hitRate}%` : '—'}
-                      </span>
-                      <span className="text-[var(--text)] opacity-60">Hit Rate</span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className={`text-lg font-bold tabular-nums ${roi === null ? 'text-[var(--text-h)]' : roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {roi !== null ? `${roi >= 0 ? '+' : ''}${roi}%` : '—'}
-                      </span>
-                      <span className="text-[var(--text)] opacity-60">ROI</span>
-                    </div>
-                    <div className="flex flex-col ml-auto text-right">
-                      <span className="text-[var(--text-h)] font-semibold tabular-nums">{wins.length}W · {settled.length - wins.length}L{pending > 0 ? ` · ${pending}P` : ''}</span>
-                      <span className="text-[var(--text)] opacity-60">{picks.length} picks</span>
-                    </div>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
       {/* Filter bar */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--code-bg)] px-4 py-3 space-y-3">
         <div className="flex flex-wrap items-end gap-3">
@@ -487,7 +406,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           {SOURCE_OPTIONS.map(({ value, label, icon: Icon }) => (
             <button
               key={value}
-              onClick={() => { setSourceFilter(value); if (value !== 'advisory') setAdvisorFilter('') }}
+              onClick={() => setSourceFilter(value)}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
                 sourceFilter === value
                   ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
