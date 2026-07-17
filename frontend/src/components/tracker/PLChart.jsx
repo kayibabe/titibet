@@ -30,37 +30,31 @@ function buildData(bets) {
   })
 }
 
+function dotColor(result) {
+  if (result === 'Won')  return { fill: '#4ade80', stroke: '#166534' }
+  if (result === 'Void') return { fill: '#94a3b8', stroke: '#475569' }
+  return { fill: '#f87171', stroke: '#7f1d1d' }
+}
+
 function CustomDot({ cx, cy, payload }) {
   if (cx == null || cy == null) return null
-  const won = payload.result === 'Won'
-  return (
-    <circle
-      cx={cx} cy={cy} r={5}
-      fill={won ? '#4ade80' : '#f87171'}
-      stroke={won ? '#166534' : '#7f1d1d'}
-      strokeWidth={1}
-    />
-  )
+  const { fill, stroke } = dotColor(payload.result)
+  return <circle cx={cx} cy={cy} r={5} fill={fill} stroke={stroke} strokeWidth={1} />
 }
 
 function CustomActiveDot({ cx, cy, payload }) {
   if (cx == null || cy == null) return null
-  const won = payload.result === 'Won'
-  return (
-    <circle
-      cx={cx} cy={cy} r={7}
-      fill={won ? '#4ade80' : '#f87171'}
-      stroke="var(--bg)"
-      strokeWidth={2}
-    />
-  )
+  const { fill } = dotColor(payload.result)
+  return <circle cx={cx} cy={cy} r={7} fill={fill} stroke="var(--bg)" strokeWidth={2} />
 }
 
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null
   const p = payload[0]?.payload
   if (!p) return null
+  const isVoid = p.result === 'Void'
   const pos = p.periodPL >= 0
+  const resultColor = isVoid ? 'text-slate-400' : pos ? 'text-green-400' : 'text-red-400'
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 shadow-lg text-xs space-y-0.5 max-w-[180px]">
       <p className="font-semibold text-[var(--text-h)] truncate">{p.match || label}</p>
@@ -68,7 +62,7 @@ function ChartTooltip({ active, payload, label }) {
       <p className="text-[var(--text)] opacity-60">Odds: {p.odds ?? '—'}</p>
       <p>
         Result:{' '}
-        <span className={`font-semibold ${pos ? 'text-green-400' : 'text-red-400'}`}>
+        <span className={`font-semibold ${resultColor}`}>
           {p.result} ({p.periodPL >= 0 ? '+' : ''}{fmtK(p.periodPL)})
         </span>
       </p>
@@ -127,6 +121,9 @@ export default function PLChart({ bets }) {
           </span>
           <span className="flex items-center gap-1">
             <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-400" /> Lost
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-400" /> Void
           </span>
           <span className="opacity-40 italic hidden sm:inline">← scroll →</span>
         </div>

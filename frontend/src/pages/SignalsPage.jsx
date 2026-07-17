@@ -214,6 +214,13 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
   ].filter(Boolean).length
 const dateInputRef = useRef(null)
   const { signals, hiddenHighConfidenceCount, loading, error, load, invalidate } = useSignals()
+  // Map fixture_id:market → signal so we can render system-tracked bets as full cards
+  const signalByKey = useMemo(() => {
+    const map = new Map()
+    for (const s of signals) map.set(`${s.fixture_id}:${s.market}`, s)
+    return map
+  }, [signals])
+
 const params = {
     date,
     confidence:  confidence || undefined,
@@ -501,32 +508,46 @@ const reload = () => load(params)
                 />
               </div>
 
-              {/* Expandable bet list */}
+              {/* Expandable bet list — rendered as full signal cards when signal data is available */}
               {showSystemBets && systemBets.length > 0 && (
-                <div className="border-t border-[var(--accent)]/15 divide-y divide-[var(--border)]/40">
-                  {systemBets.map(bet => {
-                    const hasScore   = bet.home_score != null && bet.away_score != null
-                    const kickoffStr = bet.kickoff_at
-                      ? new Date(bet.kickoff_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                      : null
-                    const statusCls  = bet.result_status === 'Won'
-                      ? 'text-green-400'
-                      : bet.result_status === 'Lost'
-                        ? 'text-red-400'
-                        : 'text-amber-400'
-                    return (
-                      <div key={bet.id} className="flex items-center gap-3 px-4 py-2 text-xs">
-                        <span className="text-[var(--text-h)] font-medium truncate flex-1 min-w-0">{bet.match_name}</span>
-                        <span className="text-[var(--text)] opacity-55 shrink-0 hidden sm:block">{bet.market_type}</span>
-                        <span className="text-[var(--accent)] font-semibold shrink-0">@{bet.odds}</span>
-                        {hasScore
-                          ? <span className="bg-violet-600 text-white px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums shrink-0">{bet.home_score}–{bet.away_score}</span>
-                          : kickoffStr && <span className="text-[var(--text)] opacity-55 shrink-0">{kickoffStr}</span>
-                        }
-                        <span className={`font-semibold shrink-0 ${statusCls}`}>{bet.result_status}</span>
-                      </div>
-                    )
-                  })}
+                <div className="border-t border-[var(--accent)]/15 p-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {systemBets.map(bet => {
+                      const sig = signalByKey.get(`${bet.fixture_id}:${bet.market_type}`)
+                      if (sig) {
+                        return (
+                          <SignalCard
+                            key={bet.id}
+                            signal={sig}
+                            rank={null}
+                            isPro={isPro}
+                            isTracked={true}
+                            isAutoTracked={true}
+                            onDeepDive={onDeepDive}
+                          />
+                        )
+                      }
+                      // Fallback compact row for bets whose signal isn't in the current date's list
+                      const hasScore   = bet.home_score != null && bet.away_score != null
+                      const kickoffStr = bet.kickoff_at
+                        ? new Date(bet.kickoff_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : null
+                      const statusCls = bet.result_status === 'Won' ? 'text-green-400'
+                        : bet.result_status === 'Lost' ? 'text-red-400' : 'text-amber-400'
+                      return (
+                        <div key={bet.id} className="rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center gap-3 px-4 py-3 text-xs">
+                          <span className="text-[var(--text-h)] font-medium truncate flex-1 min-w-0">{bet.match_name}</span>
+                          <span className="text-[var(--text)] opacity-55 shrink-0 hidden sm:block">{bet.market_type}</span>
+                          <span className="text-[var(--accent)] font-semibold shrink-0">@{bet.odds}</span>
+                          {hasScore
+                            ? <span className="bg-violet-600 text-white px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums shrink-0">{bet.home_score}–{bet.away_score}</span>
+                            : kickoffStr && <span className="text-[var(--text)] opacity-55 shrink-0">{kickoffStr}</span>
+                          }
+                          <span className={`font-semibold shrink-0 ${statusCls}`}>{bet.result_status}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
               )}
             </div>
@@ -838,7 +859,7 @@ const reload = () => load(params)
           return (
             <div className="space-y-3">
               {/* Primary signals — Both + Poisson Only */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {visiblePrimary.map((signal, idx) => (
                 <SignalCard
                   key={signal.id}
@@ -867,7 +888,7 @@ const reload = () => load(params)
                     <span className="font-semibold text-violet-300">Bayesian model only</span>
                     {' — '}our Bayesian engine found High-confidence value here, but the Poisson model didn&apos;t confirm. One engine vs two: treat these as lower-conviction picks and size stakes accordingly.
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                   {visibleSupplemental.map((signal, idx) => (
                     <SignalCard
                       key={signal.id}
