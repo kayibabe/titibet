@@ -375,21 +375,30 @@ DISABLED_MARKETS: frozenset = frozenset({
     # "Over 0.5 1H" — re-enabled: FH Poisson rule using 0.42×λ_total; settles on home_score_ht + away_score_ht
     "Underdog Over 1.5 Corners",  # retired 2026-06-15: WTCPM engine removed
     # ── Bayesian-only markets retired 2026-06-15 ─────────────────────────────
-    # No Poisson rule → dual-model agreement defaults to "Bayesian Only" with no
-    # independent mathematical confirmation. Removed to keep feed focused on the
-    # 4 dual-model markets + 2 flip signals where both engines agree.
     "Home Win",
     "Draw",
     "Away Win",
-    # "1X (Home or Draw)" — re-enabled: Poisson DC evaluator now provides dual-model confirmation
-    # "X2 (Draw or Away)" — re-enabled: same
-    # "12 (Home or Away)" — re-enabled: same
     "Under 1.5",
     "Home Under 0.5",
     "Away Under 0.5",
     "Exactly 1 Goal",
     "Exactly 2 Goals",
     "Exactly 3 Goals",
+    # ── Focused single-market mode (2026-07-17) ───────────────────────────────
+    # System narrowed to Home Over 0.5 Poisson Only + Medium only.
+    # Validated: 86.8% WR / +10.8% ROI across 76 tracked bets at avg 1.258 odds.
+    # All other markets suppressed at serving time and compute time until
+    # a broader re-audit establishes independent edge for each.
+    "Over 1.5",
+    "Over 2.5",
+    "Under 2.5",
+    "Away Over 0.5",
+    "Over 0.5 1H",
+    "1X (Home or Draw)",
+    "X2 (Draw or Away)",
+    "12 (Home or Away)",
+    "Home Win to Nil",
+    "Away Win to Nil",
 })
 
 # Leagues permanently disabled from signal generation AND serving.

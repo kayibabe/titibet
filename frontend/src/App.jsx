@@ -20,7 +20,7 @@ import { useAuth } from './context/AuthContext'
 export default function App() {
   const [activePage, setActivePage] = useState('signals')
   const [deepDiveFixtureId, setDeepDiveFixtureId] = useState(null)
-  const [authMode, setAuthMode] = useState('landing')
+  const [authMode, setAuthMode] = useState('login')
   const [pendingSignalFilter, setPendingSignalFilter] = useState(null)
   const { settings, update } = useSettings()
   const { user, loading } = useAuth()
@@ -57,8 +57,8 @@ export default function App() {
   if (!user) {
     if (resetToken) return <ResetPasswordPage token={resetToken} onDone={() => { window.history.replaceState({}, '', '/'); setAuthMode('landing') }} />
     if (authMode === 'forgot') return <ForgotPasswordPage onBack={() => setAuthMode('login')} />
-    if (authMode === 'register') return <RegisterPage onSwitch={() => setAuthMode('login')} onBack={() => setAuthMode('landing')} />
-    if (authMode === 'login') return <LoginPage onSwitch={() => setAuthMode('register')} onForgot={() => setAuthMode('forgot')} onBack={() => setAuthMode('landing')} />
+    if (authMode === 'register') return <RegisterPage onSwitch={() => setAuthMode('login')} onBack={() => setAuthMode('login')} />
+    if (authMode === 'login') return <LoginPage onSwitch={() => setAuthMode('register')} onForgot={() => setAuthMode('forgot')} onBack={null} />
     return <LandingPage onSignIn={() => setAuthMode('login')} onSignUp={() => setAuthMode('register')} />
   }
 
