@@ -862,21 +862,25 @@ async def auto_track_acca_legs(
     replace:     bool = False,
 ) -> int:
     """
-    Create system-level TrackedBet rows (user_id=None) for ALL acca leg bets on a
-    date — one leg row per fixture+market.  No combined accumulator row is written;
-    each leg is tracked individually so per-market stats stay clean.
+    Create ONE system TrackedBet row per ACCA ticket at K50,000 flat stake.
+
+    Each ticket becomes a single combined bet (market_type='Accumulator') with
+    legs stored in notes JSON.  Settlement via settle_acca_bets() which handles
+    source_rule_key='system_acca' using the standard all-or-nothing ACCA rules.
 
     Accepts either a single acca dict (backward compat) or a list of ticket dicts.
-    Idempotent by default: skips legs already tracked for this date.
-    replace=True wipes all system acca leg rows first (emergency reset).
+    Idempotent by fingerprint: skips tickets whose fixture-ID set is already tracked.
+    replace=True wipes all system_acca rows for the date first (emergency reset).
 
-    Returns total count of new rows inserted.
+    Returns count of new ticket rows inserted.
     """
+    import hashlib as _hl
+    import json as _json
     from app.models.bet import TrackedBet
 
     # Normalise to list of tickets
     tickets: list[dict] = acca if isinstance(acca, list) else [acca]
-    tickets = [t for t in tickets if t.get("legs") and t.get("combined_odds", 0) > 1.0]
+    tickets = [t for t in tickets if t.get("legs") and float(t.get("combined_odds") or 0) > 1.0]
     if not tickets:
         return 0
 
@@ -885,51 +889,35 @@ async def auto_track_acca_legs(
             text(
                 "DELETE FROM tracked_bets "
                 "WHERE event_date = :d AND user_id IS NULL "
-                "AND source_rule_key = 'acca_leg_system'"
+                "AND source_rule_key = 'system_acca'"
             ),
             {"d": target_date.isoformat()},
         )
-        existing_keys: set[tuple] = set()
+        existing_fps: set[str] = set()
     else:
-        existing_rows = list(
+        existing_fps = set(
             (await db.execute(
-                select(TrackedBet.fixture_id, TrackedBet.market_type)
+                select(TrackedBet.selection_name)
                 .where(
                     TrackedBet.event_date == target_date,
-                    TrackedBet.source_rule_key == "acca_leg_system",
+                    TrackedBet.source_rule_key == "system_acca",
+                    TrackedBet.user_id.is_(None),
                 )
-            )).all()
+            )).scalars().all()
         )
-        existing_keys = {(r.fixture_id, r.market_type) for r in existing_rows}
 
     inserted = 0
 
     for ticket in tickets:
         legs = ticket.get("legs", [])
-        combined_odds = ticket.get("combined_odds")
+        combined_odds = float(ticket.get("combined_odds") or 0)
+        leg_count = len(legs)
+        if leg_count < 2 or combined_odds <= 1.0:
+            continue
 
-        # Stable ticket ID: hash of sorted fixture IDs + date.
-        # Re-tracking the same ticket after a stale-odds void gives the same ID,
-        # so analytics can group legs correctly even across re-track cycles.
-        import hashlib as _hl
-        _fid_str = ",".join(sorted(str(leg.get("fixture_id", "")) for leg in legs if leg.get("fixture_id")))
-        acca_ticket_id = f"{target_date.isoformat()}_{_hl.md5((_fid_str + target_date.isoformat()).encode()).hexdigest()[:8]}"
-
-        # Individual leg rows
+        # Skip tickets where any leg has already kicked off (within 30 min).
+        skip = False
         for leg in legs:
-            fid = leg.get("fixture_id")
-            market = leg.get("market", "")
-            if not fid or not market:
-                continue
-            key = (fid, market)
-            if key in existing_keys:
-                continue
-            odd = float(leg.get("odd") or 0)
-            if odd <= 1.0:
-                continue
-            # Skip legs that have already kicked off or kick off within 30 min.
-            # Prevents writing stale bets when evening_extras tracks tomorrow's
-            # after-midnight (UTC) games that in CAT time are already in progress.
             kickoff_str = leg.get("kickoff_at")
             if kickoff_str:
                 try:
@@ -937,32 +925,44 @@ async def auto_track_acca_legs(
                     if ko.tzinfo is None:
                         ko = ko.replace(tzinfo=timezone.utc)
                     if ko < datetime.now(timezone.utc) + timedelta(minutes=30):
-                        continue
+                        skip = True
+                        break
                 except (ValueError, TypeError):
                     pass
-            match_name = (
-                f"{leg.get('home_team', '')} vs {leg.get('away_team', '')}"
-                if leg.get("home_team") else "Unknown"
-            )
-            db.add(TrackedBet(
-                user_id=None,
-                fixture_id=fid,
-                bookmaker="AI Acca",
-                event_date=target_date,
-                match_name=match_name,
-                league=None,
-                market_type=market,
-                selection_name=market,
-                odds=odd,
-                stake=25_000.0,  # halved from 50k: reduces variance while acca track record builds
-                source_rule_key="acca_leg_system",
-                source_rule_label="AI Acca Leg (Auto)",
-                dual_confidence=ticket.get("confidence"),
-                result_status="Pending",
-                acca_ticket_id=acca_ticket_id,
-            ))
-            existing_keys.add(key)
-            inserted += 1
+        if skip:
+            continue
+
+        # Fingerprint: sorted fixture IDs — dedup across re-runs.
+        fid_str = ",".join(sorted(str(leg.get("fixture_id", "")) for leg in legs if leg.get("fixture_id")))
+        fingerprint = f"system_acca|{fid_str}"
+        if fingerprint in existing_fps:
+            continue
+
+        leg_summary = "\n".join(
+            f"{i+1}. {leg.get('home_team','')} vs {leg.get('away_team','')} · "
+            f"{leg.get('market','')} @ {float(leg.get('odd') or 0):.2f}"
+            for i, leg in enumerate(legs)
+        )
+
+        db.add(TrackedBet(
+            user_id=None,
+            fixture_id=None,
+            bookmaker="AI Acca",
+            event_date=target_date,
+            match_name=f"AI Acca · {leg_count} leg{'s' if leg_count != 1 else ''}",
+            league=None,
+            market_type="Accumulator",
+            selection_name=fingerprint,
+            odds=combined_odds,
+            stake=50_000.0,
+            source_rule_key="system_acca",
+            source_rule_label="AI Acca Ticket",
+            dual_confidence=ticket.get("confidence"),
+            result_status="Pending",
+            notes=_json.dumps({"legs": legs, "leg_summary": leg_summary}),
+        ))
+        existing_fps.add(fingerprint)
+        inserted += 1
 
     if inserted:
         try:

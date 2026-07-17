@@ -307,17 +307,17 @@ async def auto_track_acca_signals(db: AsyncSession, run_date: date) -> int:
     Returns count of new TrackedBet rows inserted (0 or 1 combined row).
     """
     # Defer to the advisor path if it has already run OR is scheduled to run.
-    # Check 1: acca_leg_system rows already exist (evening_extras job already ran).
+    # Check 1: system_acca rows already exist (evening_extras job already ran).
     advisor_acca_count = await db.scalar(
         select(func.count()).select_from(TrackedBet).where(
             TrackedBet.event_date == run_date,
-            TrackedBet.source_rule_key == "acca_leg_system",
+            TrackedBet.source_rule_key == "system_acca",
             TrackedBet.user_id.is_(None),
         )
     )
     if advisor_acca_count:
         logger.info(
-            "Auto-ACCA %s: advisor-path ACCA legs already exist (%d row(s)) — skipping signal-model ticket",
+            "Auto-ACCA %s: advisor-path ACCA ticket(s) already exist (%d row(s)) — skipping signal-model ticket",
             run_date, advisor_acca_count,
         )
         return 0

@@ -262,19 +262,16 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                         from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
                         result = await get_advisor_insights(db, run_date, current_user=None, force=True)
                         logger.info("Advisory cache: %d matches analysed for %s", result.get("matches_analysed", 0), run_date)
-                        # Check if evening_extras already pre-tracked ACCA legs for today.
-                        # If so, skip — the idempotency guard in auto_track_acca_legs
-                        # would handle it anyway, but checking first avoids a redundant
-                        # LLM call for acca candidates.
+                        # Check if evening_extras already pre-tracked ACCA tickets for today.
                         existing_acca = (await db.execute(
                             select(sqlfunc.count()).where(
-                                _TB.source_rule_key == "acca_leg_system",
+                                _TB.source_rule_key == "system_acca",
                                 _TB.event_date == run_date,
                                 _TB.user_id.is_(None),
                             )
                         )).scalar() or 0
                         if existing_acca:
-                            logger.info("Morning extras: ACCA already pre-tracked for %s (%d rows) — skipping", run_date, existing_acca)
+                            logger.info("Morning extras: ACCA already pre-tracked for %s (%d ticket(s)) — skipping", run_date, existing_acca)
                         else:
                             tickets = result.get("accumulators") or []
                             if not tickets:
@@ -284,41 +281,53 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                             if tickets:
                                 n_tracked = await auto_track_acca_legs(db, tickets, run_date)
                                 if n_tracked:
-                                    logger.info("Advisory cache: auto-tracked %d acca rows for %s", n_tracked, run_date)
+                                    logger.info("Advisory cache: auto-tracked %d acca ticket(s) for %s", n_tracked, run_date)
 
                         # ── Stale-odds guard ──────────────────────────────────────
-                        # Re-check all pre-tracked ACCA legs against the latest
-                        # MarketSnapshot odds.  Any leg whose odds have moved >10%
-                        # since tracking is deleted so auto_track_acca_legs can
-                        # re-insert it with the current price.
+                        # Re-check each pending system_acca ticket's legs against the
+                        # latest MarketSnapshot odds.  Any ticket with a leg that moved
+                        # >10% is deleted so auto_track_acca_legs re-inserts it at the
+                        # current combined price.
+                        import json as _sjson
                         from app.models.odds import MarketSnapshot as _MS
                         from sqlalchemy import select as _sel2
-                        acca_legs_rows = (await db.execute(
+                        acca_ticket_rows = (await db.execute(
                             _sel2(_TB).where(
-                                _TB.source_rule_key == "acca_leg_system",
+                                _TB.source_rule_key == "system_acca",
                                 _TB.event_date == run_date,
                                 _TB.result_status == "Pending",
                                 _TB.user_id.is_(None),
                             )
                         )).scalars().all()
                         voided_count = 0
-                        for _leg in acca_legs_rows:
-                            if not _leg.fixture_id or not _leg.odds:
+                        for _ticket in acca_ticket_rows:
+                            try:
+                                _legs = _sjson.loads(_ticket.notes or "{}").get("legs", [])
+                            except Exception:
                                 continue
-                            _snap = (await db.execute(
-                                _sel2(_MS).where(
-                                    _MS.fixture_id == _leg.fixture_id,
-                                    _MS.market_type == _leg.market_type,
-                                    _MS.selection_name == _leg.selection_name,
-                                ).order_by(_MS.pulled_at.desc()).limit(1)
-                            )).scalars().first()
-                            if _snap and _snap.odds and abs(_snap.odds - _leg.odds) / _leg.odds > 0.10:
-                                await db.delete(_leg)
+                            stale = False
+                            for _leg in _legs:
+                                _fid = _leg.get("fixture_id")
+                                _mkt = _leg.get("market")
+                                _tracked_odd = float(_leg.get("odd") or 0)
+                                if not _fid or not _mkt or _tracked_odd <= 0:
+                                    continue
+                                _snap = (await db.execute(
+                                    _sel2(_MS).where(
+                                        _MS.fixture_id == _fid,
+                                        _MS.market_type == _mkt,
+                                    ).order_by(_MS.pulled_at.desc()).limit(1)
+                                )).scalars().first()
+                                if _snap and _snap.odds and abs(_snap.odds - _tracked_odd) / _tracked_odd > 0.10:
+                                    stale = True
+                                    break
+                            if stale:
+                                await db.delete(_ticket)
                                 voided_count += 1
                         if voided_count:
                             await db.commit()
                             logger.info(
-                                "Stale-odds guard: voided %d ACCA leg(s) with >10%% odds movement "
+                                "Stale-odds guard: voided %d ACCA ticket(s) with >10%% odds movement "
                                 "for %s — re-tracking",
                                 voided_count, run_date,
                             )
@@ -330,7 +339,7 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                             if retrack_tickets:
                                 n_retracked = await auto_track_acca_legs(db, retrack_tickets, run_date)
                                 logger.info(
-                                    "Stale-odds guard: re-tracked %d ACCA leg(s) for %s",
+                                    "Stale-odds guard: re-tracked %d ACCA ticket(s) for %s",
                                     n_retracked, run_date,
                                 )
                     except Exception:

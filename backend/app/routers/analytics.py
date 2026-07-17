@@ -491,60 +491,52 @@ async def acca_performance(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    ACCA accumulator performance analytics for system-tracked legs.
+    ACCA accumulator performance analytics for system-tracked tickets.
 
-    Returns three breakdowns over all settled acca_leg_system bets:
-      - by_market:         leg hit rate / ROI per market type
-      - by_leg_count:      ticket-level hit rate by number of legs (ticket wins only if ALL legs win)
-      - two_market_combos: ticket hit rate for the most common two-market pairings
+    Each system_acca row is one combined ticket; legs are stored in notes JSON.
+    Returns:
+      - tickets:           total / won / lost / win_rate / roi / avg_combined_odds
+      - by_leg_count:      ticket-level hit rate by number of legs
+      - by_market:         individual leg hit rate across all tickets (from notes.legs)
     """
+    import json as _json
+
     q = select(TrackedBet).where(
-        TrackedBet.source_rule_key == "acca_leg_system",
+        TrackedBet.source_rule_key == "system_acca",
         TrackedBet.result_status.in_(["Won", "Lost"]),
         TrackedBet.user_id.is_(None),
     )
-    bets = (await db.execute(q)).scalars().all()
+    tickets = (await db.execute(q)).scalars().all()
 
-    if not bets:
-        return {"by_market": [], "by_leg_count": [], "two_market_combos": []}
+    if not tickets:
+        return {"tickets": {}, "by_leg_count": [], "by_market": []}
 
-    # ── By market ──────────────────────────────────────────────────────────
-    mkt_stats: dict[str, dict] = defaultdict(lambda: {"wins": 0, "total": 0, "pl": 0.0, "stake": 0.0})
-    for bet in bets:
-        s = mkt_stats[bet.market_type]
-        s["wins"] += 1 if bet.result_status == "Won" else 0
-        s["total"] += 1
-        s["pl"] += bet.profit_loss or 0.0
-        s["stake"] += bet.stake or 0.0
-
-    by_market = sorted(
-        [
-            {
-                "market": mkt,
-                "legs": s["total"],
-                "wins": s["wins"],
-                "hit_rate": round(s["wins"] / s["total"] * 100, 1),
-                "roi": round(s["pl"] / s["stake"] * 100, 1) if s["stake"] else 0.0,
-            }
-            for mkt, s in mkt_stats.items()
-        ],
-        key=lambda x: -x["hit_rate"],
-    )
+    # ── Ticket-level summary ───────────────────────────────────────────────
+    wins  = sum(1 for t in tickets if t.result_status == "Won")
+    total = len(tickets)
+    total_pl    = sum(t.profit_loss or 0.0 for t in tickets)
+    total_stake = sum(t.stake or 0.0 for t in tickets)
+    ticket_summary = {
+        "total":            total,
+        "wins":             wins,
+        "losses":           total - wins,
+        "win_rate":         round(wins / total * 100, 1),
+        "roi":              round(total_pl / total_stake * 100, 1) if total_stake else 0.0,
+        "profit_loss":      round(total_pl, 2),
+        "avg_combined_odds": round(sum(t.odds or 0.0 for t in tickets) / total, 2),
+    }
 
     # ── By leg count ───────────────────────────────────────────────────────
-    # Group by (event_date, acca_ticket_id) so multiple advisory tickets on the
-    # same date are counted as separate tickets. Fall back to event_date string
-    # for legacy rows that predate the acca_ticket_id column.
-    ticket_legs: dict = defaultdict(list)
-    for bet in bets:
-        ticket_key = (bet.event_date, getattr(bet, "acca_ticket_id", None) or str(bet.event_date))
-        ticket_legs[ticket_key].append(bet)
-
     lc_stats: dict[int, dict] = defaultdict(lambda: {"tickets": 0, "wins": 0})
-    for legs in ticket_legs.values():
-        n = len(legs)
+    for t in tickets:
+        try:
+            n = len(_json.loads(t.notes or "{}").get("legs", []))
+        except Exception:
+            n = 0
+        if n < 2:
+            continue
         lc_stats[n]["tickets"] += 1
-        if all(lg.result_status == "Won" for lg in legs):
+        if t.result_status == "Won":
             lc_stats[n]["wins"] += 1
 
     by_leg_count = sorted(
@@ -553,44 +545,45 @@ async def acca_performance(
                 "leg_count": n,
                 "tickets": s["tickets"],
                 "wins": s["wins"],
-                "hit_rate": round(s["wins"] / s["tickets"] * 100, 1),
+                "hit_rate": round(s["wins"] / s["tickets"] * 100, 1) if s["tickets"] else 0.0,
             }
             for n, s in lc_stats.items()
         ],
         key=lambda x: x["leg_count"],
     )
 
-    # ── Two-market combos ──────────────────────────────────────────────────
-    combo_stats: dict[tuple, dict] = defaultdict(lambda: {"tickets": 0, "wins": 0})
-    for legs in ticket_legs.values():
-        if len(legs) < 2:
+    # ── By market (from notes.legs[i].result) ─────────────────────────────
+    mkt_stats: dict[str, dict] = defaultdict(lambda: {"legs": 0, "wins": 0})
+    for t in tickets:
+        try:
+            legs = _json.loads(t.notes or "{}").get("legs", [])
+        except Exception:
             continue
-        ticket_won = all(lg.result_status == "Won" for lg in legs)
-        markets = sorted({lg.market_type for lg in legs})
-        for mkt_a, mkt_b in combinations(markets, 2):
-            combo_stats[(mkt_a, mkt_b)]["tickets"] += 1
-            if ticket_won:
-                combo_stats[(mkt_a, mkt_b)]["wins"] += 1
+        for leg in legs:
+            mkt = (leg.get("market") or "").strip()
+            if not mkt:
+                continue
+            mkt_stats[mkt]["legs"] += 1
+            if (leg.get("result") or "").lower() == "won":
+                mkt_stats[mkt]["wins"] += 1
 
-    two_market_combos = sorted(
+    by_market = sorted(
         [
             {
-                "market_a": k[0],
-                "market_b": k[1],
-                "tickets": s["tickets"],
-                "wins": s["wins"],
-                "hit_rate": round(s["wins"] / s["tickets"] * 100, 1),
+                "market":   mkt,
+                "legs":     s["legs"],
+                "wins":     s["wins"],
+                "hit_rate": round(s["wins"] / s["legs"] * 100, 1) if s["legs"] else 0.0,
             }
-            for k, s in combo_stats.items()
-            if s["tickets"] >= 2
+            for mkt, s in mkt_stats.items()
         ],
         key=lambda x: -x["hit_rate"],
-    )[:10]
+    )
 
     return {
-        "by_market": by_market,
+        "tickets":      ticket_summary,
         "by_leg_count": by_leg_count,
-        "two_market_combos": two_market_combos,
+        "by_market":    by_market,
     }
 
 
