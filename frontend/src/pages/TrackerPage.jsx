@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { RefreshCw, CheckCircle, TrendingUp, Lock, Upload, Settings2, Bot, User, Layers, ListChecks, ArrowRight, FileUp } from 'lucide-react'
 import { useTracker } from '../store/useTracker'
-import { syncData, computeCLV, deduplicateBets, normalizeStakes } from '../api/tracker'
+import { syncData, computeCLV, deduplicateBets, normalizeStakes, fetchBets } from '../api/tracker'
 import { fetchAnalytics } from '../api/analytics'
 import { triggerAdminSettle } from '../api/admin'
 import BetTable from '../components/tracker/BetTable'
@@ -56,6 +56,8 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const [computingCLV, setComputingCLV] = useState(false)
   const [showImport, setShowImport]     = useState(false)
   const [moreOpen, setMoreOpen]         = useState(false)
+  const [refreshCount, setRefreshCount] = useState(0)
+  const [allAdvisoryBets, setAllAdvisoryBets] = useState([])
   const [clvResult, setClvResult]       = useState(null)
   const [deduping, setDeduping]           = useState(false)
   const [dedupResult, setDedupResult]     = useState(null)
@@ -111,6 +113,11 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     fetchAnalytics({}).then(setSystemSummary).catch(() => setSystemSummary(null))
   }, [bets])
 
+  // Advisory performance — always all-time; refreshes after settle/sync, not on date filter changes.
+  useEffect(() => {
+    fetchBets({}).then(all => setAllAdvisoryBets(all.filter(isAdvisoryPick))).catch(() => {})
+  }, [refreshCount]) // eslint-disable-line
+
   useEffect(() => {
     loadBets(betFilters)
   }, [dateFrom, dateTo, statusFilter, loadBets]) // eslint-disable-line
@@ -162,6 +169,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     setSyncing(true)
     try { await syncData() } catch (e) { console.error(e) } finally { setSyncing(false) }
     invalidate()
+    setRefreshCount(c => c + 1)
     await loadBets(betFilters)
   }
 
@@ -178,6 +186,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
       setSettling(false)
     }
     invalidate()
+    setRefreshCount(c => c + 1)
     await loadBets(betFilters)
   }
 
@@ -189,6 +198,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
       setNormalizeResult(res)
       setTimeout(() => setNormalizeResult(null), 6000)
       invalidate()
+      setRefreshCount(c => c + 1)
       await loadBets(betFilters)
     } catch (e) {
       setActionError(e.message || 'Failed — are you logged in?')
@@ -204,6 +214,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
       setDedupResult(res)
       setTimeout(() => setDedupResult(null), 5000)
       invalidate()
+      setRefreshCount(c => c + 1)
       await loadBets(betFilters)
     } catch (e) {
       setActionError(e.message || 'Failed — are you logged in?')
@@ -365,74 +376,81 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
             </div>
             {systemSummary.pending_bets > 0 && (
               <div className="flex flex-col items-center">
-                <span className="text-lg font-bold text-[var(--text-h)] tabular-nums">{systemSummary.pending_bets}</span>
+                <span className="text-lg font-bold text-amber-400 tabular-nums">{systemSummary.pending_bets}</span>
                 <span className="text-[var(--text)] opacity-60">Pending</span>
               </div>
             )}
+            {(() => {
+              const voidCount = systemSummary.total_bets - systemSummary.wins - systemSummary.losses - (systemSummary.pending_bets || 0)
+              return voidCount > 0 ? (
+                <div className="flex flex-col items-center">
+                  <span className="text-lg font-bold text-slate-400 tabular-nums">{voidCount}</span>
+                  <span className="text-[var(--text)] opacity-60">Void</span>
+                </div>
+              ) : null
+            })()}
           </div>
         </div>
       )}
 
-      {/* AI Advisory performance card */}
-      {(sourceFilter === 'advisory' || sourceFilter === '') && (() => {
-        const advisoryBets = bets.filter(isAdvisoryPick)
-        if (advisoryBets.length === 0) return null
-        return (
-          <div className="rounded-xl border border-blue-500/25 bg-blue-500/5 px-4 py-3 space-y-3">
-            <div className="flex items-center gap-2">
-              <Bot size={13} className="text-blue-400 shrink-0" />
-              <span className="text-xs font-semibold text-blue-300">AI Advisory Performance</span>
-              <span className="ml-auto text-xs text-[var(--text)] opacity-60">{advisoryBets.length} shadow picks</span>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              {ADVISORY_KEYS.map(key => {
-                const meta    = ADVISOR_META[key]
-                const picks   = advisoryBets.filter(b => b.source_rule_key === key)
-                const settled = picks.filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
-                const wins    = settled.filter(b => b.result_status === 'Won')
-                const pending = picks.filter(b => b.result_status === 'Pending').length
-                const hitRate = settled.length > 0 ? Math.round(wins.length / settled.length * 100) : null
-                // Yield: theoretical return per 1-unit flat stake across settled picks
-                const yieldPct = settled.length > 0
-                  ? Math.round(((wins.reduce((s, b) => s + (b.odds - 1), 0) - (settled.length - wins.length)) / settled.length) * 100)
-                  : null
-                const colorMap = { blue: 'text-blue-400 border-blue-500/30', violet: 'text-violet-400 border-violet-500/30', amber: 'text-amber-400 border-amber-500/30' }
-                const clr = colorMap[meta.color] || 'text-slate-400 border-slate-500/30'
-                return (
-                  <button
-                    key={key}
-                    onClick={() => { setSourceFilter('advisory'); setAdvisorFilter(advisorFilter === key ? '' : key) }}
-                    className={`rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-white/5 ${advisorFilter === key ? 'bg-white/8 ' + clr : 'border-[var(--border)]'}`}
-                  >
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <span className="text-base leading-none">{meta.emoji}</span>
-                      <span className={`text-xs font-semibold ${advisorFilter === key ? clr.split(' ')[0] : 'text-[var(--text-h)]'}`}>{meta.label}</span>
-                    </div>
-                    <div className="flex items-end gap-3 flex-wrap text-xs">
-                      <div className="flex flex-col">
-                        <span className={`text-lg font-bold tabular-nums ${hitRate === null ? 'text-[var(--text-h)]' : hitRate >= 55 ? 'text-green-400' : hitRate >= 45 ? 'text-amber-400' : 'text-red-400'}`}>
-                          {hitRate !== null ? `${hitRate}%` : '—'}
-                        </span>
-                        <span className="text-[var(--text)] opacity-60">Hit Rate</span>
-                      </div>
-                      <div className="flex flex-col">
-                        <span className={`text-lg font-bold tabular-nums ${yieldPct === null ? 'text-[var(--text-h)]' : yieldPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {yieldPct !== null ? `${yieldPct >= 0 ? '+' : ''}${yieldPct}%` : '—'}
-                        </span>
-                        <span className="text-[var(--text)] opacity-60">Yield</span>
-                      </div>
-                      <div className="flex flex-col ml-auto text-right">
-                        <span className="text-[var(--text-h)] font-semibold tabular-nums">{wins.length}W · {settled.length - wins.length}L{pending > 0 ? ` · ${pending}P` : ''}</span>
-                        <span className="text-[var(--text)] opacity-60">{picks.length} picks</span>
-                      </div>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
+      {/* AI Advisory performance card — always all-time, unaffected by the date filter */}
+      {(sourceFilter === 'advisory' || sourceFilter === '') && allAdvisoryBets.length > 0 && (
+        <div className="rounded-xl border border-blue-500/25 bg-blue-500/5 px-4 py-3 space-y-3">
+          <div className="flex items-center gap-2">
+            <Bot size={13} className="text-blue-400 shrink-0" />
+            <span className="text-xs font-semibold text-blue-300">AI Advisory Performance</span>
+            <span className="text-[10px] font-medium text-[var(--text)] opacity-50 bg-[var(--code-bg)] px-1.5 py-0.5 rounded">All-time</span>
+            <span className="ml-auto text-xs text-[var(--text)] opacity-60">{allAdvisoryBets.length} shadow picks</span>
           </div>
-        )
-      })()}
+          <div className="grid grid-cols-3 gap-3">
+            {ADVISORY_KEYS.map(key => {
+              const meta    = ADVISOR_META[key]
+              const picks   = allAdvisoryBets.filter(b => b.source_rule_key === key)
+              const settled = picks.filter(b => b.result_status === 'Won' || b.result_status === 'Lost')
+              const wins    = settled.filter(b => b.result_status === 'Won')
+              const pending = picks.filter(b => b.result_status === 'Pending').length
+              const hasEnough = settled.length >= 3
+              const hitRate = hasEnough ? Math.round(wins.length / settled.length * 100) : null
+              // ROI: theoretical flat-stake return across settled picks
+              const roi = hasEnough
+                ? Math.round(((wins.reduce((s, b) => s + (b.odds - 1), 0) - (settled.length - wins.length)) / settled.length) * 100)
+                : null
+              const colorMap = { blue: 'text-blue-400 border-blue-500/30', violet: 'text-violet-400 border-violet-500/30', amber: 'text-amber-400 border-amber-500/30' }
+              const clr = colorMap[meta.color] || 'text-slate-400 border-slate-500/30'
+              return (
+                <button
+                  key={key}
+                  onClick={() => { setSourceFilter('advisory'); setAdvisorFilter(advisorFilter === key ? '' : key) }}
+                  className={`rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-white/5 ${advisorFilter === key ? 'bg-white/8 ' + clr : 'border-[var(--border)]'}`}
+                >
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <span className="text-base leading-none">{meta.emoji}</span>
+                    <span className={`text-xs font-semibold ${advisorFilter === key ? clr.split(' ')[0] : 'text-[var(--text-h)]'}`}>{meta.label}</span>
+                  </div>
+                  <div className="flex items-end gap-3 flex-wrap text-xs">
+                    <div className="flex flex-col">
+                      <span className={`text-lg font-bold tabular-nums ${hitRate === null ? 'text-[var(--text-h)]' : hitRate >= 55 ? 'text-green-400' : hitRate >= 45 ? 'text-amber-400' : 'text-red-400'}`}>
+                        {hitRate !== null ? `${hitRate}%` : '—'}
+                      </span>
+                      <span className="text-[var(--text)] opacity-60">Hit Rate</span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className={`text-lg font-bold tabular-nums ${roi === null ? 'text-[var(--text-h)]' : roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {roi !== null ? `${roi >= 0 ? '+' : ''}${roi}%` : '—'}
+                      </span>
+                      <span className="text-[var(--text)] opacity-60">ROI</span>
+                    </div>
+                    <div className="flex flex-col ml-auto text-right">
+                      <span className="text-[var(--text-h)] font-semibold tabular-nums">{wins.length}W · {settled.length - wins.length}L{pending > 0 ? ` · ${pending}P` : ''}</span>
+                      <span className="text-[var(--text)] opacity-60">{picks.length} picks</span>
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Filter bar */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--code-bg)] px-4 py-3 space-y-3">
