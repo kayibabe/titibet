@@ -409,17 +409,32 @@ async def list_signals(
             )
         ]
 
-    # Women's league over-goals suppression.
-    # Models are calibrated on men's football; women's leagues have structurally
-    # lower scoring rates and weaker home advantage — systematic overestimation.
-    if WOMEN_OVER_SUPPRESSED_MARKETS:
-        rows = [
-            (sig, fix) for sig, fix in rows
-            if not (
-                sig.market in WOMEN_OVER_SUPPRESSED_MARKETS
-                and is_womens_fixture(fix.league, fix.home_team, fix.away_team)
-            )
-        ]
+    # ── Universal signal quality baseline (B-1 / B-2 / B-3) ─────────────────
+    # Every signal clears these three gates regardless of market.
+    # Per-market overrides (DUAL_HIGH_ODDS_CEILING, COPA_HO05_SUPPRESSED_LEAGUES,
+    # etc.) are applied afterward and are unaffected.
+    #
+    # B-1: Never serve Low-confidence signals — both engines are sub-threshold.
+    #      Low signals rank last anyway but still consume free-tier slots.
+    # B-2: Women's fixture suppression extended to all markets whose models are
+    #      calibrated on men's football (λ estimates, CS distributions).
+    #      Under 2.5 excluded intentionally: lower scoring in women's leagues
+    #      makes Under markets more reliable, not less.
+    # B-3: Drop contradicted signals — both engines point in opposite directions.
+    #      Ranking them lower is insufficient; there is no reliable directional edge.
+    _WOMEN_UNIVERSAL_MARKETS: frozenset = WOMEN_OVER_SUPPRESSED_MARKETS | frozenset({
+        "1X (Home or Draw)", "X2 (Draw or Away)", "12 (Home or Away)",
+        "Over 0.5 1H", "Home Win to Nil", "Away Win to Nil",
+    })
+    rows = [
+        (sig, fix) for sig, fix in rows
+        if sig.dual_confidence != "Low"                                  # B-1
+        and not sig.contradiction                                        # B-3
+        and not (                                                        # B-2
+            sig.market in _WOMEN_UNIVERSAL_MARKETS
+            and is_womens_fixture(fix.league, fix.home_team, fix.away_team)
+        )
+    ]
 
     # Data-poor Both+High Home Over 0.5 gate.
     # In these countries at Tier 3, both engines agree confidently but on
