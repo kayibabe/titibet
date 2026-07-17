@@ -97,13 +97,43 @@ ACCA_BUILDER: dict = {
 }
 
 # ── Advisor roster ───────────────────────────────────────────────────────────
-# 2026-07-11 audit: Scout (42.9% paper WR) and Skeptic (50% paper WR) retired.
-# Strategist (60% paper WR, most conservative) retained and converted to a small
-# real stake (STRATEGIST_REAL_STAKE) to generate a live performance signal over
-# the next 30 bets before deciding whether to restore the others.
+# 2026-07-11 audit: Scout and Skeptic retired (paper WR 42.9% / 50%).
+# 2026-07-17: Restored — paper sample was too small (5/8 picks) to justify
+# retirement; all three advisors run as paper-trade shadow picks going forward.
+# Strategist retains its real stake for live performance tracking.
 STRATEGIST_REAL_STAKE: float = 10_000.0
 
 ADVISORS: list[dict] = [
+    {
+        "id":    "scout",
+        "name":  "The Scout",
+        "role":  "Signal validation & match context",
+        "emoji": "🔭",
+        "models": {
+            "claude":   "claude-sonnet-5",
+            "gemini":   "gemini-2.0-flash",
+            "cerebras": "llama3.1-70b",
+            "groq":     "llama-3.3-70b-versatile",
+            "mistral":  "mistral-small-latest",
+        },
+        "system": (
+            "You are a football match analyst. "
+            "You receive a batch of model-generated betting signals alongside match context: "
+            "recent form, head-to-head records, goals scored/conceded, and team stats. "
+            "Your job is to validate each signal against the ACTUAL match evidence — "
+            "confirm when the numbers tell a coherent story, flag when they don't. "
+            "A strong signal is one where the model probability, the bookmaker odds, "
+            "and the contextual match data all point in the same direction. "
+            "Always respond with valid JSON only. No markdown, no prose outside the JSON."
+        ),
+        "task": (
+            "Review each signal against its match context. Return JSON with this exact shape:\n"
+            '{"verdict":"Strong"|"Mixed"|"Caution",'
+            '"top_picks":[{"home_team":"...","away_team":"...","market":"...","reason":"..."},...],'
+            '"warnings":["any match-context concern that weakens a signal",...],'
+            '"summary":"2-3 sentence paragraph on how well the match context supports today\'s signals"}'
+        ),
+    },
     {
         "id":    "strategist",
         "name":  "The Strategist",
@@ -132,6 +162,37 @@ ADVISORS: list[dict] = [
             '"top_picks":[{"home_team":"...","away_team":"...","market":"...","reason":"..."},...],'
             '"warnings":["correlation/concentration note",...],'
             '"summary":"2-3 sentence paragraph on the day\'s overall opportunity"}'
+        ),
+    },
+    {
+        "id":    "skeptic",
+        "name":  "The Skeptic",
+        "role":  "Contrarian risk & red-flag analysis",
+        "emoji": "🧐",
+        "models": {
+            "claude":   "claude-sonnet-5",
+            "gemini":   "gemini-2.0-flash",
+            "cerebras": "llama3.1-70b",
+            "groq":     "llama-3.3-70b-versatile",
+            "mistral":  "mistral-small-latest",
+        },
+        "system": (
+            "You are a contrarian football betting analyst — your job is to find reasons NOT to bet. "
+            "You receive the same signals as the other advisors, plus an extra section "
+            "highlighting market-vs-model divergences, thin bookmaker coverage, odds drift, "
+            "and engine contradictions. "
+            "Your role: interrogate each signal for hidden risks, market inefficiencies, "
+            "and model blind spots. Identify which picks the smart money is fading and why. "
+            "A signal that survives your scrutiny is genuinely worth considering; "
+            "one that doesn't should be removed from consideration entirely. "
+            "Always respond with valid JSON only. No markdown, no prose outside the JSON."
+        ),
+        "task": (
+            "Scrutinise each signal for risks and red flags. Return JSON with this exact shape:\n"
+            '{"verdict":"Strong"|"Mixed"|"Caution",'
+            '"top_picks":[{"home_team":"...","away_team":"...","market":"...","reason":"..."},...],'
+            '"warnings":["specific risk or red flag for a signal",...],'
+            '"summary":"2-3 sentence contrarian assessment of today\'s signal quality"}'
         ),
     },
 ]
@@ -1349,7 +1410,10 @@ async def get_advisor_insights(
 
     n_advisors = len(ADVISORS)
     all_advisor_coros = [
-        _call_advisor(adv, context, settings)
+        _call_advisor(
+            adv, context, settings,
+            extra_context=skeptic_extras if adv["id"] == "skeptic" else "",
+        )
         for adv in ADVISORS
     ]
     # Run advisor(s) + acca builder concurrently
