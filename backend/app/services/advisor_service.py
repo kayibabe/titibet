@@ -1320,39 +1320,34 @@ async def get_advisor_insights(
     def _primary_prob(sig: Signal) -> float:
         return max(sig.bayesian_prob or 0.0, sig.poisson_prob or 0.0)
 
-    # Acca pool tiers — all require Both engine agreement (no single-engine legs).
-    # 2026-07-11 audit: removed acca_t4 (Poisson-Only fallback) after loss review
-    # confirmed single-engine legs compound variance unacceptably in multi-leg tickets.
-    # If no Both-agreement pool reaches 3 legs, no acca is built for the day.
+    # Acca pool — High confidence + Both engines only.
+    # 2026-07-18 simulation audit: T2 (High+Both) delivered 66.7% ticket win rate;
+    # T3 (Medium+Both) and single-engine legs compound variance and lose money.
+    # No fallback to lower tiers — skip the day rather than build a weak ticket.
+    #
+    # Two sub-tiers select the pool but share the same High+Both requirement:
+    # T1: High+Both+prob≥0.72 (preferred — tightest quality, starts here)
+    # T2: High+Both, no prob floor (fallback if T1 < 3 legs)
+    # If T2 < 3 legs → no acca today.
 
-    # Tier 1: best — High+Both+prob≥0.72 (raised from 0.70: 2026-07-11 ACCA tightening)
     acca_t1 = [
         (sig, fix) for sig, fix in rows
         if sig.dual_confidence == "High"
         and sig.dual_agreement == "Both"
         and _primary_prob(sig) >= 0.72
     ]
-    # Tier 2: High+Both, no prob floor
     acca_t2 = [
         (sig, fix) for sig, fix in rows
         if sig.dual_confidence == "High"
         and sig.dual_agreement == "Both"
-    ]
-    # Tier 3: Both agreement at any confidence, prob≥0.60.
-    acca_t3 = [
-        (sig, fix) for sig, fix in rows
-        if sig.dual_agreement == "Both"
-        and _primary_prob(sig) >= 0.60
     ]
 
     if len(acca_t1) >= 3:
         acca_pool = acca_t1
     elif len(acca_t2) >= 3:
         acca_pool = acca_t2
-    elif len(acca_t3) >= 3:
-        acca_pool = acca_t3
     else:
-        acca_pool = []  # insufficient Both-agreement legs — no acca today
+        acca_pool = []  # insufficient High+Both legs — no acca today
 
     # ACCA ceiling: enforce DUAL_HIGH_ODDS_CEILING for ANY Both-agreement signal,
     # not just High+Both (which is what the main list endpoint gates).

@@ -31,7 +31,7 @@ _MIN_PROB = 0.68            # was 0.62 — global floor for all ACCA legs
 # The market's track record of 0-0 losses (especially Tier 2/3) means we need
 # the model to be meaningfully more confident before compounding the leg.
 _HO05_ACCA_MIN_PROB = 0.75  # was 0.70 — stricter gate since HO0.5 is most problematic
-_ALLOWED_CONFIDENCE = {"Medium", "High"}
+_ALLOWED_CONFIDENCE = {"High"}          # Medium legs lose money in ACCA context
 # For Both+High ACCA legs both engines must individually clear this floor.
 # Raised 0.73 → 0.76 so weak Both+High signals that borderline-qualify for singles
 # are excluded from ACCA legs where the compounding risk is higher.
@@ -151,9 +151,11 @@ async def build_acca_candidates(
     ev_threshold: float = _ACCA_LEG_MIN_EV,
 ) -> list[dict]:
     """
-    Return sorted ACCA candidate list for target_date, applying all
-    suppression gates.  Optionally exclude specific fixture IDs so that
-    subsequent calls on the same day produce non-overlapping leg sets.
+    Return sorted ACCA candidate list for target_date, restricted to
+    High-confidence Both-engine signals (T2 pool).  2026-07-18 simulation
+    audit confirmed T2 delivers 66.7% ticket win rate; Medium and
+    single-engine legs lose money in ACCA context.  Optionally exclude
+    specific fixture IDs so subsequent calls produce non-overlapping leg sets.
     """
     query = (
         select(Signal, Fixture)
@@ -161,6 +163,7 @@ async def build_acca_candidates(
         .where(Fixture.event_date == target_date)
         .where(Signal.is_candidate == False)  # noqa: E712
         .where(Signal.dual_confidence.in_(list(_ALLOWED_CONFIDENCE)))
+        .where(Signal.dual_agreement == "Both")  # T2-only: single-engine legs lose money
     )
 
     bad_leagues   = await _get_underperforming_leagues(db, min_roi_pct=60.0)
@@ -289,18 +292,6 @@ async def build_acca_candidates(
             sig.market == "Home Over 0.5"
             and any(kw in (fix.league or "").lower() for kw in COPA_HO05_SUPPRESSED_LEAGUES)
         )]
-
-    # B-4 gate (mirrors router + auto_tracker): Both+Medium has 55.6% WR / -8.7% ROI
-    # for singles. Per-leg errors compound in ACCA context — stricter gate required.
-    rows = [(sig, fix) for sig, fix in rows if not (
-        sig.dual_agreement == "Both" and sig.dual_confidence == "Medium"
-    )]
-
-    # Bayesian Only ACCA gate: exclude single-engine Bayesian-only signals.
-    # The Poisson goal model provides independent mathematical confirmation;
-    # without it the ACCA leg rests on bookmaker-consensus price alone.
-    # Per-leg errors compound — the bar for evidence is higher than for singles.
-    rows = [(sig, fix) for sig, fix in rows if sig.dual_agreement != "Bayesian Only"]
 
     # BOS gate for Over-goals ACCA legs: stable/defensive fixture (bos_passed=True)
     # contradicts an Over-goals pick. Compounding per-leg errors makes this
