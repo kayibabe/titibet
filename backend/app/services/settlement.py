@@ -5,7 +5,7 @@ Ported from TiTiBet settlement.py. Supports all active markets.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 from typing import Callable
 
 from sqlalchemy import select, or_
@@ -249,6 +249,34 @@ async def settle_bets_for_date(
 
     # Also settle any pending accumulator bets
     acca_info = await settle_acca_bets(db)
+
+    # Age-out sweep: only on the global catchup call (run_date=None).
+    # Void any Pending bets older than 7 days that never settled — these are
+    # orphaned (fixture vanished, API outage, league cancelled) and will never
+    # resolve; leaving them Pending forever skews P/L and performance stats.
+    if run_date is None:
+        stale_cutoff = date.today() - timedelta(days=7)
+        stale_q = select(TrackedBet).where(
+            TrackedBet.result_status == "Pending",
+            TrackedBet.event_date.isnot(None),
+            TrackedBet.event_date < stale_cutoff,
+        )
+        if user_id is not None:
+            stale_q = stale_q.where(TrackedBet.user_id == user_id)
+        stale_result = await db.execute(stale_q)
+        stale_bets = list(stale_result.scalars().all())
+        for stale_bet in stale_bets:
+            stale_bet.result_status = "Void"
+            stale_bet.profit_loss = 0.0
+            stale_bet.settled_at = datetime.now(timezone.utc)
+            voided += 1
+            logger.warning(
+                "settle: age-out void bet id=%s market=%r event_date=%s — >7 days, never settled",
+                stale_bet.id, stale_bet.market_type, stale_bet.event_date,
+            )
+        if stale_bets:
+            await db.commit()
+            logger.info("settle: age-out voided %d stale Pending bet(s) (>7 days old)", len(stale_bets))
 
     return {
         "settled":          settled + acca_info["acca_settled"],

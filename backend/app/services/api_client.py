@@ -347,7 +347,13 @@ async def fetch_markets(date_str: str) -> list[dict[str, Any]]:
 
     payloads = [first]
     for page in range(2, total_pages + 1):
-        payloads.append(await _get(f"/odds?date={date_str}&page={page}"))
+        try:
+            payloads.append(await _get(f"/odds?date={date_str}&page={page}"))
+        except Exception as exc:
+            logger.warning(
+                "fetch_markets: page %d/%d failed for %s: %s — continuing with partial results",
+                page, total_pages, date_str, exc,
+            )
 
     for payload in payloads:
         for entry in payload.get("response", []):
