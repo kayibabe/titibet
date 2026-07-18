@@ -4,6 +4,7 @@ import SignalsPage from './pages/SignalsPage'
 import DeepDivePage from './pages/DeepDivePage'
 import TrackerPage from './pages/TrackerPage'
 import AnalyticsPage from './pages/AnalyticsPage'
+import AdvisorPage from './pages/AdvisorPage'
 import ToolsPage from './pages/ToolsPage'
 import PricingPage from './pages/PricingPage'
 import AdminPage from './pages/AdminPage'
@@ -107,6 +108,8 @@ export default function App() {
         return <TrackerPage user={user} settings={settings} onUpgrade={goToPricing} />
       case 'analytics':
         return <AnalyticsPage onUpgrade={goToPricing} onApplySignalFilter={handleApplySignalFilter} onNavigate={setActivePage} settings={settings} />
+      case 'advisor':
+        return <AdvisorPage onUpgrade={goToPricing} />
       case 'tools':
         return <ToolsPage settings={settings} onUpgrade={goToPricing} onUpdate={update} />
       case 'account':

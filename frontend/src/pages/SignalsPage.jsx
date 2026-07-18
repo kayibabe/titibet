@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { RefreshCw, Download, Calendar, Sparkles, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Radio, Search, Heart, Bot, Clock } from 'lucide-react'
+import { RefreshCw, Download, Calendar, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Radio, Search, Heart, Bot, Clock } from 'lucide-react'
 import { useSignals } from '../store/useSignals'
 import { computeSignals, fetchSignals } from '../api/signals'
 import { syncData, fetchBets } from '../api/tracker'
@@ -7,9 +7,6 @@ import SignalCard from '../components/signals/SignalCard'
 import { marketColor } from '../utils/format'
 import TrackModal from '../components/tracker/TrackModal'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
-import AIAdvisorPanel from '../components/signals/AIAdvisorPanel'
-import AIChatPanel from '../components/signals/AIChatPanel'
-import UpgradePrompt from '../components/shared/UpgradePrompt'
 import useTier from '../hooks/useTier'
 import { useAuth } from '../context/AuthContext'
 import { useOnboarding } from '../hooks/useOnboarding'
@@ -109,11 +106,6 @@ function SortPill({ label, active, onClick }) {
     </button>
   )
 }
-
-const TABS = [
-  { id: 'signals',   label: 'Signals',     icon: TrendingUp },
-  { id: 'advisor',   label: 'AI Advisory', icon: Sparkles   },
-]
 
 // ── Fallback card for system bets whose signal isn't in the loaded list ────────
 // Mirrors SignalCard's visual structure using only TrackedBet fields.
@@ -250,7 +242,6 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
   })()
 
   const [date, setDate]             = useState(today)
-  const [activeTab, setActiveTab]   = useState('signals')
   const [confidence, setConfidence] = useState('')
   const [agreement, setAgreement]   = useState('')
   const [marketFamily, setMarketFamily] = useState('')
@@ -301,7 +292,6 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
     if (initialFilter.market)     setMarket(initialFilter.market)
     if (initialFilter.confidence) setConfidence(initialFilter.confidence)
     if (initialFilter.agreement)  setAgreement(initialFilter.agreement)
-    setActiveTab('signals')
     setAnalyticsFilter(initialFilter)
     onFilterConsumed?.()
   }, [initialFilter]) // eslint-disable-line
@@ -544,36 +534,8 @@ const reload = () => load(params)
         )}
       </div>
 
-      {/* ── Tab bar ───────────────────────────────────────────────────────── */}
-      <div className="flex gap-1 border-b border-[var(--border)]">
-        {TABS.map(({ id, label, icon: Icon }) => {
-          const locked = id === 'advisor' && !isPro
-          return (
-            <button
-              key={id}
-              onClick={() => locked ? onUpgrade?.() : setActiveTab(id)}
-              className={`
-                flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors
-                ${activeTab === id
-                  ? 'border-[var(--accent)] text-[var(--accent)]'
-                  : 'border-transparent text-[var(--text)] hover:text-[var(--text-h)]'
-                }
-              `}
-            >
-              <Icon size={13} />
-              {label}
-              {locked && (
-                <span className="text-[9px] font-bold text-blue-400 bg-blue-500/15 border border-blue-500/30 px-1 py-0.5 rounded tracking-wide leading-none">
-                  PRO
-                </span>
-              )}
-            </button>
-          )
-        })}
-      </div>
-
-      {/* ── SIGNALS TAB ───────────────────────────────────────────────────── */}
-      <div className={activeTab === 'signals' ? 'space-y-4' : 'hidden'}>
+      {/* ── SIGNALS ───────────────────────────────────────────────────────── */}
+      <div className="space-y-4">
 
         {/* ── System performance bar ────────────────────────────────────── */}
         {isToday && (systemStats || systemTrackedKeys.size > 0) && (() => {
@@ -1043,39 +1005,6 @@ const reload = () => load(params)
             </div>
           )
         })()}
-      </div>
-
-      {/* ── AI ADVISORY TAB ───────────────────────────────────────────────── */}
-      <div className={activeTab === 'advisor' ? '' : 'hidden'}>
-        {isPro ? (
-          <div className="space-y-6">
-            <AIAdvisorPanel
-              date={date}
-              tabMode
-              onFilterPick={(pick) => {
-                if (pick.market) setMarket(pick.market)
-                setActiveTab('signals')
-              }}
-            />
-
-            {/* Chat divider */}
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-px bg-[var(--border)]" />
-              <span className="text-[10px] font-bold text-[var(--text)] opacity-40 tracking-widest uppercase">Ask the AI</span>
-              <div className="flex-1 h-px bg-[var(--border)]" />
-            </div>
-
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-5">
-              <AIChatPanel />
-            </div>
-          </div>
-        ) : (
-          <UpgradePrompt
-            required="pro"
-            feature="The AI Advisory Council analyses each day's signals and delivers structured verdicts — Strong, Mixed, or Caution — for each market. Upgrade to Pro to unlock."
-            onUpgrade={onUpgrade}
-          />
-        )}
       </div>
 
       {/* ── Post-track success toast ──────────────────────────────────────── */}
