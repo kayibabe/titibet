@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Sparkles, AlertTriangle, CheckCircle, MinusCircle, Loader2, RefreshCw, ArrowRight,
-  Download, FileText, Printer, Ticket, Zap, Clock,
+  Download, FileText, Printer, Ticket, Zap, Clock, Bot,
 } from 'lucide-react'
-import { fetchAdvisorInsights, trackAcca } from '../../api/advisor'
+import { fetchAdvisorInsights, trackAcca, explainPicks } from '../../api/advisor'
 import { fetchSignals } from '../../api/signals'
 import { fetchBets } from '../../api/tracker'
 import ADVISORS_META from './advisorsMeta'
@@ -778,7 +778,7 @@ const _RESULT_CFG = {
   Pending: { cls: 'text-amber-400  bg-amber-500/10   border-amber-500/30',   label: 'Pending' },
 }
 
-function SystemTrackedTable({ systemBets, signals, advisors }) {
+function SystemTrackedTable({ systemBets, signals, advisors, explanations, explanationsLoading }) {
   if (!systemBets.length) return null
 
   // Build lookup from fixture_id:market → signal for probability data
@@ -882,60 +882,78 @@ function SystemTrackedTable({ systemBets, signals, advisors }) {
                 bet.result_status === 'Won'  ? 'bg-emerald-500/5 hover:bg-emerald-500/8' :
                 bet.result_status === 'Lost' ? 'bg-red-500/5    hover:bg-red-500/8'     :
                                                'hover:bg-[var(--code-bg)]'
+              const explanation = explanations?.[String(bet.id)]
               return (
-                <tr key={bet.id ?? i} className={`transition-colors ${rowBase}`}>
-                  <td className="px-3 py-2.5 min-w-[150px]">
-                    <div className="font-medium text-[var(--text-h)] leading-tight">
-                      {homeTeam} <span className="opacity-40 font-normal">vs</span> {awayTeam}
-                    </div>
-                    {bet.league && (
-                      <div className="opacity-45 text-[10px] mt-0.5 leading-tight">{bet.league}</div>
+                <>
+                  <tr key={bet.id ?? i} className={`transition-colors ${rowBase}`}>
+                    <td className="px-3 py-2.5 min-w-[150px]">
+                      <div className="font-medium text-[var(--text-h)] leading-tight">
+                        {homeTeam} <span className="opacity-40 font-normal">vs</span> {awayTeam}
+                      </div>
+                      {bet.league && (
+                        <div className="opacity-45 text-[10px] mt-0.5 leading-tight">{bet.league}</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <span className="font-semibold text-[var(--accent)]">{bet.market_type}</span>
+                    </td>
+                    <td className="px-2 py-2.5 text-center">
+                      {bet.dual_confidence ? (
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${confStyle(bet.dual_confidence)}`}>
+                          {bet.dual_confidence[0]}
+                        </span>
+                      ) : <span className="opacity-30">—</span>}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-bold tabular-nums">
+                      {primaryProb > 0 ? `${Math.round(primaryProb * 100)}%` : '—'}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono tabular-nums opacity-80">
+                      {bet.odds ? Number(bet.odds).toFixed(2) : '—'}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono font-bold tabular-nums">
+                      {score ?? <span className="opacity-30">—</span>}
+                    </td>
+                    <td className="px-2 py-2.5 text-center">
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${result.cls}`}>
+                        {result.label}
+                      </span>
+                    </td>
+                    {advisorStatus.map(adv => (
+                      <td key={adv.id} className="px-2 py-2.5 text-center hidden sm:table-cell">
+                        {adv.picked
+                          ? <CheckCircle size={13} className="mx-auto text-emerald-400" />
+                          : <span className="opacity-20 text-[10px]">—</span>
+                        }
+                      </td>
+                    ))}
+                    {advisorStatus.length > 0 && (
+                      <td className="px-2 py-2.5 text-center sm:hidden">
+                        <span className={`font-bold text-[11px] ${
+                          pickCount === advisorStatus.length ? 'text-emerald-400' :
+                          pickCount >= 2                    ? 'text-amber-400'   :
+                          pickCount === 1                   ? 'text-[var(--text)]' : 'opacity-25'
+                        }`}>
+                          {pickCount}/{advisorStatus.length}
+                        </span>
+                      </td>
                     )}
-                  </td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">
-                    <span className="font-semibold text-[var(--accent)]">{bet.market_type}</span>
-                  </td>
-                  <td className="px-2 py-2.5 text-center">
-                    {bet.dual_confidence ? (
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${confStyle(bet.dual_confidence)}`}>
-                        {bet.dual_confidence[0]}
-                      </span>
-                    ) : <span className="opacity-30">—</span>}
-                  </td>
-                  <td className="px-2 py-2.5 text-center font-bold tabular-nums">
-                    {primaryProb > 0 ? `${Math.round(primaryProb * 100)}%` : '—'}
-                  </td>
-                  <td className="px-2 py-2.5 text-center font-mono tabular-nums opacity-80">
-                    {bet.odds ? Number(bet.odds).toFixed(2) : '—'}
-                  </td>
-                  <td className="px-2 py-2.5 text-center font-mono font-bold tabular-nums">
-                    {score ?? <span className="opacity-30">—</span>}
-                  </td>
-                  <td className="px-2 py-2.5 text-center">
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${result.cls}`}>
-                      {result.label}
-                    </span>
-                  </td>
-                  {advisorStatus.map(adv => (
-                    <td key={adv.id} className="px-2 py-2.5 text-center hidden sm:table-cell">
-                      {adv.picked
-                        ? <CheckCircle size={13} className="mx-auto text-emerald-400" />
-                        : <span className="opacity-20 text-[10px]">—</span>
-                      }
-                    </td>
-                  ))}
-                  {advisorStatus.length > 0 && (
-                    <td className="px-2 py-2.5 text-center sm:hidden">
-                      <span className={`font-bold text-[11px] ${
-                        pickCount === advisorStatus.length ? 'text-emerald-400' :
-                        pickCount >= 2                    ? 'text-amber-400'   :
-                        pickCount === 1                   ? 'text-[var(--text)]' : 'opacity-25'
-                      }`}>
-                        {pickCount}/{advisorStatus.length}
-                      </span>
-                    </td>
+                  </tr>
+                  {/* AI explanation row */}
+                  {(explanation || explanationsLoading) && (
+                    <tr key={`${bet.id ?? i}-explain`} className={`border-t-0 ${rowBase}`}>
+                      <td colSpan={100} className="px-3 pb-3 pt-0">
+                        <div className="flex items-start gap-2 rounded-lg bg-[var(--accent)]/5 border border-[var(--accent)]/20 px-3 py-2.5 mt-1">
+                          <Bot size={13} className="text-[var(--accent)] shrink-0 mt-0.5" />
+                          {explanation ? (
+                            <p className="text-[11px] leading-relaxed text-[var(--text)] opacity-90">{explanation}</p>
+                          ) : (
+                            <p className="text-[11px] text-[var(--text)] opacity-40 animate-pulse">Generating analysis…</p>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
                   )}
-                </tr>
+                </>
               )
             })}
           </tbody>
@@ -961,6 +979,8 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
   const [open,     setOpen]     = useState(false)
   const [signals,    setSignals]    = useState([])
   const [systemBets, setSystemBets] = useState([])
+  const [explanations,        setExplanations]        = useState({})
+  const [explanationsLoading, setExplanationsLoading] = useState(false)
 
   // In tab mode auto-run when the panel mounts or the date changes
   useEffect(() => {
@@ -977,9 +997,10 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
 
     setLoading(true)
     setError(null)
+    setExplanations({})
     try {
       const _SYS_KEYS = new Set(['system_auto', 'system_dual'])
-    const [result, signalData, betData] = await Promise.all([
+      const [result, signalData, betData] = await Promise.all([
         fetchAdvisorInsights(date, { force }),
         fetchSignals({ date, best_per_fixture: false }).catch(() => []),
         fetchBets({ date_from: date, date_to: date }).catch(() => []),
@@ -988,8 +1009,33 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
       const sigs = Array.isArray(signalData) ? signalData : (signalData?.signals ?? [])
       setSignals(sigs)
       const bets = Array.isArray(betData) ? betData : []
-      setSystemBets(bets.filter(b => _SYS_KEYS.has(b.source_rule_key)))
+      const sysBets = bets.filter(b => _SYS_KEYS.has(b.source_rule_key))
+      setSystemBets(sysBets)
       setLastDate(date)
+
+      // Fire explain-picks in background — one LLM call for all picks
+      if (sysBets.length > 0) {
+        setExplanationsLoading(true)
+        const sigMap = new Map()
+        for (const sig of sigs) sigMap.set(`${sig.fixture_id}:${sig.market}`, sig)
+        explainPicks(sysBets.map(bet => {
+          const sig  = sigMap.get(`${bet.fixture_id}:${bet.market_type}`)
+          const prob = sig ? Math.max(sig.bayesian?.prob ?? 0, sig.poisson?.prob ?? 0) : 0
+          return {
+            key:    String(bet.id),
+            match:  bet.match_name,
+            market: bet.market_type,
+            prob:   prob > 0 ? `${Math.round(prob * 100)}%` : null,
+            odds:   bet.odds ? Number(bet.odds).toFixed(2) : null,
+            result: bet.result_status,
+            score:  bet.home_score != null && bet.away_score != null
+                      ? `${bet.home_score}-${bet.away_score}` : null,
+          }
+        }))
+          .then(d => setExplanations(d.explanations || {}))
+          .catch(() => {})
+          .finally(() => setExplanationsLoading(false))
+      }
     } catch (e) {
       setError(e.message)
     } finally {
@@ -1068,7 +1114,13 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
               <span className="text-[10px] font-bold text-[var(--text)] opacity-50 tracking-widest uppercase">System Auto-Tracked</span>
               <div className="flex-1 h-px bg-[var(--border)]" />
             </div>
-            <SystemTrackedTable systemBets={systemBets} signals={signals} advisors={data?.advisors} />
+            <SystemTrackedTable
+              systemBets={systemBets}
+              signals={signals}
+              advisors={data?.advisors}
+              explanations={explanations}
+              explanationsLoading={explanationsLoading}
+            />
           </>
         )}
 

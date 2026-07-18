@@ -30,6 +30,16 @@ export async function chatWithAdvisor(question, history = []) {
   return res.json()
 }
 
+export async function explainPicks(bets) {
+  const res = await apiFetch('/api/advisor/explain-picks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bets }),
+  })
+  if (!res.ok) await throwApiError(res, 'Explain picks failed')
+  return res.json()
+}
+
 export async function trackAcca(date, expectedOdds) {
   const params = new URLSearchParams()
   if (date) params.set('date', date)

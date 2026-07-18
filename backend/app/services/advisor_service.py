@@ -1988,3 +1988,59 @@ async def chat_with_advisor(
             continue
 
     return "All AI providers are currently at quota. Please try again shortly."
+
+
+async def explain_system_picks(bets: list[dict], settings) -> dict:
+    """
+    Single LLM call that generates a short 2-sentence analysis for each
+    system-tracked bet. Returns {"explanations": {"<key>": "text", ...}}.
+    """
+    if not bets:
+        return {"explanations": {}}
+
+    lines = []
+    for i, bet in enumerate(bets[:20], 1):
+        key    = str(bet.get("key", i))
+        match  = bet.get("match", "Unknown match")
+        market = bet.get("market", "Unknown market")
+        prob   = bet.get("prob")
+        odds   = bet.get("odds")
+        result = bet.get("result", "Pending")
+        score  = bet.get("score")
+
+        parts = [f"[{key}] {match} · {market}"]
+        if prob:  parts.append(f"prob {prob}")
+        if odds:  parts.append(f"odds {odds}")
+        parts.append(f"result: {result}")
+        if score: parts.append(f"score {score}")
+        lines.append("  " + " · ".join(parts))
+
+    bets_text = "\n".join(lines)
+    full_prompt = (
+        "You are TiTiBet's AI football betting assistant. "
+        "For EACH bet below write exactly 2 sentences: "
+        "(1) what the Bayesian and Poisson model signals indicate about this pick, "
+        "(2) a brief note on the outcome when Won or Lost is shown.\n\n"
+        "Return ONLY valid JSON — no markdown, no prose outside the JSON:\n"
+        '{"explanations":{"KEY":"2-sentence explanation",...}}\n\n'
+        f"Bets:\n{bets_text}"
+    )
+
+    pseudo = {
+        "id":     "explainer",
+        "system": "You are TiTiBet's AI betting analyst. Return only valid JSON with no markdown.",
+        "task":   full_prompt,
+        "models": {
+            "claude":   "claude-haiku-4-5-20251001",
+            "gemini":   "gemini-2.0-flash",
+            "cerebras": "llama3.1-70b",
+            "groq":     "llama-3.3-70b-versatile",
+            "mistral":  "mistral-small-latest",
+        },
+    }
+
+    _, result = await _call_advisor(pseudo, "", settings)
+    if isinstance(result, dict) and not result.get("error"):
+        raw = result.get("explanations", {})
+        return {"explanations": {str(k): str(v) for k, v in raw.items() if isinstance(v, str)}}
+    return {"explanations": {}}

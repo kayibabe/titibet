@@ -12,12 +12,16 @@ from app.core.auth import get_current_user_optional
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.user import User
-from app.services.advisor_service import get_advisor_insights, track_acca_for_user, chat_with_advisor
+from app.services.advisor_service import get_advisor_insights, track_acca_for_user, chat_with_advisor, explain_system_picks
 
 
 class _ChatRequest(_BM):
     question: str
     history: list[dict] = []
+
+
+class _ExplainPicksRequest(_BM):
+    bets: list[dict] = []
 
 router = APIRouter(prefix="/api/advisor", tags=["advisor"])
 
@@ -136,3 +140,19 @@ async def advisor_chat(
     settings = get_settings()
     answer = await chat_with_advisor(body.question.strip(), body.history[-20:], settings)
     return {"answer": answer, "role": "assistant"}
+
+
+@router.post("/explain-picks")
+async def explain_picks(
+    body: _ExplainPicksRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """
+    Batch-explain all system-tracked picks for a day in a single LLM call.
+    Returns {"explanations": {"<bet_id>": "2-sentence analysis", ...}}.
+    """
+    _require_pro(current_user)
+    if not body.bets:
+        return {"explanations": {}}
+    settings = get_settings()
+    return await explain_system_picks(body.bets, settings)
