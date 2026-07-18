@@ -40,7 +40,7 @@ from app.core.config import (
     is_womens_fixture,
 )
 from app.services.acca_builder import (
-    build_acca_candidates, build_accumulator, _ACCA_WIN_PROB_FLOOR,
+    build_acca_candidates, build_accumulator, _ACCA_WIN_PROB_FLOOR, _ACCA_LEG_MIN_EV,
 )
 
 logger = logging.getLogger("titibet.auto_tracker")
@@ -322,7 +322,12 @@ _ACCA_TARGET_TIERS = [4.0, 3.5, 3.0]
 _ACCA_MIN_CANDIDATES = 2
 
 
-async def auto_track_acca_signals(db: AsyncSession, run_date: date) -> int:
+async def auto_track_acca_signals(
+    db: AsyncSession,
+    run_date: date,
+    *,
+    ev_threshold: float = _ACCA_LEG_MIN_EV,
+) -> int:
     """
     Build and record a new system ACCA ticket from qualifying signal candidates,
     ensuring no fixture leg appears in any previously auto-tracked system_acca
@@ -401,7 +406,11 @@ async def auto_track_acca_signals(db: AsyncSession, run_date: date) -> int:
             pass
 
     # Build candidate pool excluding already-used fixtures.
-    candidates = await build_acca_candidates(db, run_date, exclude_fixture_ids=used_fixture_ids)
+    candidates = await build_acca_candidates(
+        db, run_date,
+        exclude_fixture_ids=used_fixture_ids,
+        ev_threshold=ev_threshold,
+    )
 
     if len(candidates) < _ACCA_MIN_CANDIDATES:
         logger.info(

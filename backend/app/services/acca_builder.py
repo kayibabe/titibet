@@ -148,6 +148,7 @@ async def build_acca_candidates(
     target_date: date,
     *,
     exclude_fixture_ids: set[int] | None = None,
+    ev_threshold: float = _ACCA_LEG_MIN_EV,
 ) -> list[dict]:
     """
     Return sorted ACCA candidate list for target_date, applying all
@@ -238,7 +239,7 @@ async def build_acca_candidates(
             odd = 1.0 / prob if prob > 0 else 1.0
         return prob * odd - 1.0
 
-    rows = [(sig, fix) for sig, fix in rows if _leg_ev(sig) >= _ACCA_LEG_MIN_EV]
+    rows = [(sig, fix) for sig, fix in rows if _leg_ev(sig) >= ev_threshold]
 
     # Both+High ACCA gate: both engines must individually clear the same floor
     # applied by auto_tracker for singles. A Both+High signal at 0.65 primary_prob
