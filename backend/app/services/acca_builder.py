@@ -210,6 +210,12 @@ async def build_acca_candidates(
             and any(kw in (fix.league or "").lower() for kw in COPA_HO05_SUPPRESSED_LEAGUES)
         )]
 
+    # B-4 gate (mirrors router + auto_tracker): Both+Medium has 55.6% WR / -8.7% ROI
+    # for singles. Per-leg errors compound in ACCA context — stricter gate required.
+    rows = [(sig, fix) for sig, fix in rows if not (
+        sig.dual_agreement == "Both" and sig.dual_confidence == "Medium"
+    )]
+
     # Bayesian Only ACCA gate: exclude single-engine Bayesian-only signals.
     # The Poisson goal model provides independent mathematical confirmation;
     # without it the ACCA leg rests on bookmaker-consensus price alone.
