@@ -4,6 +4,7 @@ import {
   Download, FileText, Printer, Ticket, Zap, Clock,
 } from 'lucide-react'
 import { fetchAdvisorInsights, trackAcca } from '../../api/advisor'
+import { fetchSignals } from '../../api/signals'
 import ADVISORS_META from './advisorsMeta'
 
 // ── Report export helpers ─────────────────────────────────────────────────────
@@ -662,6 +663,112 @@ function NotConfigured({ message }) {
   )
 }
 
+// ── Signal summary table ──────────────────────────────────────────────────────
+const _norm = s => (s || '').toLowerCase().trim()
+
+function SignalSummaryTable({ signals, advisors }) {
+  if (!signals.length || !advisors?.length) return null
+
+  const confStyle = c =>
+    c === 'High'   ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' :
+    c === 'Medium' ? 'text-amber-400   bg-amber-500/10   border-amber-500/30'   :
+                     'text-rose-400    bg-rose-500/10    border-rose-500/30'
+
+  const rows = signals.map(sig => {
+    const advisorStatus = advisors.map(adv => ({
+      id:     adv.id,
+      emoji:  adv.emoji,
+      name:   adv.name,
+      picked: (adv.result?.top_picks || []).some(p =>
+        _norm(p.home_team) === _norm(sig.home_team) &&
+        _norm(p.away_team) === _norm(sig.away_team) &&
+        _norm(p.market)    === _norm(sig.market)
+      ),
+    }))
+    const pickCount  = advisorStatus.filter(a => a.picked).length
+    const primaryProb = Math.max(sig.bayesian?.prob ?? 0, sig.poisson?.prob ?? 0)
+    const odds        = sig.bayesian?.best_odd ?? sig.bayesian_best_odd
+    const ko = sig.kickoff_at
+      ? new Date(sig.kickoff_at.endsWith('Z') || sig.kickoff_at.includes('+') ? sig.kickoff_at : sig.kickoff_at + 'Z')
+          .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : null
+    return { sig, advisorStatus, pickCount, primaryProb, odds, ko }
+  })
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
+      <table className="w-full text-xs text-[var(--text)] border-collapse">
+        <thead>
+          <tr className="border-b border-[var(--border)] bg-[var(--code-bg)]">
+            <th className="px-3 py-2.5 text-left font-semibold text-[var(--text-h)] whitespace-nowrap">Match</th>
+            <th className="px-3 py-2.5 text-left font-semibold text-[var(--text-h)] whitespace-nowrap">Market</th>
+            <th className="px-2 py-2.5 text-center font-semibold text-[var(--text-h)]">Conf</th>
+            <th className="px-2 py-2.5 text-center font-semibold text-[var(--text-h)]">Prob</th>
+            <th className="px-2 py-2.5 text-center font-semibold text-[var(--text-h)]">Odds</th>
+            {advisors.map(adv => (
+              <th key={adv.id} className="px-2 py-2.5 text-center hidden sm:table-cell" title={adv.name}>
+                {adv.emoji}
+              </th>
+            ))}
+            <th className="px-2 py-2.5 text-center font-semibold text-[var(--text-h)] sm:hidden">AI</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--border)]">
+          {rows.map(({ sig, advisorStatus, pickCount, primaryProb, odds, ko }, i) => {
+            const rowCls =
+              pickCount === advisors.length ? 'bg-emerald-500/5 hover:bg-emerald-500/8' :
+              pickCount >= 2               ? 'bg-amber-500/3  hover:bg-amber-500/6'    :
+                                             'hover:bg-[var(--code-bg)]'
+            return (
+              <tr key={sig.id ?? i} className={`transition-colors ${rowCls}`}>
+                <td className="px-3 py-2.5 min-w-[150px]">
+                  <div className="font-medium text-[var(--text-h)] leading-tight">
+                    {sig.home_team} <span className="opacity-40 font-normal">vs</span> {sig.away_team}
+                  </div>
+                  <div className="opacity-45 text-[10px] mt-0.5 leading-tight">
+                    {sig.league}{ko ? ` · ${ko}` : ''}
+                  </div>
+                </td>
+                <td className="px-3 py-2.5 whitespace-nowrap">
+                  <span className="font-semibold text-[var(--accent)]">{sig.market}</span>
+                </td>
+                <td className="px-2 py-2.5 text-center">
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${confStyle(sig.dual_confidence)}`}>
+                    {sig.dual_confidence?.[0] ?? '?'}
+                  </span>
+                </td>
+                <td className="px-2 py-2.5 text-center font-bold tabular-nums">
+                  {primaryProb > 0 ? `${Math.round(primaryProb * 100)}%` : '—'}
+                </td>
+                <td className="px-2 py-2.5 text-center font-mono tabular-nums opacity-80">
+                  {odds ? Number(odds).toFixed(2) : '—'}
+                </td>
+                {advisorStatus.map(adv => (
+                  <td key={adv.id} className="px-2 py-2.5 text-center hidden sm:table-cell">
+                    {adv.picked
+                      ? <CheckCircle size={13} className="mx-auto text-emerald-400" />
+                      : <span className="opacity-20 text-[10px]">—</span>
+                    }
+                  </td>
+                ))}
+                <td className="px-2 py-2.5 text-center sm:hidden">
+                  <span className={`font-bold text-[11px] ${
+                    pickCount === advisors.length ? 'text-emerald-400' :
+                    pickCount >= 2               ? 'text-amber-400'   :
+                    pickCount === 1              ? 'text-[var(--text)]' : 'opacity-25'
+                  }`}>
+                    {pickCount}/{advisors.length}
+                  </span>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 /**
  * AIAdvisorPanel
@@ -676,6 +783,7 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
   const [lastDate, setLastDate] = useState(null)
   // Must be declared unconditionally — only used in panel mode
   const [open,     setOpen]     = useState(false)
+  const [signals,  setSignals]  = useState([])
 
   // In tab mode auto-run when the panel mounts or the date changes
   useEffect(() => {
@@ -693,8 +801,13 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
     setLoading(true)
     setError(null)
     try {
-      const result = await fetchAdvisorInsights(date, { force })
+      const [result, signalData] = await Promise.all([
+        fetchAdvisorInsights(date, { force }),
+        fetchSignals({ date, best_per_fixture: false }).catch(() => []),
+      ])
       setData(result)
+      const sigs = Array.isArray(signalData) ? signalData : (signalData?.signals ?? [])
+      setSignals(sigs)
       setLastDate(date)
     } catch (e) {
       setError(e.message)
@@ -753,6 +866,18 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
             <AccaTicket key={i} acca={t} date={date} index={i} total={tickets.length} />
           ))
         })()}
+
+        {/* Signal overview table — shown once both signals and advisor data are loaded */}
+        {!loading && signals.length > 0 && data?.advisors?.length > 0 && (
+          <>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-[var(--border)]" />
+              <span className="text-[10px] font-bold text-[var(--text)] opacity-50 tracking-widest uppercase">Signal Overview</span>
+              <div className="flex-1 h-px bg-[var(--border)]" />
+            </div>
+            <SignalSummaryTable signals={signals} advisors={data.advisors} />
+          </>
+        )}
 
         {(loading || data?.advisors?.length > 0) && (
           <>
