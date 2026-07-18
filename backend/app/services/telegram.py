@@ -28,6 +28,8 @@ import httpx
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import json as _json
+
 from app.core.config import (
     get_settings,
     DISABLED_MARKETS,
@@ -36,6 +38,7 @@ from app.core.config import (
     DUAL_HIGH_ODDS_CEILING,
 )
 from app.models import Signal, Fixture
+from app.models.bet import TrackedBet
 from app.services.signal_engine import _get_underperforming_leagues
 
 logger   = logging.getLogger("titibet.telegram")
@@ -418,6 +421,87 @@ async def _query_all_rows(db: AsyncSession, run_date: date) -> list[tuple[Signal
     return rows
 
 
+async def _query_tracked_singles(
+    db: AsyncSession, run_date: date
+) -> list[tuple[Signal, Fixture]]:
+    """
+    Return Signal+Fixture pairs for system-auto-tracked singles on run_date.
+    Reads from TrackedBet (source_rule_key in system_auto/system_dual) so the
+    Telegram digest shows exactly the same picks the Tracker page shows.
+    """
+    tracked = list((await db.execute(
+        select(TrackedBet.fixture_id, TrackedBet.market_type)
+        .where(
+            TrackedBet.event_date == run_date,
+            TrackedBet.user_id.is_(None),
+            TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+            TrackedBet.fixture_id.isnot(None),
+        )
+    )).all())
+
+    if not tracked:
+        return []
+
+    fixture_market: dict[int, set[str]] = {}
+    for r in tracked:
+        fixture_market.setdefault(r.fixture_id, set()).add(r.market_type)
+
+    rows = list((await db.execute(
+        select(Signal, Fixture)
+        .join(Fixture, Signal.fixture_id == Fixture.id)
+        .where(
+            Signal.fixture_id.in_(list(fixture_market)),
+            Signal.is_candidate == False,  # noqa: E712
+        )
+    )).all())
+
+    # Keep only (fixture_id, market) pairs that were actually tracked; deduplicate.
+    result: dict[tuple[int, str], tuple[Signal, Fixture]] = {}
+    for sig, fix in rows:
+        if sig.market in fixture_market.get(sig.fixture_id, set()):
+            key = (sig.fixture_id, sig.market)
+            if key not in result:
+                result[key] = (sig, fix)
+
+    return list(result.values())
+
+
+async def _query_tracked_acca(db: AsyncSession, run_date: date) -> dict | None:
+    """
+    Return the primary system ACCA ticket for run_date from TrackedBet, or None.
+    Picks the ticket with the highest combined odds as the headline acca.
+    Both the advisor-path (auto_track_acca_legs) and signal-model fallback
+    (auto_track_acca_signals) write source_rule_key='system_acca', so this
+    always matches what the Tracker page shows.
+    """
+    rows = list((await db.execute(
+        select(TrackedBet)
+        .where(
+            TrackedBet.event_date == run_date,
+            TrackedBet.user_id.is_(None),
+            TrackedBet.source_rule_key == "system_acca",
+        )
+        .order_by(TrackedBet.id)
+    )).scalars().all())
+
+    if not rows:
+        return None
+
+    # Show the ticket with the highest combined odds as the headline.
+    best = max(rows, key=lambda t: t.odds or 0.0)
+    try:
+        data = _json.loads(best.notes or "{}")
+        legs = data.get("legs", [])
+        if not legs:
+            return None
+        return {
+            "legs":          legs,
+            "combined_odds": f"{best.odds:.2f}" if best.odds else "?",
+        }
+    except Exception:
+        return None
+
+
 def _configured_titibet_channels() -> list[tuple[str, str]]:
     """Return (chat_id, channel_type) pairs for the two named TiTiBet channels."""
     channels: list[tuple[str, str]] = []
@@ -781,21 +865,16 @@ async def push_tomorrow_digest(db: AsyncSession, run_date: date | None = None) -
 
     run_date = run_date or (date.today() + timedelta(days=1))
 
-    rows = await _query_all_rows(db, run_date)
-    deduped = _best_per_fixture(rows)
-    if not deduped:
-        logger.info("Tomorrow digest: no signals for %s — nothing to send", run_date)
+    tracked = await _query_tracked_singles(db, run_date)
+    if not tracked:
+        logger.info("Tomorrow digest: no tracked system picks for %s — nothing to send", run_date)
         return 0
 
-    chronological = sorted(deduped, key=lambda r: _ko_aware(r[1].kickoff_at) or datetime.max.replace(tzinfo=timezone.utc))
+    chronological = sorted(tracked, key=lambda r: _ko_aware(r[1].kickoff_at) or datetime.max.replace(tzinfo=timezone.utc))
 
-    acca = None
-    try:
-        from app.services.advisor_service import get_advisor_insights
-        insights = await get_advisor_insights(db, run_date, current_user=None, force=False)
-        acca = insights.get("accumulator")
-    except Exception:
-        logger.exception("Tomorrow digest: failed to fetch AI Advisory acca — sending singles only")
+    acca = await _query_tracked_acca(db, run_date)
+    if acca is None:
+        logger.info("Tomorrow digest: no system_acca ticket for %s — sending singles only", run_date)
 
     reveal_fixture_ids = _pick_reveal_fixture_ids(chronological, FREE_REVEAL_COUNT)
 
@@ -822,7 +901,7 @@ async def push_tomorrow_digest(db: AsyncSession, run_date: date | None = None) -
     if sent:
         logger.info(
             "Tomorrow digest sent to %d channel(s) — %d single(s), acca=%s",
-            sent, len(deduped), "yes" if acca and acca.get("legs") else "no",
+            sent, len(tracked), "yes" if acca and acca.get("legs") else "no",
         )
     return sent
 
@@ -1116,22 +1195,17 @@ async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_RE
     today = date.today()
     now = datetime.now(tz=timezone.utc)
 
-    rows = await _query_all_rows(db, today)
-    deduped = _best_per_fixture(rows)
-    if not deduped:
-        logger.info("Morning digest: no signals for %s — skipping", today)
+    tracked = await _query_tracked_singles(db, today)
+    if not tracked:
+        logger.info("Morning digest: no tracked system picks for %s — skipping", today)
         return 0
 
-    by_rank = sorted(deduped, key=lambda r: _system_rank(r[0], r[1]), reverse=True)
+    by_rank = sorted(tracked, key=lambda r: _system_rank(r[0], r[1]), reverse=True)
     reveal_fixture_ids = _pick_reveal_fixture_ids(by_rank, free_reveal_count)
 
-    acca = None
-    try:
-        from app.services.advisor_service import get_advisor_insights
-        insights = await get_advisor_insights(db, today, current_user=None, force=False)
-        acca = insights.get("accumulator")
-    except Exception:
-        logger.exception("Morning digest: failed to fetch AI Advisory acca — sending singles only")
+    acca = await _query_tracked_acca(db, today)
+    if acca is None:
+        logger.info("Morning digest: no system_acca ticket for %s — sending singles only", today)
 
     # Was last night's evening digest already sent for today's date?
     # (Evening digest logs push_type="tomorrow" for the next-day date, which is today.)
@@ -1175,7 +1249,7 @@ async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_RE
 
     mode = "confirmation" if evening_sent else "digest"
     if sent:
-        logger.info("Morning %s sent to %d channel(s) — %d picks for %s", mode, sent, len(deduped), today)
+        logger.info("Morning %s sent to %d channel(s) — %d picks for %s", mode, sent, len(tracked), today)
     return sent
 
 
