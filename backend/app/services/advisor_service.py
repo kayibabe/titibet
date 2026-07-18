@@ -2018,11 +2018,14 @@ async def explain_system_picks(bets: list[dict], settings) -> dict:
     bets_text = "\n".join(lines)
     full_prompt = (
         "You are TiTiBet's AI football betting assistant. "
-        "For EACH bet below write exactly 2 sentences: "
-        "(1) what the Bayesian and Poisson model signals indicate about this pick, "
-        "(2) a brief note on the outcome when Won or Lost is shown.\n\n"
-        "Return ONLY valid JSON — no markdown, no prose outside the JSON:\n"
-        '{"explanations":{"KEY":"2-sentence explanation",...}}\n\n'
+        "For EACH bet below write a 3-4 sentence PRE-MATCH predictive analysis. "
+        "Cover: (1) what the Bayesian and Poisson model signals indicate and why this market was selected, "
+        "(2) any relevant team form, head-to-head, or tactical factors you know about these teams, "
+        "(3) a clear recommendation (use **bold** for the pick name). "
+        "Write in present/predictive tense — treat every pick as upcoming. "
+        "For bets already Won or Lost, briefly mention the outcome at the end. "
+        "Return ONLY valid JSON — no markdown fences, no prose outside the JSON object:\n"
+        '{"explanations":{"KEY":"analysis text",...}}\n\n'
         f"Bets:\n{bets_text}"
     )
 

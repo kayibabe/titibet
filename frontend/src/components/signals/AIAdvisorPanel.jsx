@@ -943,9 +943,15 @@ function SystemTrackedTable({ systemBets, signals, advisors, explanations, expla
                     <tr key={`${bet.id ?? i}-explain`} className={`border-t-0 ${rowBase}`}>
                       <td colSpan={100} className="px-3 pb-3 pt-0">
                         <div className="flex items-start gap-2 rounded-lg bg-[var(--accent)]/5 border border-[var(--accent)]/20 px-3 py-2.5 mt-1">
-                          <Bot size={13} className="text-[var(--accent)] shrink-0 mt-0.5" />
+                          <Bot size={13} className="text-[var(--accent)] shrink-0 mt-1" />
                           {explanation ? (
-                            <p className="text-[11px] leading-relaxed text-[var(--text)] opacity-90">{explanation}</p>
+                            <p className="text-[11px] leading-relaxed text-[var(--text)] opacity-90">
+                              {explanation.split(/(\*\*[^*]+\*\*)/).map((part, j) =>
+                                part.startsWith('**') && part.endsWith('**')
+                                  ? <strong key={j} className="text-[var(--text-h)]">{part.slice(2, -2)}</strong>
+                                  : part
+                              )}
+                            </p>
                           ) : (
                             <p className="text-[11px] text-[var(--text)] opacity-40 animate-pulse">Generating analysis…</p>
                           )}
