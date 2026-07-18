@@ -65,7 +65,7 @@ ACCA_BUILDER: dict = {
         "(1) Prefer legs where both Bayesian and Poisson engines agree (dual_agreement=Both) "
         "with probability ≥0.60. Fall back to single-engine signals only when the dual pool is thin. "
         "(2) League diversity — no more than 2 legs from the same league within a ticket. "
-        "(3) Combined decimal odds in the 6.0–20.0 range — meaningful reward without becoming a lottery. "
+        "(3) Combined decimal odds in the 3.5–6.0 range — achievable at sustainable win rates (≥30% ticket probability). "
         "(4) Market diversity — avoid stacking the same market type (e.g. all Over 2.5). "
         "Avoid per ticket: the same team more than once, any decimal leg odd above 3.5, "
         "any signal where contextual data raises red flags. "
@@ -964,6 +964,7 @@ async def auto_track_acca_legs(
         )
 
     inserted = 0
+    inserted_legs_by_fp: dict[str, list] = {}
 
     for ticket in tickets:
         legs = ticket.get("legs", [])
@@ -1016,9 +1017,11 @@ async def auto_track_acca_legs(
             source_rule_label="AI Acca Ticket",
             dual_confidence=ticket.get("confidence"),
             result_status="Pending",
+            acca_ticket_id=fingerprint,
             notes=_json.dumps({"legs": legs, "leg_summary": leg_summary}),
         ))
         existing_fps.add(fingerprint)
+        inserted_legs_by_fp[fingerprint] = legs
         inserted += 1
 
     if inserted:
@@ -1028,6 +1031,28 @@ async def auto_track_acca_legs(
             await db.rollback()
             logger.warning("auto_track_acca_legs: commit failed for %s", target_date, exc_info=True)
             return 0
+
+        # Stamp acca_ticket_id on each leg's corresponding single-bet row so the
+        # self-learning pipeline can correlate ACCA losses with individual leg types.
+        # Uses INSERT-OR-IGNORE semantics (NULL guard) so only the first ACCA ticket
+        # to claim a fixture+market wins — no double-stamping across tickets.
+        stamped = False
+        for fp, fp_legs in inserted_legs_by_fp.items():
+            for leg in fp_legs:
+                fid = leg.get("fixture_id")
+                mkt = leg.get("market")
+                if fid and mkt:
+                    await db.execute(
+                        text(
+                            "UPDATE tracked_bets SET acca_ticket_id = :tid "
+                            "WHERE fixture_id = :fid AND market_type = :mkt "
+                            "AND user_id IS NULL AND acca_ticket_id IS NULL"
+                        ),
+                        {"tid": fp, "fid": int(fid), "mkt": mkt},
+                    )
+                    stamped = True
+        if stamped:
+            await db.commit()
 
     return inserted
 

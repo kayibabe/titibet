@@ -39,7 +39,9 @@ from app.core.config import (
     COPA_HO05_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
     is_womens_fixture,
 )
-from app.services.acca_builder import build_acca_candidates, build_accumulator
+from app.services.acca_builder import (
+    build_acca_candidates, build_accumulator, _ACCA_WIN_PROB_FLOOR,
+)
 
 logger = logging.getLogger("titibet.auto_tracker")
 
@@ -409,9 +411,11 @@ async def auto_track_acca_signals(db: AsyncSession, run_date: date) -> int:
         return 0
 
     # Try target tiers from highest to lowest; take the first that produces ≥2 legs.
+    # max_legs=3 caps the ticket at 3 legs: a 4-leg ticket at 70%/leg has only 24%
+    # win rate vs 34% for 3 legs — the extra leg destroys more EV than it adds odds.
     chosen: dict | None = None
     for tier in _ACCA_TARGET_TIERS:
-        acca = build_accumulator(candidates, tier)
+        acca = build_accumulator(candidates, tier, max_legs=3)
         if acca["leg_count"] >= _ACCA_MIN_CANDIDATES:
             chosen = acca
             break
@@ -420,9 +424,22 @@ async def auto_track_acca_signals(db: AsyncSession, run_date: date) -> int:
         logger.info("Auto-ACCA %s: could not build ≥2-leg ticket from %d candidates", run_date, len(candidates))
         return 0
 
+    # Win probability floor: refuse tickets where compounded leg probabilities
+    # fall below _ACCA_WIN_PROB_FLOOR.  A structurally poor-quality ticket
+    # produces losing expectations regardless of combined odds target.
+    if chosen["expected_win_probability"] < _ACCA_WIN_PROB_FLOOR:
+        logger.info(
+            "Auto-ACCA %s: expected win probability %.1f%% below %.0f%% floor — skipping",
+            run_date,
+            chosen["expected_win_probability"] * 100,
+            _ACCA_WIN_PROB_FLOOR * 100,
+        )
+        return 0
+
     legs      = chosen["legs"]
     combined  = chosen["combined_odds"]
     leg_count = chosen["leg_count"]
+    exp_win_p = chosen["expected_win_probability"]
 
     leg_summary = "\n".join(
         f"{i+1}. {leg.get('home_team','')} vs {leg.get('away_team','')} · "
@@ -459,12 +476,39 @@ async def auto_track_acca_signals(db: AsyncSession, run_date: date) -> int:
         source_rule_key="system_acca",
         source_rule_label="System ACCA",
         result_status="Pending",
-        notes=json.dumps({"legs": legs, "leg_summary": leg_summary}),
+        acca_ticket_id=fp_tag,
+        notes=json.dumps({
+            "legs":                    legs,
+            "leg_summary":             leg_summary,
+            "expected_win_probability": exp_win_p,
+        }),
     ))
 
     await db.commit()
     logger.info(
-        "Auto-ACCA %s: inserted %d-leg ticket @ %.2f combined odds",
-        run_date, leg_count, combined,
+        "Auto-ACCA %s: inserted %d-leg ticket @ %.2f combined odds (expected win %.1f%%)",
+        run_date, leg_count, combined, exp_win_p * 100,
     )
+
+    # Stamp acca_ticket_id on each leg's single-bet row so the self-learning
+    # pipeline can correlate ACCA losses with individual leg types without
+    # needing to parse notes JSON across thousands of rows.
+    from sqlalchemy import text as _text
+    stamped = False
+    for leg in legs:
+        fid = leg.get("fixture_id")
+        mkt = leg.get("market")
+        if fid and mkt:
+            await db.execute(
+                _text(
+                    "UPDATE tracked_bets SET acca_ticket_id = :tid "
+                    "WHERE fixture_id = :fid AND market_type = :mkt "
+                    "AND user_id IS NULL AND acca_ticket_id IS NULL"
+                ),
+                {"tid": fp_tag, "fid": int(fid), "mkt": mkt},
+            )
+            stamped = True
+    if stamped:
+        await db.commit()
+
     return 1

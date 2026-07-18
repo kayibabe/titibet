@@ -6,6 +6,7 @@ Imported by both the accumulators router (HTTP serving) and auto_tracker
 """
 from __future__ import annotations
 
+import math
 from datetime import date
 
 from sqlalchemy import select, func
@@ -36,6 +37,19 @@ _ALLOWED_CONFIDENCE = {"Medium", "High"}
 # are excluded from ACCA legs where the compounding risk is higher.
 _ACCA_DUAL_HIGH_MIN_PROB = 0.76  # was 0.73
 
+# EV gate: each leg must offer at least 4% edge at the bookmaker price.
+# Compounding a negative- or zero-EV leg multiplies the loss across the ticket.
+# EV = model_prob × bookmaker_odd − 1. Legs with no bookmaker price receive
+# EV = 0 (fair price) and fail this gate — if we can't confirm edge we don't
+# compound the uncertainty.
+_ACCA_LEG_MIN_EV = 0.04
+
+# Expected ticket win probability floor. A ticket whose leg probabilities multiply
+# to below this value has a structural expectation of losing more than it wins even
+# at the target combined odds. 30% ≈ a 3-leg ticket at 67% probability per leg.
+# Below this we skip rather than build a lottery ticket.
+_ACCA_WIN_PROB_FLOOR = 0.30
+
 
 def _primary_prob(sig: Signal) -> float:
     bayes   = sig.bayesian_prob  or 0.0
@@ -43,38 +57,89 @@ def _primary_prob(sig: Signal) -> float:
     return max(bayes, poisson)
 
 
-def build_accumulator(candidates: list[dict], target_odds: float) -> dict:
+def _is_correlated(leg_a: dict, leg_b: dict) -> bool:
     """
-    Greedy combiner with minimised overshoot.
+    Return True when two legs share the same league AND the same market family.
 
-    At each step, check whether any single remaining candidate can close the
-    remaining gap to target on its own.  If yes, take the one whose fair_odds
-    is closest to the exact remaining needed amount (minimising overshoot).
-    If no single candidate can close the gap alone, take the shortest-odds
-    pick and continue.
+    "Market family" = the first word of the market string (Over, Under, Home,
+    Away, BTTS, Draw, …).  Stacking two Over-goals bets from the same league
+    on the same day exposes the ticket to shared environmental factors (referee
+    assignment, weather, tactical meta) that make both legs move together.
+    Same-league + same-family pairs are excluded from a single ticket.
+    """
+    league_a = (leg_a.get("league") or "").strip().lower()
+    league_b = (leg_b.get("league") or "").strip().lower()
+    if not league_a or league_a != league_b:
+        return False
+    mkt_a = (leg_a.get("market") or "").split(" ")[0].lower()
+    mkt_b = (leg_b.get("market") or "").split(" ")[0].lower()
+    return bool(mkt_a) and mkt_a == mkt_b
+
+
+def build_accumulator(
+    candidates: list[dict],
+    target_odds: float,
+    max_legs: int = 3,
+) -> dict:
+    """
+    Greedy combiner with minimised overshoot, max-legs cap, and correlation filter.
+
+    Algorithm (candidates already sorted by fair_odds ascending — most certain first):
+    1. At each step check if any unused, non-correlated candidate can close the
+       remaining gap to target on its own.  If yes, pick the one with the
+       smallest overshoot (fair_odds − remaining_needed) and stop.
+    2. If no single closer exists, take the next unused non-correlated candidate
+       and continue.
+    3. Stop when max_legs is reached, target is hit, or no valid candidates remain.
+
+    Returns expected_win_probability so callers can enforce a win-rate floor
+    before accepting the ticket.
     """
     legs: list[dict] = []
+    used: set[int] = set()
     combined = 1.0
 
-    for i, c in enumerate(candidates):
-        if combined >= target_odds:
-            break
+    def _uncorrelated(c: dict) -> bool:
+        return not any(_is_correlated(c, leg) for leg in legs)
+
+    while len(legs) < max_legs and combined < target_odds:
         remaining_needed = target_odds / combined
-        eligible = [c2 for c2 in candidates[i:] if c2["fair_odds"] >= remaining_needed]
-        if eligible:
-            best_last = min(eligible, key=lambda c2: c2["fair_odds"] - remaining_needed)
-            legs.append(best_last)
-            combined *= best_last["fair_odds"]
+
+        # Phase 1 — look for a single closer that bridges the gap on its own.
+        closers = [
+            (j, c) for j, c in enumerate(candidates)
+            if j not in used and c["fair_odds"] >= remaining_needed and _uncorrelated(c)
+        ]
+        if closers:
+            best_j, best_c = min(closers, key=lambda jc: jc[1]["fair_odds"] - remaining_needed)
+            legs.append(best_c)
+            combined *= best_c["fair_odds"]
+            used.add(best_j)
             break
-        legs.append(c)
-        combined *= c["fair_odds"]
+
+        # Phase 2 — no closer; take the next unused non-correlated candidate.
+        took = False
+        for j, c in enumerate(candidates):
+            if j not in used and _uncorrelated(c):
+                legs.append(c)
+                combined *= c["fair_odds"]
+                used.add(j)
+                took = True
+                break
+        if not took:
+            break
+
+    expected_win_prob = round(
+        math.prod(c["primary_prob"] for c in legs), 4
+    ) if legs else 0.0
 
     return {
-        "target_odds":     target_odds,
-        "combined_odds":   round(combined, 4),
-        "legs":            legs,
-        "leg_count":       len(legs),
-        "insufficient_picks": combined < target_odds,
+        "target_odds":              target_odds,
+        "combined_odds":            round(combined, 4),
+        "legs":                     legs,
+        "leg_count":                len(legs),
+        "expected_win_probability": expected_win_prob,
+        "insufficient_picks":       combined < target_odds,
     }
 
 
@@ -160,6 +225,20 @@ async def build_acca_candidates(
             _HO05_ACCA_MIN_PROB if sig.market == "Home Over 0.5" else _MIN_PROB
         )
     ]
+
+    # EV gate — each leg must offer at least _ACCA_LEG_MIN_EV edge at the
+    # bookmaker price.  Compounding negative- or zero-EV legs multiplies the
+    # loss across the ticket.  If no bookmaker price exists we derive EV from
+    # fair odds (EV = 0), which fails the gate intentionally: without a
+    # confirmed edge we should not compound the uncertainty.
+    def _leg_ev(sig: Signal) -> float:
+        prob = _primary_prob(sig)
+        odd  = sig.bayesian_best_odd
+        if not odd or odd <= 1.0:
+            odd = 1.0 / prob if prob > 0 else 1.0
+        return prob * odd - 1.0
+
+    rows = [(sig, fix) for sig, fix in rows if _leg_ev(sig) >= _ACCA_LEG_MIN_EV]
 
     # Both+High ACCA gate: both engines must individually clear the same floor
     # applied by auto_tracker for singles. A Both+High signal at 0.65 primary_prob
