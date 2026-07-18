@@ -945,7 +945,7 @@ function SystemTrackedTable({ systemBets, signals, advisors, explanations, expla
                         <div className="flex items-start gap-2 rounded-lg bg-[var(--accent)]/5 border border-[var(--accent)]/20 px-3 py-2.5 mt-1">
                           <Bot size={13} className="text-[var(--accent)] shrink-0 mt-1" />
                           {explanation ? (
-                            <p className="text-[11px] leading-relaxed text-[var(--text)] opacity-90">
+                            <p className="text-xs leading-relaxed text-[var(--text)] opacity-90">
                               {explanation.split(/(\*\*[^*]+\*\*)/).map((part, j) =>
                                 part.startsWith('**') && part.endsWith('**')
                                   ? <strong key={j} className="text-[var(--text-h)]">{part.slice(2, -2)}</strong>
@@ -953,7 +953,7 @@ function SystemTrackedTable({ systemBets, signals, advisors, explanations, expla
                               )}
                             </p>
                           ) : (
-                            <p className="text-[11px] text-[var(--text)] opacity-40 animate-pulse">Generating analysis…</p>
+                            <p className="text-xs text-[var(--text)] opacity-40 animate-pulse">Generating analysis…</p>
                           )}
                         </div>
                       </td>
