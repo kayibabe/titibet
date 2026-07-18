@@ -47,6 +47,12 @@ logger = logging.getLogger("titibet.auto_tracker")
 
 FLAT_STAKE = 50_000.0
 
+# Maximum system single bets (user_id=None, non-ACCA) per day.
+# Defence-in-depth: even if a gate fails or a heavy fixture day generates many
+# qualifying signals, total daily exposure is bounded.
+# Jul-18 postmortem: 13 bets on one day (vs typical 1-4) caused -146.5k loss.
+MAX_DAILY_SINGLE_BETS: int = 5
+
 
 async def _load_kelly_multipliers(db: AsyncSession) -> dict[str, float]:
     """
@@ -132,8 +138,34 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
     )
     existing_keys |= {(r.fixture_id, r.market_type) for r in null_date_rows}
 
+    # Daily single-bet cap: count system single bets already tracked today.
+    # ACCAs (source_rule_key="system_acca") are excluded — they're separate.
+    existing_single_count = await db.scalar(
+        select(func.count()).select_from(TrackedBet).where(
+            TrackedBet.event_date == run_date,
+            TrackedBet.user_id.is_(None),
+            TrackedBet.source_rule_key != "system_acca",
+        )
+    ) or 0
+    if existing_single_count >= MAX_DAILY_SINGLE_BETS:
+        logger.info(
+            "auto_track_date %s: daily cap reached (%d existing) — skipping",
+            run_date, existing_single_count,
+        )
+        return 0
+
+    # Sort candidates by quality descending so the cap keeps the best signals.
+    rows.sort(key=lambda r: (r[0].dual_quality_score or 0.0), reverse=True)
+
     inserted = 0
     for signal, fixture in rows:
+        if existing_single_count + inserted >= MAX_DAILY_SINGLE_BETS:
+            logger.info(
+                "auto_track_date %s: daily cap of %d reached — stopping early",
+                run_date, MAX_DAILY_SINGLE_BETS,
+            )
+            break
+
         bookmaker = signal.bayesian_bookmaker or "Best Available"
         key = (signal.fixture_id, signal.market)
         if key in existing_keys:
