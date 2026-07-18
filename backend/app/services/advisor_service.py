@@ -1992,15 +1992,16 @@ async def chat_with_advisor(
 
 async def explain_system_picks(bets: list[dict], settings) -> dict:
     """
-    Single LLM call that generates a short 2-sentence analysis for each
-    system-tracked bet. Returns {"explanations": {"<key>": "text", ...}}.
+    Generate a pre-match analysis for each system-tracked bet by routing every
+    pick through chat_with_advisor in parallel — identical code path, identical
+    voice and style to the Ask the AI chat.
+    Returns {"explanations": {"<key>": "text", ...}}.
     """
     if not bets:
         return {"explanations": {}}
 
-    lines = []
-    for i, bet in enumerate(bets[:20], 1):
-        key    = str(bet.get("key", i))
+    async def _explain_one(bet: dict) -> tuple[str, str]:
+        key    = str(bet.get("key", ""))
         match  = bet.get("match", "Unknown match")
         market = bet.get("market", "Unknown market")
         prob   = bet.get("prob")
@@ -2008,36 +2009,18 @@ async def explain_system_picks(bets: list[dict], settings) -> dict:
         result = bet.get("result", "Pending")
         score  = bet.get("score")
 
-        parts = [f"[{key}] {match} · {market}"]
-        if prob:  parts.append(f"prob {prob}")
-        if odds:  parts.append(f"odds {odds}")
-        parts.append(f"result: {result}")
-        if score: parts.append(f"score {score}")
-        lines.append("  " + " · ".join(parts))
+        parts = [f"Analyse the {market} pick for {match}."]
+        if prob:  parts.append(f"Model probability: {prob}.")
+        if odds:  parts.append(f"Odds: {odds}.")
+        if result not in ("Pending", None):
+            parts.append(f"Result: {result}{f' ({score})' if score else ''}.")
 
-    bets_text = "\n".join(lines)
-    full_prompt = (
-        "You are TiTiBet's AI football betting assistant. "
-        "For EACH bet below write a 3-4 sentence PRE-MATCH predictive analysis. "
-        "Cover: (1) what the Bayesian and Poisson model signals indicate and why this market was selected, "
-        "(2) any relevant team form, head-to-head, or tactical factors you know about these teams, "
-        "(3) a clear recommendation (use **bold** for the pick name). "
-        "Write in present/predictive tense — treat every pick as upcoming. "
-        "For bets already Won or Lost, briefly mention the outcome at the end. "
-        "Return ONLY valid JSON — no markdown fences, no prose outside the JSON object:\n"
-        '{"explanations":{"KEY":"analysis text",...}}\n\n'
-        f"Bets:\n{bets_text}"
+        text = await chat_with_advisor(" ".join(parts), [], settings)
+        return key, text
+
+    results = await asyncio.gather(
+        *[_explain_one(b) for b in bets[:15]],
+        return_exceptions=True,
     )
-
-    pseudo = {
-        "id":     "explainer",
-        "system": _CHAT_SYSTEM + " Always respond with valid JSON only — no markdown fences, no prose outside the JSON.",
-        "task":   full_prompt,
-        "models": _CHAT_MODELS,
-    }
-
-    _, result = await _call_advisor(pseudo, "", settings)
-    if isinstance(result, dict) and not result.get("error"):
-        raw = result.get("explanations", {})
-        return {"explanations": {str(k): str(v) for k, v in raw.items() if isinstance(v, str)}}
-    return {"explanations": {}}
+    explanations = {k: v for r in results if isinstance(r, tuple) for k, v in [r]}
+    return {"explanations": explanations}
