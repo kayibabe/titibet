@@ -2031,15 +2031,9 @@ async def explain_system_picks(bets: list[dict], settings) -> dict:
 
     pseudo = {
         "id":     "explainer",
-        "system": "You are TiTiBet's AI betting analyst. Return only valid JSON with no markdown.",
+        "system": _CHAT_SYSTEM + " Always respond with valid JSON only — no markdown fences, no prose outside the JSON.",
         "task":   full_prompt,
-        "models": {
-            "claude":   "claude-haiku-4-5-20251001",
-            "gemini":   "gemini-2.0-flash",
-            "cerebras": "llama3.1-70b",
-            "groq":     "llama-3.3-70b-versatile",
-            "mistral":  "mistral-small-latest",
-        },
+        "models": _CHAT_MODELS,
     }
 
     _, result = await _call_advisor(pseudo, "", settings)
