@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { fetchAdvisorInsights, trackAcca } from '../../api/advisor'
 import { fetchSignals } from '../../api/signals'
+import { fetchBets } from '../../api/tracker'
 import ADVISORS_META from './advisorsMeta'
 
 // ── Report export helpers ─────────────────────────────────────────────────────
@@ -769,6 +770,181 @@ function SignalSummaryTable({ signals, advisors }) {
   )
 }
 
+// ── System auto-tracked bets table ───────────────────────────────────────────
+const _RESULT_CFG = {
+  Won:     { cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30', label: 'Won'     },
+  Lost:    { cls: 'text-red-400    bg-red-500/10     border-red-500/30',     label: 'Lost'    },
+  Void:    { cls: 'text-slate-400  bg-slate-500/10   border-slate-500/30',   label: 'Void'    },
+  Pending: { cls: 'text-amber-400  bg-amber-500/10   border-amber-500/30',   label: 'Pending' },
+}
+
+function SystemTrackedTable({ systemBets, signals, advisors }) {
+  if (!systemBets.length) return null
+
+  // Build lookup from fixture_id:market → signal for probability data
+  const sigMap = new Map()
+  for (const sig of signals) {
+    sigMap.set(`${sig.fixture_id}:${sig.market}`, sig)
+  }
+
+  const confStyle = c =>
+    c === 'High'   ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' :
+    c === 'Medium' ? 'text-amber-400   bg-amber-500/10   border-amber-500/30'   :
+                     'text-rose-400    bg-rose-500/10    border-rose-500/30'
+
+  const rows = systemBets.map(bet => {
+    const vsParts  = (bet.match_name || '').split(' vs ')
+    const homeTeam = vsParts[0] ?? ''
+    const awayTeam = vsParts.slice(1).join(' vs ') ?? ''
+
+    const sig = sigMap.get(`${bet.fixture_id}:${bet.market_type}`)
+    const primaryProb = sig ? Math.max(sig.bayesian?.prob ?? 0, sig.poisson?.prob ?? 0) : 0
+
+    const advisorStatus = (advisors || []).map(adv => ({
+      id:     adv.id,
+      emoji:  adv.emoji,
+      name:   adv.name,
+      picked: (adv.result?.top_picks || []).some(p =>
+        _norm(p.home_team) === _norm(homeTeam) &&
+        _norm(p.away_team) === _norm(awayTeam) &&
+        _norm(p.market)    === _norm(bet.market_type)
+      ),
+    }))
+
+    const pickCount = advisorStatus.filter(a => a.picked).length
+    const hasScore  = bet.home_score != null && bet.away_score != null
+    const score     = hasScore ? `${bet.home_score}-${bet.away_score}` : null
+    const result    = _RESULT_CFG[bet.result_status] ?? _RESULT_CFG.Pending
+
+    return { bet, homeTeam, awayTeam, sig, primaryProb, advisorStatus, pickCount, score, result }
+  })
+
+  // Summary counts
+  const won     = rows.filter(r => r.bet.result_status === 'Won').length
+  const lost    = rows.filter(r => r.bet.result_status === 'Lost').length
+  const pending = rows.filter(r => r.bet.result_status === 'Pending').length
+  const settled = won + lost
+  const hitRate = settled > 0 ? Math.round(won / settled * 100) : null
+
+  return (
+    <div className="space-y-2">
+      {/* Summary strip */}
+      <div className="flex items-center gap-3 px-1 text-xs text-[var(--text)]">
+        <span className="flex items-center gap-1.5 font-semibold text-[var(--accent)]">
+          <Zap size={11} />
+          {rows.length} auto-tracked pick{rows.length !== 1 ? 's' : ''}
+        </span>
+        {settled > 0 && (
+          <>
+            <span className="opacity-40">·</span>
+            <span>
+              <span className="font-semibold text-emerald-400">{won}W</span>
+              {' / '}
+              <span className="font-semibold text-red-400">{lost}L</span>
+              {hitRate !== null && (
+                <span className="ml-1 font-semibold text-[var(--text-h)]">({hitRate}%)</span>
+              )}
+            </span>
+          </>
+        )}
+        {pending > 0 && (
+          <>
+            <span className="opacity-40">·</span>
+            <span className="opacity-60">{pending} pending</span>
+          </>
+        )}
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
+        <table className="w-full text-xs text-[var(--text)] border-collapse">
+          <thead>
+            <tr className="border-b border-[var(--border)] bg-[var(--code-bg)]">
+              <th className="px-3 py-2.5 text-left font-semibold text-[var(--text-h)] whitespace-nowrap">Match</th>
+              <th className="px-3 py-2.5 text-left font-semibold text-[var(--text-h)] whitespace-nowrap">Market</th>
+              <th className="px-2 py-2.5 text-center font-semibold text-[var(--text-h)]">Conf</th>
+              <th className="px-2 py-2.5 text-center font-semibold text-[var(--text-h)]">Prob</th>
+              <th className="px-2 py-2.5 text-center font-semibold text-[var(--text-h)]">Odds</th>
+              <th className="px-2 py-2.5 text-center font-semibold text-[var(--text-h)] whitespace-nowrap">Score</th>
+              <th className="px-2 py-2.5 text-center font-semibold text-[var(--text-h)]">Result</th>
+              {(advisors || []).map(adv => (
+                <th key={adv.id} className="px-2 py-2.5 text-center hidden sm:table-cell" title={adv.name}>
+                  {adv.emoji}
+                </th>
+              ))}
+              {(advisors || []).length > 0 && (
+                <th className="px-2 py-2.5 text-center font-semibold text-[var(--text-h)] sm:hidden">AI</th>
+              )}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)]">
+            {rows.map(({ bet, homeTeam, awayTeam, primaryProb, advisorStatus, pickCount, score, result }, i) => {
+              const rowBase =
+                bet.result_status === 'Won'  ? 'bg-emerald-500/5 hover:bg-emerald-500/8' :
+                bet.result_status === 'Lost' ? 'bg-red-500/5    hover:bg-red-500/8'     :
+                                               'hover:bg-[var(--code-bg)]'
+              return (
+                <tr key={bet.id ?? i} className={`transition-colors ${rowBase}`}>
+                  <td className="px-3 py-2.5 min-w-[150px]">
+                    <div className="font-medium text-[var(--text-h)] leading-tight">
+                      {homeTeam} <span className="opacity-40 font-normal">vs</span> {awayTeam}
+                    </div>
+                    {bet.league && (
+                      <div className="opacity-45 text-[10px] mt-0.5 leading-tight">{bet.league}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <span className="font-semibold text-[var(--accent)]">{bet.market_type}</span>
+                  </td>
+                  <td className="px-2 py-2.5 text-center">
+                    {bet.dual_confidence ? (
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${confStyle(bet.dual_confidence)}`}>
+                        {bet.dual_confidence[0]}
+                      </span>
+                    ) : <span className="opacity-30">—</span>}
+                  </td>
+                  <td className="px-2 py-2.5 text-center font-bold tabular-nums">
+                    {primaryProb > 0 ? `${Math.round(primaryProb * 100)}%` : '—'}
+                  </td>
+                  <td className="px-2 py-2.5 text-center font-mono tabular-nums opacity-80">
+                    {bet.odds ? Number(bet.odds).toFixed(2) : '—'}
+                  </td>
+                  <td className="px-2 py-2.5 text-center font-mono font-bold tabular-nums">
+                    {score ?? <span className="opacity-30">—</span>}
+                  </td>
+                  <td className="px-2 py-2.5 text-center">
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${result.cls}`}>
+                      {result.label}
+                    </span>
+                  </td>
+                  {advisorStatus.map(adv => (
+                    <td key={adv.id} className="px-2 py-2.5 text-center hidden sm:table-cell">
+                      {adv.picked
+                        ? <CheckCircle size={13} className="mx-auto text-emerald-400" />
+                        : <span className="opacity-20 text-[10px]">—</span>
+                      }
+                    </td>
+                  ))}
+                  {advisorStatus.length > 0 && (
+                    <td className="px-2 py-2.5 text-center sm:hidden">
+                      <span className={`font-bold text-[11px] ${
+                        pickCount === advisorStatus.length ? 'text-emerald-400' :
+                        pickCount >= 2                    ? 'text-amber-400'   :
+                        pickCount === 1                   ? 'text-[var(--text)]' : 'opacity-25'
+                      }`}>
+                        {pickCount}/{advisorStatus.length}
+                      </span>
+                    </td>
+                  )}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 /**
  * AIAdvisorPanel
@@ -783,7 +959,8 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
   const [lastDate, setLastDate] = useState(null)
   // Must be declared unconditionally — only used in panel mode
   const [open,     setOpen]     = useState(false)
-  const [signals,  setSignals]  = useState([])
+  const [signals,    setSignals]    = useState([])
+  const [systemBets, setSystemBets] = useState([])
 
   // In tab mode auto-run when the panel mounts or the date changes
   useEffect(() => {
@@ -801,13 +978,17 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
     setLoading(true)
     setError(null)
     try {
-      const [result, signalData] = await Promise.all([
+      const _SYS_KEYS = new Set(['system_auto', 'system_dual'])
+    const [result, signalData, betData] = await Promise.all([
         fetchAdvisorInsights(date, { force }),
         fetchSignals({ date, best_per_fixture: false }).catch(() => []),
+        fetchBets({ date_from: date, date_to: date }).catch(() => []),
       ])
       setData(result)
       const sigs = Array.isArray(signalData) ? signalData : (signalData?.signals ?? [])
       setSignals(sigs)
+      const bets = Array.isArray(betData) ? betData : []
+      setSystemBets(bets.filter(b => _SYS_KEYS.has(b.source_rule_key)))
       setLastDate(date)
     } catch (e) {
       setError(e.message)
@@ -876,6 +1057,18 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
               <div className="flex-1 h-px bg-[var(--border)]" />
             </div>
             <SignalSummaryTable signals={signals} advisors={data.advisors} />
+          </>
+        )}
+
+        {/* System auto-tracked picks table */}
+        {!loading && systemBets.length > 0 && (
+          <>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-[var(--border)]" />
+              <span className="text-[10px] font-bold text-[var(--text)] opacity-50 tracking-widest uppercase">System Auto-Tracked</span>
+              <div className="flex-1 h-px bg-[var(--border)]" />
+            </div>
+            <SystemTrackedTable systemBets={systemBets} signals={signals} advisors={data?.advisors} />
           </>
         )}
 
