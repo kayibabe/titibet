@@ -1292,6 +1292,108 @@ async def backfill_dates(
     }
 
 
+@router.post("/apply-daily-cap")
+async def apply_daily_cap(
+    target_date: str = Query(description="ISO date to cap, e.g. 2026-07-18"),
+    cap: int = Query(5, description="Maximum system single bets to keep (default 5)"),
+    dry_run: bool = Query(True, description="True = preview only, False = delete excess bets"),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Retroactively enforce the daily single-bet cap on a historical date.
+
+    Keeps the `cap` highest-quality system single bets (by Signal.dual_quality_score,
+    falling back to TrackedBet.odds descending) and deletes the rest.
+    ACCAs (source_rule_key='system_acca' / 'acca_leg_system') are untouched.
+    """
+    from datetime import date as _date
+    from sqlalchemy import delete as sa_delete, join as sa_join
+    from app.models.bet import TrackedBet
+    from app.models.signal import Signal
+
+    try:
+        run_date = _date.fromisoformat(target_date)
+    except ValueError:
+        raise HTTPException(400, f"Invalid date: {target_date!r} — use YYYY-MM-DD")
+
+    # Load all system single bets for the date (excludes ACCAs).
+    rows = (await db.execute(
+        select(TrackedBet, Signal)
+        .outerjoin(
+            Signal,
+            (Signal.fixture_id == TrackedBet.fixture_id) &
+            (Signal.market == TrackedBet.market_type),
+        )
+        .where(
+            TrackedBet.event_date == run_date,
+            TrackedBet.user_id.is_(None),
+            TrackedBet.source_rule_key != "system_acca",
+            TrackedBet.source_rule_key != "acca_leg_system",
+        )
+        .order_by(
+            desc(Signal.dual_quality_score),
+            desc(TrackedBet.odds),
+        )
+    )).all()
+
+    total = len(rows)
+    keep_rows = rows[:cap]
+    delete_rows = rows[cap:]
+
+    keep_ids = [r.TrackedBet.id for r in keep_rows]
+    delete_ids = [r.TrackedBet.id for r in delete_rows]
+
+    keep_summary = [
+        {
+            "id": r.TrackedBet.id,
+            "match": r.TrackedBet.match_name,
+            "odds": r.TrackedBet.odds,
+            "quality": r.Signal.dual_quality_score if r.Signal else None,
+            "result": r.TrackedBet.result_status,
+        }
+        for r in keep_rows
+    ]
+    delete_summary = [
+        {
+            "id": r.TrackedBet.id,
+            "match": r.TrackedBet.match_name,
+            "odds": r.TrackedBet.odds,
+            "quality": r.Signal.dual_quality_score if r.Signal else None,
+            "result": r.TrackedBet.result_status,
+        }
+        for r in delete_rows
+    ]
+
+    if dry_run or not delete_ids:
+        return {
+            "dry_run": True,
+            "date": target_date,
+            "cap": cap,
+            "total_bets": total,
+            "bets_to_keep": len(keep_ids),
+            "bets_to_delete": len(delete_ids),
+            "keep": keep_summary,
+            "delete": delete_summary,
+        }
+
+    await db.execute(
+        sa_delete(TrackedBet).where(TrackedBet.id.in_(delete_ids))
+    )
+    await db.commit()
+
+    return {
+        "dry_run": False,
+        "date": target_date,
+        "cap": cap,
+        "total_bets_before": total,
+        "bets_kept": len(keep_ids),
+        "bets_deleted": len(delete_ids),
+        "kept": keep_summary,
+        "deleted": delete_summary,
+    }
+
+
 @router.post("/resettle-all")
 async def resettle_all(
     source: str = Query("system", description="'system' resets user_id=NULL bets; 'all' includes advisory"),
