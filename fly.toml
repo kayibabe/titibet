@@ -27,7 +27,7 @@ primary_region = 'jnb'
   # Odds pages per sync. The free API-Football plan HARD-CAPS this at 3 (page>=4
   # returns an error), so ~30 fixtures/day is the ceiling until a paid plan.
   # Configurable here only so it can be raised after upgrading the API plan.
-  MAX_ODDS_PAGES = '3'
+  MAX_ODDS_PAGES = '100'
   # Per-league odds fetch: one API call per (league, season) to bypass the
   # date-paged cap. 25 covers ~80% of today's leagues in typical fixture sets
   # (80 unique leagues, we pick 25). Fresh-fixture leagues are prioritised so
