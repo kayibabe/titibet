@@ -148,7 +148,7 @@ async def build_acca_candidates(
     target_date: date,
     *,
     exclude_fixture_ids: set[int] | None = None,
-    ev_threshold: float = _ACCA_LEG_MIN_EV,
+    ev_threshold: float | None = None,  # unused — EV gate removed (same reason as singles)
 ) -> list[dict]:
     """
     Return sorted ACCA candidate list for target_date, restricted to
@@ -229,20 +229,6 @@ async def build_acca_candidates(
             _HO05_ACCA_MIN_PROB if sig.market == "Home Over 0.5" else _MIN_PROB
         )
     ]
-
-    # EV gate — each leg must offer at least _ACCA_LEG_MIN_EV edge at the
-    # bookmaker price.  Compounding negative- or zero-EV legs multiplies the
-    # loss across the ticket.  If no bookmaker price exists we derive EV from
-    # fair odds (EV = 0), which fails the gate intentionally: without a
-    # confirmed edge we should not compound the uncertainty.
-    def _leg_ev(sig: Signal) -> float:
-        prob = _primary_prob(sig)
-        odd  = sig.bayesian_best_odd
-        if not odd or odd <= 1.0:
-            odd = 1.0 / prob if prob > 0 else 1.0
-        return prob * odd - 1.0
-
-    rows = [(sig, fix) for sig, fix in rows if _leg_ev(sig) >= ev_threshold]
 
     # Both+High ACCA gate: both engines must individually clear the same floor
     # applied by auto_tracker for singles. A Both+High signal at 0.65 primary_prob
