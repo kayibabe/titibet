@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Environment files — NEVER commit secrets
+backend/.env
+deploy/.env.production
+*.env.local
+
+# Database
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+backend/*.db.live
+
+# Frontend build output
+frontend/dist/
+frontend/node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Visual Studio
+.vs/
+
+# Claude local config and worktrees
+.claude/
+
+# Logs
+backend/server.out.log
+backend/server.err.log
+
+# Root-level DB files and archives (dev artefacts)
+sisibet.db
+titibet.db
+*.zip
+
+# API-Football file cache (ephemeral, never commit)
+backend/.cache/
+
+# Temporary fix / debug scripts
+backend/fix_*.py
+backend/settle_now.py
+backend/query_check.py
+commitmsg.txt
+ai websites.txt
+
+# One-off maintenance and backfill scripts
+backend/backfill_*.py
+backend/bulk_*.py
+backend/check_*.py
+backend/debug_*.py
+backend/analyse_*.py
+backend/diagnose_*.py
+backend/recompute_*.py
+backend/restake_*.py
+backend/resync_*.py
+backend/run_*.py
+backend/dedup*.py
+backend/compute_*.py
+backend/promote_*.py
+backend/smoke_test.py
+backend/compare_gates.py
+backend/*_report.json
+backend/scripts/
+backend/tools/

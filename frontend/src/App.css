@@ -1,0 +1,19 @@
+/* App-level styles — layout primitives only. Component styles live in Tailwind classes. */
+
+.counter {
+  font-size: 15px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 2px solid transparent;
+  transition: border-color 0.2s;
+
+  &:hover {
+    border-color: var(--accent-border);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}

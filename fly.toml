@@ -1,0 +1,62 @@
+# fly.toml app configuration file generated for titibet on 2026-06-21T06:11:18Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'titibet'
+primary_region = 'jnb'
+
+[build]
+  [build.args]
+    # Public Telegram invite link baked into the React build (VITE_ prefix required)
+    VITE_TELEGRAM_FREE_URL = "https://t.me/+my_LDCUEt8dlMTRk"
+
+[env]
+  CORS_ORIGINS = 'https://titibet.fly.dev,https://titibet.app,https://www.titibet.app'
+  DB_URL = 'sqlite+aiosqlite:////data/titibet.db'
+  PORT = '8000'
+  SKIP_STARTUP_SYNC = 'false'
+  SYNC_TIMES = '04:00,19:00,23:00'
+  APP_URL = 'https://titibet.fly.dev'
+  # Persist the API-Football response cache on the volume so redeploys don't wipe it.
+  API_CACHE_DIR = '/data/.cache/api_football'
+  # Persist fitted ZINB/Glicko-2 models on the volume so redeploys/restarts don't
+  # force a full refit (5+ min, CPU-bound, was blocking the event loop and timing
+  # out unrelated API requests during every deploy).
+  MODEL_CACHE_DIR = '/data/.cache/advanced_models'
+  # Odds pages per sync. The free API-Football plan HARD-CAPS this at 3 (page>=4
+  # returns an error), so ~30 fixtures/day is the ceiling until a paid plan.
+  # Configurable here only so it can be raised after upgrading the API plan.
+  MAX_ODDS_PAGES = '100'
+  # Per-league odds fetch: one API call per (league, season) to bypass the
+  # date-paged cap. 25 covers ~80% of today's leagues in typical fixture sets
+  # (80 unique leagues, we pick 25). Fresh-fixture leagues are prioritised so
+  # quota goes to new data first; already-cached leagues hit the file cache.
+  # Quota math: 25 real calls on sync 1, ~1 per subsequent sync (cached).
+  # 100 API calls/day budget: sync-1 uses ~26 (1 fixture + 25 league), fine.
+  MAX_LEAGUE_ODDS_CALLS = '25'
+
+[[mounts]]
+  source = 'titibet_data'
+  destination = '/data'
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '10s'
+    grace_period = '180s'
+    method = 'GET'
+    path = '/health'
+
+[[vm]]
+  memory = '4gb'
+  cpu_kind = 'shared'
+  cpus = 2
+  memory_mb = 4096
