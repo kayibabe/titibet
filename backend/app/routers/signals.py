@@ -21,6 +21,7 @@ from app.core.config import (
 from app.models import Signal, Fixture, TrackedBet
 from app.models.odds import MarketSnapshot
 from app.models.user import User
+from app.services.signal_engine import get_learned_market_ceilings
 from app.schemas.signal import SignalOut, BayesianOut, PoissonOut, AdvancedModelsOut, BookmakerOdds, AlternativeSignal
 from pydantic import BaseModel as _BaseModel
 
@@ -420,6 +421,18 @@ async def list_signals(
             )
         ]
 
+    # Learned odds ceilings from Pipeline A — applies to ALL signals in the market,
+    # not just Both+High. Accepted proposals are backed by a P&L backtest (n >= 20).
+    learned_ceilings = await get_learned_market_ceilings(db)
+    if learned_ceilings:
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.market in learned_ceilings
+                and (sig.bayesian_best_odd or 0.0) >= learned_ceilings[sig.market]
+            )
+        ]
+
     # ── Universal signal quality baseline (B-1 / B-2 / B-3 / B-4) ──────────
     # Every signal clears these four gates regardless of market.
     # Per-market overrides (DUAL_HIGH_ODDS_CEILING, COPA_HO05_SUPPRESSED_LEAGUES,
@@ -710,6 +723,17 @@ async def stat_driven_picks(
             if not (
                 sig.market in DUAL_HIGH_ODDS_CEILING
                 and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
+            )
+        ]
+
+    # Apply learned market ceilings (Pipeline A).
+    learned_ceilings = await get_learned_market_ceilings(db)
+    if learned_ceilings:
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.market in learned_ceilings
+                and (sig.bayesian_best_odd or 0.0) >= learned_ceilings[sig.market]
             )
         ]
 

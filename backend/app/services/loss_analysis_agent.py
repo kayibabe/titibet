@@ -400,24 +400,28 @@ _TUNER_TASK = """Based on these detected patterns, propose specific threshold ch
 Patterns:
 {patterns_json}
 
-Current thresholds context:
-- MIN_LEG_QUALITY: 0.04
-- AUTO_SUPPRESS_MIN_SAMPLES: 25
-- Tier 3 penalty: -0.006 per leg
-- No per-market odds ceiling is currently enforced (new feature)
+IMPORTANT CONSTRAINTS:
+- Only propose change_type "market_odds_ceiling". No other types are valid.
+- Each proposal must target a SINGLE market name (e.g. "Home Over 0.5"). Never
+  combine multiple markets into one target string.
+- proposed_value must be a decimal odds ceiling (e.g. 1.85). Any signal in that
+  market whose book odds exceed this ceiling will be suppressed.
+- Only propose a ceiling when the pattern evidence is clear: a specific odds range
+  is producing avoidable losses and removing it would not sacrifice many winning bets.
+- If patterns do not clearly point to an odds-ceiling fix, return an empty proposals list.
+- Minimum evidence bar: there must be at least 20 settled bets in the target market
+  before you can justify a ceiling proposal.
 
 Respond with:
 {{
   "proposals": [
     {{
       "proposal_id": "short_slug",
-      "change_type": "market_odds_ceiling|tier_suppression|min_confidence|rule_disable|quality_threshold",
+      "change_type": "market_odds_ceiling",
       "target": "e.g. Home Over 0.5",
-      "current_value": null or number,
-      "proposed_value": number,
-      "rationale": "Why this specific change",
-      "confidence": "High|Medium|Low",
-      "reversible": true
+      "proposed_value": 1.85,
+      "rationale": "One sentence — which loss pattern this addresses",
+      "confidence": "High|Medium|Low"
     }}
   ],
   "do_not_change": ["list of things that look fine"],
@@ -490,10 +494,14 @@ def _backtest_proposal(
     # Filter settled bets for this market
     market_bets = [b for b in settled_bets if b.market_type == target and b.odds is not None]
 
-    if not market_bets:
+    _MIN_CEILING_SAMPLE = 20
+    if len(market_bets) < _MIN_CEILING_SAMPLE:
         return BacktestResult(
             pid, accepted=False,
-            reason=f"Rejected — no settled bets for market '{target}'; cannot validate without historical data",
+            reason=(
+                f"Rejected — only {len(market_bets)} settled bets for market '{target}'; "
+                f"need {_MIN_CEILING_SAMPLE} to validate a ceiling proposal"
+            ),
         )
 
     # Bets that would be EXCLUDED by the new ceiling

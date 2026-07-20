@@ -419,6 +419,23 @@ async def _get_underperforming_leagues(
     return frozenset(bad)
 
 
+async def get_learned_market_ceilings(db: AsyncSession) -> dict[str, float]:
+    """
+    Return active market_odds_ceiling proposals as {market: ceiling_odds}.
+    Keyed by exact market name (e.g. "Home Over 0.5"). These are written by
+    Pipeline A (loss_analysis_agent) after backtesting against settled bets.
+    Empty dict when no active proposals exist.
+    """
+    from app.models.learning_proposal import LearningProposal
+    result = await db.execute(
+        select(LearningProposal.target, LearningProposal.proposed_value)
+        .where(LearningProposal.change_type == "market_odds_ceiling")
+        .where(LearningProposal.is_active == True)  # noqa: E712
+        .where(LearningProposal.proposed_value.isnot(None))
+    )
+    return {row.target: float(row.proposed_value) for row in result.all()}
+
+
 async def cs_generation_allowed(db: AsyncSession) -> bool:
     """
     Runtime guard for Correct Score signal generation.

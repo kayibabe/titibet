@@ -39,7 +39,7 @@ from app.core.config import (
 )
 from app.models import Signal, Fixture
 from app.models.bet import TrackedBet
-from app.services.signal_engine import _get_underperforming_leagues
+from app.services.signal_engine import _get_underperforming_leagues, get_learned_market_ceilings
 
 logger   = logging.getLogger("titibet.telegram")
 settings = get_settings()
@@ -415,6 +415,17 @@ async def _query_all_rows(db: AsyncSession, run_date: date) -> list[tuple[Signal
                 and sig.dual_agreement == "Both"
                 and sig.market in DUAL_HIGH_ODDS_CEILING
                 and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
+            )
+        ]
+
+    # Mirror the router's learned market ceilings (Pipeline A).
+    learned_ceilings = await get_learned_market_ceilings(db)
+    if learned_ceilings:
+        rows = [
+            (sig, fix) for sig, fix in rows
+            if not (
+                sig.market in learned_ceilings
+                and (sig.bayesian_best_odd or 0.0) >= learned_ceilings[sig.market]
             )
         ]
 
