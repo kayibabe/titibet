@@ -62,11 +62,14 @@ ACCA_BUILDER: dict = {
         "Each ticket: 3–4 legs. No fixture may appear in more than one ticket. "
         "Keep building tickets until fewer than 3 signals remain unused. "
         "Per ticket, optimise for: "
-        "(1) Prefer legs where both Bayesian and Poisson engines agree (dual_agreement=Both) "
-        "with probability ≥0.60. Fall back to single-engine signals only when the dual pool is thin. "
+        "(1) Only use legs where both Bayesian and Poisson engines agree (dual_agreement=Both). "
+        "HARD RULE — never include any leg where the Bayesian probability shown in the context "
+        "is below 65%. A low Bayesian probability means the market disagrees with the model; "
+        "compounding such legs destroys ticket value. "
         "(2) League diversity — no more than 2 legs from the same league within a ticket. "
-        "(3) Combined decimal odds in the 3.5–6.0 range — achievable at sustainable win rates (≥30% ticket probability). "
-        "(4) Market diversity — avoid stacking the same market type (e.g. all Over 2.5). "
+        "(3) Market diversity — no more than 2 legs with the same market type within a ticket "
+        "(e.g. do not stack 3× Home Over 0.5). "
+        "(4) Combined decimal odds in the 3.5–8.0 range — achievable at sustainable win rates (≥30% ticket probability). "
         "Avoid per ticket: the same team more than once, any decimal leg odd above 3.5, "
         "any signal where contextual data raises red flags. "
         "Only select legs from the exact fixture_ids present in the signal pool — do not invent or guess ids. "
@@ -75,7 +78,7 @@ ACCA_BUILDER: dict = {
         "the actual probability (e.g. 'Bayesian 72%'), agreement status (Both engines / Bayesian only), "
         "and one supporting context factor (e.g. 'home team unbeaten in last 6, 8-book consensus'). "
         "Generic reasons like 'Strong signal' or 'Model indicates value' are not acceptable. "
-        "Set confidence to 'High' when ≥3 legs in a ticket have both engines agreeing at ≥0.60 probability. "
+        "Set confidence to 'High' when ≥3 legs in a ticket have both engines agreeing at ≥0.68 probability. "
         "Set confidence to 'Medium' for mixed pools. "
         "Order your tickets from strongest to weakest: rank first by confidence (High > Medium > Low), "
         "then by how many legs have dual_agreement=Both, then by combined odds proximity to the 6-20x sweet spot. "
@@ -1320,26 +1323,37 @@ async def get_advisor_insights(
     def _primary_prob(sig: Signal) -> float:
         return max(sig.bayesian_prob or 0.0, sig.poisson_prob or 0.0)
 
+    def _min_prob(sig: Signal) -> float:
+        return min(sig.bayesian_prob or 0.0, sig.poisson_prob or 0.0)
+
     # Acca pool — High confidence + Both engines only.
     # 2026-07-18 simulation audit: T2 (High+Both) delivered 66.7% ticket win rate;
     # T3 (Medium+Both) and single-engine legs compound variance and lose money.
     # No fallback to lower tiers — skip the day rather than build a weak ticket.
     #
     # Two sub-tiers select the pool but share the same High+Both requirement:
-    # T1: High+Both+prob≥0.72 (preferred — tightest quality, starts here)
-    # T2: High+Both, no prob floor (fallback if T1 < 3 legs)
-    # If T2 < 3 legs → no acca today.
+    # T1: High+Both, max≥0.72 AND min≥0.62 (preferred — both engines confident)
+    # T2: High+Both, max≥0.68 AND min≥0.58 (fallback — still requires both engines above floor)
+    # If T2 < 3 legs → no acca today (skip rather than build a weak ticket).
+    #
+    # The min_prob gate is the critical addition (Jul-2026 postmortem): when
+    # max(bayes, poisson) passes but min is 0.55, one engine is structurally
+    # disagreeing.  Compounding a 55%-confidence leg destroys ticket EV even when
+    # the other engine is at 76%.  Both engines must individually clear the floor.
 
     acca_t1 = [
         (sig, fix) for sig, fix in rows
         if sig.dual_confidence == "High"
         and sig.dual_agreement == "Both"
         and _primary_prob(sig) >= 0.72
+        and _min_prob(sig) >= 0.62
     ]
     acca_t2 = [
         (sig, fix) for sig, fix in rows
         if sig.dual_confidence == "High"
         and sig.dual_agreement == "Both"
+        and _primary_prob(sig) >= 0.68
+        and _min_prob(sig) >= 0.58
     ]
 
     if len(acca_t1) >= 3:
@@ -1347,7 +1361,7 @@ async def get_advisor_insights(
     elif len(acca_t2) >= 3:
         acca_pool = acca_t2
     else:
-        acca_pool = []  # insufficient High+Both legs — no acca today
+        acca_pool = []  # insufficient qualifying legs — skip rather than build a weak ticket
 
     # ACCA ceiling: enforce DUAL_HIGH_ODDS_CEILING for ANY Both-agreement signal,
     # not just High+Both (which is what the main list endpoint gates).
@@ -1596,6 +1610,20 @@ async def get_advisor_insights(
         if len(ticket_legs) < _MIN_ACCA_LEGS:
             continue
 
+        # Server-side market diversity enforcement: no more than 2 legs of the
+        # same market per ticket.  The LLM is instructed to diversify but doesn't
+        # always comply — stacking 3× Home Over 0.5 creates correlated outcomes
+        # (one bad-scoring day kills all legs simultaneously).
+        from collections import Counter as _Counter
+        mkt_counts = _Counter(leg.get("market", "") for leg in ticket_legs)
+        if any(count > 2 for count in mkt_counts.values()):
+            dominant = max(mkt_counts, key=mkt_counts.get)
+            logger.warning(
+                "Acca ticket rejected — market concentration: %s appears %d times",
+                dominant, mkt_counts[dominant],
+            )
+            continue
+
         ticket_legs, combined_odds = _apply_ceiling(ticket_legs)
         if len(ticket_legs) < _MIN_ACCA_LEGS:
             continue
@@ -1660,17 +1688,20 @@ async def get_advisor_insights(
     # non-error response (i.e. the LLM answered but all tickets were rejected
     # by server-side guards) and there are enough signals to build at least one
     # ticket.
-    if not processed_tickets and isinstance(acca_result, dict) and not acca_result.get("error") and len(rows) >= 3:
-        logger.info("Acca: zero tickets after validation — retrying with full pool and relaxed ceiling")
-        _pool_by_fid = {fix.id: (sig, fix) for sig, fix in rows}
+    if not processed_tickets and isinstance(acca_result, dict) and not acca_result.get("error") and len(acca_pool) >= 3:
+        logger.info("Acca: zero tickets after validation — retrying with same quality pool")
+        # Retry uses the same acca_pool (not raw rows) so quality gates stay in force.
+        # Opening up to the full advisory pool (Medium+single-engine) would compound
+        # low-quality legs and produce structurally losing tickets (Jul-2026 postmortem).
+        _pool_by_fid = {fix.id: (sig, fix) for sig, fix in acca_pool}
         _pool_by_names = {
             (_norm(fix.home_team), _norm(fix.away_team)): (sig, fix)
-            for sig, fix in rows
+            for sig, fix in acca_pool
         }
-        _COMBINED_MAX = 25.0
+        _COMBINED_MAX = 20.0
         used_fixture_ids = set()
 
-        retry_context = _build_context(list(rows), match_infos, perf_weights)
+        retry_context = _build_context(list(acca_pool), match_infos, perf_weights)
         retry_model_label, retry_raw = await _call_advisor(ACCA_BUILDER, retry_context, settings)
 
         retry_raw_tickets: list[dict] = []
