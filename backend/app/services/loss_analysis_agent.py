@@ -466,8 +466,10 @@ def _backtest_proposal(
     In-process backtest: apply a proposed threshold to historical settled bets
     and check whether it would have helped or hurt.
 
-    Currently handles: market_odds_ceiling proposals.
-    Other types are accepted by default (insufficient data to reject them).
+    Handles: market_odds_ceiling and min_probability proposals.
+    Any other change_type is rejected — hallucinated or unrecognised types
+    must not be persisted. Missing historical data is also a rejection:
+    no data = cannot validate = do not apply.
     """
     pid = proposal.get("proposal_id", "unknown")
     change_type = proposal.get("change_type", "")
@@ -475,14 +477,24 @@ def _backtest_proposal(
     proposed_value = proposal.get("proposed_value")
     confidence = proposal.get("confidence", "Low")
 
-    if change_type != "market_odds_ceiling" or proposed_value is None:
-        return BacktestResult(pid, accepted=True, reason="Accepted (no backtest available for this type)")
+    if change_type not in ("market_odds_ceiling", "min_probability"):
+        return BacktestResult(
+            pid, accepted=False,
+            reason=f"Rejected — change_type '{change_type}' is not handled by the Pipeline A backtester; "
+                   "hallucinated types must not be persisted",
+        )
+
+    if proposed_value is None:
+        return BacktestResult(pid, accepted=False, reason="Rejected — proposed_value is None")
 
     # Filter settled bets for this market
     market_bets = [b for b in settled_bets if b.market_type == target and b.odds is not None]
 
     if not market_bets:
-        return BacktestResult(pid, accepted=True, reason="Accepted (no historical data for market)")
+        return BacktestResult(
+            pid, accepted=False,
+            reason=f"Rejected — no settled bets for market '{target}'; cannot validate without historical data",
+        )
 
     # Bets that would be EXCLUDED by the new ceiling
     excluded = [b for b in market_bets if b.odds > proposed_value]

@@ -799,9 +799,13 @@ def build_tomorrow_message(
     reveal_fixture_ids = reveal_fixture_ids or set()
     title = "TiTiBet Free" if is_free else "TiTiBet Pro"
     date_label = run_date.strftime("%a %d %b %Y")
+    if rows:
+        subtitle = f"Full slate for tomorrow · {len(rows)} pick{'s' if len(rows) != 1 else ''} · place your bets tonight"
+    else:
+        subtitle = "AI Acca of the Day · place your bets tonight"
     parts = [
         f"🌅 <b>{title} — Tomorrow, {date_label}</b>",
-        f"<i>Full slate for tomorrow · {len(rows)} pick{'s' if len(rows) != 1 else ''} · place your bets tonight</i>",
+        f"<i>{subtitle}</i>",
     ]
     for i, (sig, fix) in enumerate(rows, 1):
         primary = max((v for v in [sig.bayesian_prob, sig.poisson_prob] if v), default=None)
@@ -866,13 +870,17 @@ async def push_tomorrow_digest(db: AsyncSession, run_date: date | None = None) -
     run_date = run_date or (date.today() + timedelta(days=1))
 
     tracked = await _query_tracked_singles(db, run_date)
-    if not tracked:
-        logger.info("Tomorrow digest: no tracked system picks for %s — nothing to send", run_date)
+    acca = await _query_tracked_acca(db, run_date)
+
+    if not tracked and acca is None:
+        logger.info("Tomorrow digest: no tracked picks or acca for %s — nothing to send", run_date)
         return 0
+
+    if not tracked:
+        logger.info("Tomorrow digest: no system singles for %s — sending acca-only digest", run_date)
 
     chronological = sorted(tracked, key=lambda r: _ko_aware(r[1].kickoff_at) or datetime.max.replace(tzinfo=timezone.utc))
 
-    acca = await _query_tracked_acca(db, run_date)
     if acca is None:
         logger.info("Tomorrow digest: no system_acca ticket for %s — sending singles only", run_date)
 
@@ -1196,14 +1204,18 @@ async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_RE
     now = datetime.now(tz=timezone.utc)
 
     tracked = await _query_tracked_singles(db, today)
-    if not tracked:
-        logger.info("Morning digest: no tracked system picks for %s — skipping", today)
+    acca = await _query_tracked_acca(db, today)
+
+    if not tracked and acca is None:
+        logger.info("Morning digest: no tracked picks or acca for %s — skipping", today)
         return 0
+
+    if not tracked:
+        logger.info("Morning digest: no system singles for %s — sending acca-only digest", today)
 
     by_rank = sorted(tracked, key=lambda r: _system_rank(r[0], r[1]), reverse=True)
     reveal_fixture_ids = _pick_reveal_fixture_ids(by_rank, free_reveal_count)
 
-    acca = await _query_tracked_acca(db, today)
     if acca is None:
         logger.info("Morning digest: no system_acca ticket for %s — sending singles only", today)
 
@@ -1216,8 +1228,13 @@ async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_RE
             break
 
     date_label = today.strftime("%a %d %b %Y")
+    push_type = "morning_confirm" if evening_sent else "morning"
     sent = 0
     for chat_id, channel_type in targets:
+        if await _check_push_sent(db, today, channel_type, push_type):
+            logger.info("Morning digest: already sent (%s) for %s/%s — skipping", push_type, today, channel_type)
+            continue
+
         if channel_type == "free":
             text = build_signal_digest(by_rank, channel_type="free", now=now,
                                        reveal_fixture_ids=reveal_fixture_ids, acca=acca)
@@ -1245,6 +1262,7 @@ async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_RE
         for chunk in _split_message(text):
             ok = await _send_to(chat_id, chunk)
         if ok:
+            await _log_push_sent(db, today, channel_type, push_type)
             sent += 1
 
     mode = "confirmation" if evening_sent else "digest"
