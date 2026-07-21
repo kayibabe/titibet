@@ -775,3 +775,47 @@ async def odds_band_breakdown(
         ],
         "value_band_poisson_only": _fmt(vb_poisson, "1.65–2.09 · Poisson Only"),
     }
+
+
+@router.get("/value-band-streak")
+async def value_band_streak(
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """
+    Current consecutive-win streak for Value Band signals (Poisson Only, 1.65–2.09 odds).
+
+    Walks settled bets newest-first and counts unbroken Wins. Stops at the first
+    Loss. Returns streak length, all-time total + WR, and the date of the last loss
+    (null if the band has never lost).
+    """
+    q = (
+        _base_query(current_user)
+        .where(TrackedBet.result_status.in_(["Won", "Lost"]))
+        .where(TrackedBet.stake > 0)
+        .where(TrackedBet.dual_agreement == "Poisson Only")
+        .where(TrackedBet.odds >= 1.65)
+        .where(TrackedBet.odds < 2.10)
+        .order_by(TrackedBet.event_date.desc(), TrackedBet.id.desc())
+    )
+    bets = (await db.execute(q)).scalars().all()
+
+    streak = 0
+    last_loss: Optional[str] = None
+    total = len(bets)
+    won_total = sum(1 for b in bets if b.result_status == "Won")
+
+    for bet in bets:
+        if bet.result_status == "Won":
+            streak += 1
+        else:
+            last_loss = bet.event_date.isoformat() if bet.event_date else None
+            break
+
+    return {
+        "streak":    streak,
+        "total":     total,
+        "won":       won_total,
+        "wr_pct":    round(won_total / total * 100, 1) if total else 0.0,
+        "last_loss": last_loss,
+    }

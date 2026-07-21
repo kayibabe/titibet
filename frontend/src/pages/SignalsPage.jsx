@@ -3,6 +3,7 @@ import { RefreshCw, Download, Calendar, TrendingUp, ArrowUpDown, SlidersHorizont
 import { useSignals } from '../store/useSignals'
 import { computeSignals, fetchSignals } from '../api/signals'
 import { syncData, fetchBets } from '../api/tracker'
+import { fetchValueBandStreak } from '../api/analytics'
 import SignalCard from '../components/signals/SignalCard'
 import { marketColor } from '../utils/format'
 import TrackModal from '../components/tracker/TrackModal'
@@ -297,6 +298,11 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
     setAnalyticsFilter(initialFilter)
     onFilterConsumed?.()
   }, [initialFilter]) // eslint-disable-line
+
+  const [vbStreak, setVbStreak] = useState(null) // { streak, total, won, wr_pct, last_loss }
+  useEffect(() => {
+    fetchValueBandStreak().then(setVbStreak).catch(() => {})
+  }, [])
 
   function clearAnalyticsFilter() {
     setMarket('')
@@ -668,14 +674,30 @@ const reload = () => load(params)
 
         {/* Value Band explanation banner */}
         {viewMode === 'value_band' && (
-          <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/8 px-4 py-3 text-sm">
-            <span className="text-amber-400 text-lg leading-none mt-0.5">◆</span>
-            <div>
-              <p className="font-semibold text-amber-400 text-xs mb-0.5">Value Band — Poisson Only @ 1.65–2.09</p>
-              <p className="text-[var(--text)] opacity-75 text-xs leading-relaxed">
-                These signals are where Poisson finds the most edge: 91.9% WR across 99 bets.
-                The model detects home-team scoring rate mispriced by lagging bookmaker lines.
-              </p>
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-4 py-3 text-sm">
+            <div className="flex items-start gap-3">
+              <span className="text-amber-400 text-lg leading-none mt-0.5">◆</span>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-amber-400 text-xs mb-0.5">Value Band — Poisson Only @ 1.65–2.09</p>
+                <p className="text-[var(--text)] opacity-75 text-xs leading-relaxed">
+                  These signals are where Poisson finds the most edge: 91.9% WR across 99 bets.
+                  The model detects home-team scoring rate mispriced by lagging bookmaker lines.
+                </p>
+              </div>
+              {vbStreak && (
+                <div className="shrink-0 text-right">
+                  <div className="flex items-center gap-1 justify-end">
+                    <span className="text-base leading-none">{vbStreak.streak >= 10 ? '🔥' : '✅'}</span>
+                    <span className="text-xl font-bold text-amber-400 leading-none">{vbStreak.streak}</span>
+                  </div>
+                  <p className="text-[10px] text-[var(--text)] opacity-60 mt-0.5">
+                    consecutive win{vbStreak.streak !== 1 ? 's' : ''}
+                  </p>
+                  <p className="text-[10px] text-[var(--text)] opacity-50">
+                    {vbStreak.wr_pct}% · {vbStreak.total} bets
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -143,3 +143,9 @@ export async function fetchOddsBandBreakdown(filters = {}) {
   if (!res.ok) throw new Error(`Odds band breakdown fetch failed: ${res.status}`)
   return res.json()
 }
+
+export async function fetchValueBandStreak() {
+  const res = await apiFetch(`${BASE}/value-band-streak`)
+  if (!res.ok) throw new Error(`Value Band streak fetch failed: ${res.status}`)
+  return res.json()
+}
