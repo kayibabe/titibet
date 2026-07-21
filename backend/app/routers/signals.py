@@ -446,10 +446,11 @@ async def list_signals(
     #      makes Under markets more reliable, not less.
     # B-3: Drop contradicted signals — both engines point in opposite directions.
     #      Ranking them lower is insufficient; there is no reliable directional edge.
-    # B-4: Drop Both+Medium signals where odds ≥ 1.65 — calibration degrades above
-    #      this threshold (9-bet backtest at avg 1.584: 55.6% WR, −8.7% ROI).
-    #      Below 1.65 (implied ≥61%) both engines agree with sufficient conviction;
-    #      above 1.65 the signal sits in a no-man's land where EV flips negative.
+    # B-4: Both+Medium allowed only in the 1.50–1.64 odds band.
+    #      < 1.50 (the 1.40–1.49 band): 45.5% WR across 22 bets — the worst performer.
+    #        Both engines agree on a short-priced favourite but 0-0 results are endemic.
+    #      ≥ 1.65: 55.6% WR on 9-bet backtest, −8.7% ROI — EV flips negative.
+    #      1.50–1.64 (implied 61–67%): 63.6% WR across 22 bets — the only viable band.
     # B-5: Drop Both+Medium signals from BOTH_MEDIUM_DISABLED_LEAGUES — leagues with
     #      confirmed 0-0 patterns that both engines systematically mis-model.
     #      Poisson Only signals from these leagues are unaffected.
@@ -468,7 +469,7 @@ async def list_signals(
         and not (                                                        # B-4
             sig.dual_agreement == "Both"
             and sig.dual_confidence == "Medium"
-            and (sig.bayesian_best_odd or 0.0) >= 1.65
+            and not (1.50 <= (sig.bayesian_best_odd or 0.0) < 1.65)
         )
         and not (                                                        # B-5
             sig.dual_agreement == "Both"
