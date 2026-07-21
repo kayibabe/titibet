@@ -450,6 +450,21 @@ DISABLED_LEAGUES: frozenset = frozenset({
     "serie b",
 })
 
+# Leagues suppressed only for Both+Medium signals (dual_agreement="Both", dual_confidence="Medium").
+# Poisson Only signals from these leagues are unaffected.
+# Use when a league has a confirmed pattern of 0-0 results against short-priced home favourites
+# that both engines mis-model, but Poisson Only signals still show edge.
+# Matched via lower(trim(league)) exact match.
+BOTH_MEDIUM_DISABLED_LEAGUES: frozenset = frozenset({
+    # ── Disabled 2026-07-21 (Both+Medium audit) ───────────────────────────────
+    # Copa Rio (Brazil 3rd div): 0W/2L, 0% WR, -100% ROI. Both engines agree on
+    # a heavy home favourite but 0-0 results are endemic — low-scoring regional cup.
+    "copa rio",
+    # Primera Nacional (Argentina 2nd div): 1W/3L, 25% WR, -62.5% ROI.
+    # Dense defensive setups; home scores suppressed relative to implied probability.
+    "primera nacional",
+})
+
 # Leagues where the auto-tracker stake is halved (×0.5) instead of full FLAT_STAKE.
 # Use when the edge appears real but smaller than modelled — reduces variance while
 # keeping the league in the feed until a larger settled-bet sample confirms the edge.

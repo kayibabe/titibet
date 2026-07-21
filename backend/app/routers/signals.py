@@ -11,7 +11,7 @@ from app.core.auth import get_current_user_optional, get_current_user
 from app.core.database import get_db
 from sqlalchemy import func
 from app.core.config import (
-    get_settings, DISABLED_MARKETS, DISABLED_LEAGUES,
+    get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, BOTH_MEDIUM_DISABLED_LEAGUES,
     OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
     MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING,
     WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
@@ -433,8 +433,8 @@ async def list_signals(
             )
         ]
 
-    # ── Universal signal quality baseline (B-1 / B-2 / B-3 / B-4) ──────────
-    # Every signal clears these four gates regardless of market.
+    # ── Universal signal quality baseline (B-1 … B-5) ───────────────────────
+    # Every signal clears these five gates regardless of market.
     # Per-market overrides (DUAL_HIGH_ODDS_CEILING, COPA_HO05_SUPPRESSED_LEAGUES,
     # etc.) are applied afterward and are unaffected.
     #
@@ -450,6 +450,9 @@ async def list_signals(
     #      this threshold (9-bet backtest at avg 1.584: 55.6% WR, −8.7% ROI).
     #      Below 1.65 (implied ≥61%) both engines agree with sufficient conviction;
     #      above 1.65 the signal sits in a no-man's land where EV flips negative.
+    # B-5: Drop Both+Medium signals from BOTH_MEDIUM_DISABLED_LEAGUES — leagues with
+    #      confirmed 0-0 patterns that both engines systematically mis-model.
+    #      Poisson Only signals from these leagues are unaffected.
     _WOMEN_UNIVERSAL_MARKETS: frozenset = WOMEN_OVER_SUPPRESSED_MARKETS | frozenset({
         "1X (Home or Draw)", "X2 (Draw or Away)", "12 (Home or Away)",
         "Over 0.5 1H", "Home Win to Nil", "Away Win to Nil",
@@ -466,6 +469,11 @@ async def list_signals(
             sig.dual_agreement == "Both"
             and sig.dual_confidence == "Medium"
             and (sig.bayesian_best_odd or 0.0) >= 1.65
+        )
+        and not (                                                        # B-5
+            sig.dual_agreement == "Both"
+            and sig.dual_confidence == "Medium"
+            and (fix.league or "").lower().strip() in BOTH_MEDIUM_DISABLED_LEAGUES
         )
     ]
 
