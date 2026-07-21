@@ -446,12 +446,10 @@ async def list_signals(
     #      makes Under markets more reliable, not less.
     # B-3: Drop contradicted signals — both engines point in opposite directions.
     #      Ranking them lower is insufficient; there is no reliable directional edge.
-    # B-4: Drop Both+Medium signals — backtest (9 bets): 55.6% WR, −8.7% ROI.
-    #      When both engines agree but only at Medium confidence the signal sits
-    #      in a no-man's land: not strong enough for the High gate but priced at
-    #      longer odds (avg 1.584) where calibration error flips EV negative.
-    #      Poisson Only+Medium (86.8% WR) and Both+High (76.1% WR) both outperform;
-    #      this tier adds noise and risk with no compensating edge.
+    # B-4: Drop Both+Medium signals where odds ≥ 1.65 — calibration degrades above
+    #      this threshold (9-bet backtest at avg 1.584: 55.6% WR, −8.7% ROI).
+    #      Below 1.65 (implied ≥61%) both engines agree with sufficient conviction;
+    #      above 1.65 the signal sits in a no-man's land where EV flips negative.
     _WOMEN_UNIVERSAL_MARKETS: frozenset = WOMEN_OVER_SUPPRESSED_MARKETS | frozenset({
         "1X (Home or Draw)", "X2 (Draw or Away)", "12 (Home or Away)",
         "Over 0.5 1H", "Home Win to Nil", "Away Win to Nil",
@@ -467,6 +465,7 @@ async def list_signals(
         and not (                                                        # B-4
             sig.dual_agreement == "Both"
             and sig.dual_confidence == "Medium"
+            and (sig.bayesian_best_odd or 0.0) >= 1.65
         )
     ]
 

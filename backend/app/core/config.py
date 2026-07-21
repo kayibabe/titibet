@@ -385,7 +385,8 @@ DISABLED_MARKETS: frozenset = frozenset({
     "Exactly 2 Goals",
     "Exactly 3 Goals",
     # ── Focused single-market mode (2026-07-17) ───────────────────────────────
-    # System narrowed to Home Over 0.5 Poisson Only + Medium only.
+    # System narrowed to Home Over 0.5 only.
+    # B-4 gate relaxed 2026-07-21: Both+Medium allowed at odds < 1.65 (implied ≥61%).
     # Validated: 86.8% WR / +10.8% ROI across 76 tracked bets at avg 1.258 odds.
     # All other markets suppressed at serving time and compute time until
     # a broader re-audit establishes independent edge for each.
