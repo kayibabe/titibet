@@ -255,25 +255,15 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         if signal.bos_passed and signal.market in _OVER_MARKETS:
             continue
 
-        # Home Over 0.5 single-engine gate: Poisson Only at non-High confidence
-        # requires prob >= 0.80. Loss audit Jul-2026: 9 of 11 real-stake HO0.5
-        # losses were Poisson Only Medium at prob 0.69–0.79; no corresponding wins
-        # in that bucket justify the variance. Bayesian non-agreement is a strong
-        # contra-signal that the bookmaker prices embed information the Poisson
-        # model misses (formation, motivation, home-pitch familiarity).
-        prob_for_gate = max(signal.bayesian_prob or 0.0, signal.poisson_prob or 0.0)
+        # B-4 gate (mirrors router): Both+Medium only at 1.50–1.94 odds.
+        # < 1.50: 53.8% WR — correct block. ≥ 1.95: thin sample, excluded pending data.
+        # Full-data audit Jul-2026: 13 bets at 1.65–2.09 ran 69.2% WR — previously
+        # blocked gate was wrong; ceiling raised to 1.95 to capture the viable range.
         if (
-            signal.market == "Home Over 0.5"
-            and signal.dual_agreement == "Poisson Only"
-            and signal.dual_confidence != "High"
-            and prob_for_gate < 0.80
+            signal.dual_agreement == "Both"
+            and signal.dual_confidence == "Medium"
+            and not (1.50 <= (signal.bayesian_best_odd or 0.0) < 1.95)
         ):
-            continue
-
-        # B-4 gate (mirrors router): Both+Medium signals have 55.6% WR / -8.7% ROI
-        # (9-bet backtest) and are suppressed from subscriber serving. Tracking them
-        # here would pollute analytics with phantom losses subscribers never placed.
-        if signal.dual_agreement == "Both" and signal.dual_confidence == "Medium":
             continue
 
         # Over 1.5 confidence gate: only track High-confidence signals.

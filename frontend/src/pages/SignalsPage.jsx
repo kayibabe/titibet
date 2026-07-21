@@ -673,7 +673,7 @@ const reload = () => load(params)
             <div>
               <p className="font-semibold text-amber-400 text-xs mb-0.5">Value Band — Poisson Only @ 1.65–2.09</p>
               <p className="text-[var(--text)] opacity-75 text-xs leading-relaxed">
-                These signals are where Poisson finds the most edge: 91–98% WR across 86 bets.
+                These signals are where Poisson finds the most edge: 91.9% WR across 99 bets.
                 The model detects home-team scoring rate mispriced by lagging bookmaker lines.
               </p>
             </div>
