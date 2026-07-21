@@ -41,6 +41,7 @@ from app.services.telegram import (
     check_and_push_pending_results,
     push_morning_digest,
     push_tomorrow_digest,
+    push_value_band_alert,
     push_ingestion_alert,
 )
 
@@ -405,6 +406,12 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                             logger.info("Tomorrow digest: sent to %d channel(s) for %s", n_sent, tomorrow)
                     except Exception:
                         logger.exception("Tomorrow digest push failed — continuing normally")
+                    try:
+                        vb_sent = await push_value_band_alert(db, tomorrow)
+                        if vb_sent:
+                            logger.info("Value Band alert sent for %s", tomorrow)
+                    except Exception:
+                        logger.exception("Value Band alert failed — continuing normally")
 
         except Exception:
             logger.exception("Scheduler error for %s", run_date)

@@ -926,6 +926,101 @@ async def push_tomorrow_digest(db: AsyncSession, run_date: date | None = None) -
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Value Band alert — Pro-only, sent at 19:00 UTC alongside the tomorrow digest
+#
+# Targets Poisson Only signals at 1.65–2.09 bookmaker odds — the segment the
+# system audit confirmed at 91–98% WR across 86 bets. Sent only when ≥1
+# qualifying signal exists for the target date. Idempotent via push_log.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_VALUE_BAND_LO = 1.65
+_VALUE_BAND_HI = 2.10  # exclusive upper bound
+
+
+def build_value_band_message(
+    rows: list[tuple[Signal, Fixture]],
+    run_date: date,
+) -> str:
+    """
+    Format the Pro-only Value Band alert for `run_date`.
+
+    Shows every Poisson Only signal at 1.65–2.09 odds, ranked by system rank
+    (highest first), in the same visual style as the tomorrow digest.
+    """
+    date_label = run_date.strftime("%a %d %b %Y")
+    count = len(rows)
+    parts = [
+        f"◆ <b>TiTiBet Pro — Value Band Picks</b>",
+        f"<i>{date_label} · {count} pick{'s' if count != 1 else ''} · Poisson edge at 1.65–2.09 · 91–98% WR historically</i>",
+    ]
+    for i, (sig, fix) in enumerate(rows, 1):
+        primary = max((v for v in [sig.bayesian_prob, sig.poisson_prob] if v), default=None)
+        ko = _kickoff_str_cat(fix.kickoff_at)
+        league_line = (
+            f"{_esc(fix.country)} · {_esc(fix.league)}" if fix.country else _esc(fix.league or "")
+        )
+        best_odd = sig.bayesian_best_odd or sig.poisson_prob and round(1 / sig.poisson_prob, 2)
+        odd_str = f"@{best_odd:.2f}" if best_odd else ""
+        parts.append(
+            f"\n<b>{i}. {_esc(fix.home_team)} vs {_esc(fix.away_team)}</b>"
+            f"{(' · ' + ko) if ko else ''}\n"
+            f"   🏆 {league_line}\n"
+            f"   📌 {_esc(_verbose_market(sig.market))} · {_pct(primary)} {odd_str}"
+        )
+    parts.append(f"\n<a href=\"{settings.app_url}\">{settings.app_url}</a>")
+    return "\n".join(parts)
+
+
+async def push_value_band_alert(db: AsyncSession, run_date: date | None = None) -> int:
+    """
+    Send the Value Band alert to the Pro channel only.
+
+    Queries tomorrow's signals, keeps Poisson Only rows at 1.65–2.09 odds,
+    and sends one message if ≥1 qualifying signal exists. Idempotent per date
+    via telegram_push_log (push_type='value_band'). Returns 1 on success, 0 if
+    nothing was sent (no qualifying signals, already sent, or Telegram not configured).
+    """
+    if not settings.telegram_bot_token or not settings.telegram_pro_chat_id:
+        return 0
+
+    run_date = run_date or (date.today() + timedelta(days=1))
+
+    if await _check_push_sent(db, run_date, "pro", "value_band"):
+        logger.info("Value Band alert: already sent for %s — skipping", run_date)
+        return 0
+
+    rows = await _query_all_rows(db, run_date)
+    deduped = _best_per_fixture(rows)
+
+    value_band = [
+        (sig, fix) for sig, fix in deduped
+        if sig.dual_agreement == "Poisson Only"
+        and _VALUE_BAND_LO <= (sig.bayesian_best_odd or 0.0) < _VALUE_BAND_HI
+    ]
+
+    if not value_band:
+        logger.info("Value Band alert: no qualifying signals for %s — nothing to send", run_date)
+        return 0
+
+    ranked = sorted(value_band, key=lambda r: _system_rank(r[0], r[1]), reverse=True)
+
+    text_msg = build_value_band_message(ranked, run_date)
+    ok = False
+    for chunk in _split_message(text_msg):
+        ok = await _send_to(settings.telegram_pro_chat_id, chunk)
+
+    if ok:
+        await _log_push_sent(db, run_date, "pro", "value_band")
+        logger.info(
+            "Value Band alert sent to Pro channel — %d signal(s) for %s",
+            len(ranked), run_date,
+        )
+        return 1
+
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Results reporting
 # ─────────────────────────────────────────────────────────────────────────────
 
