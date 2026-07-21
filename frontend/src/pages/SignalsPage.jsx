@@ -252,6 +252,7 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
   const [leagueSearch, setLeagueSearch] = useState('')
   const [showSavedOnly, setShowSavedOnly] = useState(false)
   const [filtersOpen, setFiltersOpen]   = useState(false)
+  const [viewMode, setViewMode]         = useState('all') // 'all' | 'value_band'
 
   const getSavedIds = () => { try { return JSON.parse(localStorage.getItem('titibet_saved_signals_v1') || '[]') } catch { return [] } }
   const [syncing, setSyncing]       = useState(false)
@@ -292,6 +293,7 @@ export default function SignalsPage({ settings, onDeepDive, onUpgrade, onNavigat
     if (initialFilter.market)     setMarket(initialFilter.market)
     if (initialFilter.confidence) setConfidence(initialFilter.confidence)
     if (initialFilter.agreement)  setAgreement(initialFilter.agreement)
+    if (initialFilter.viewMode)   setViewMode(initialFilter.viewMode)
     setAnalyticsFilter(initialFilter)
     onFilterConsumed?.()
   }, [initialFilter]) // eslint-disable-line
@@ -399,8 +401,16 @@ const reload = () => load(params)
       list = list.filter(s => savedIds.includes(s.id))
     }
 
+    // Value Band view: Poisson Only signals at 1.65–2.09 odds
+    if (viewMode === 'value_band') {
+      list = list.filter(s => {
+        const odd = s.best_odd ?? s.bayesian?.best_odd ?? 0
+        return s.dual_agreement === 'Poisson Only' && odd >= 1.65 && odd < 2.10
+      })
+    }
+
     return list
-  }, [signals, marketFamily, sortBy, minProb, leagueSearch, showSavedOnly]) // eslint-disable-line
+  }, [signals, marketFamily, sortBy, minProb, leagueSearch, showSavedOnly, viewMode]) // eslint-disable-line
 
   // Summary stats for the result bar
   const stats = useMemo(() => {
@@ -631,6 +641,42 @@ const reload = () => load(params)
             >
               <X size={12} /> Clear filter
             </button>
+          </div>
+        )}
+
+        {/* ── View Mode tabs ────────────────────────────────────────────── */}
+        <div className="flex gap-1 rounded-lg border border-[var(--border)] bg-[var(--code-bg)] p-1">
+          {[
+            { key: 'all',        label: 'All Signals' },
+            { key: 'value_band', label: '◆ Value Band' },
+          ].map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setViewMode(key)}
+              className={`flex-1 rounded-md py-1.5 text-xs font-semibold transition-all ${
+                viewMode === key
+                  ? key === 'value_band'
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                    : 'bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30'
+                  : 'text-[var(--text)] opacity-60 hover:opacity-90'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Value Band explanation banner */}
+        {viewMode === 'value_band' && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/8 px-4 py-3 text-sm">
+            <span className="text-amber-400 text-lg leading-none mt-0.5">◆</span>
+            <div>
+              <p className="font-semibold text-amber-400 text-xs mb-0.5">Value Band — Poisson Only @ 1.65–2.09</p>
+              <p className="text-[var(--text)] opacity-75 text-xs leading-relaxed">
+                These signals are where Poisson finds the most edge: 91–98% WR across 86 bets.
+                The model detects home-team scoring rate mispriced by lagging bookmaker lines.
+              </p>
+            </div>
           </div>
         )}
 

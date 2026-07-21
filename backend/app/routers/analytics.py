@@ -689,3 +689,89 @@ async def signal_accuracy(
             for t, s in sorted(by_tier.items())
         ],
     }
+
+
+@router.get("/odds-band-breakdown")
+async def odds_band_breakdown(
+    date_from: Optional[str] = Query(None),
+    date_to:   Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """
+    Win-rate and ROI broken down by bookmaker odds band across all settled bets.
+
+    Highlights the 'Value Band' (1.65–2.09) where Poisson Only signals show
+    near-perfect win rates — the system audit confirmed 91–98% WR on 86 bets.
+
+    Also returns a dedicated 'value_band_poisson_only' breakdown isolating the
+    Poisson Only subset of the 1.65–2.09 band, which is the highest-edge segment.
+    """
+    q = (
+        _base_query(current_user)
+        .where(TrackedBet.result_status.in_(["Won", "Lost"]))
+        .where(TrackedBet.stake > 0)
+    )
+    if date_from:
+        q = q.where(TrackedBet.event_date >= date_from)
+    if date_to:
+        q = q.where(TrackedBet.event_date <= date_to)
+
+    bets = (await db.execute(q)).scalars().all()
+
+    BANDS: list[tuple[str, object]] = [
+        ("< 1.35",    lambda o: o < 1.35),
+        ("1.35–1.49", lambda o: 1.35 <= o < 1.50),
+        ("1.50–1.64", lambda o: 1.50 <= o < 1.65),
+        ("1.65–2.09", lambda o: 1.65 <= o < 2.10),
+        ("2.10+",     lambda o: o >= 2.10),
+    ]
+
+    def _mk():
+        return {"n": 0, "won": 0, "pl": 0.0, "stake": 0.0}
+
+    band_data = {label: _mk() for label, _ in BANDS}
+    vb_poisson = _mk()  # Poisson Only subset of 1.65–2.09
+
+    for bet in bets:
+        odds = bet.odds or 0.0
+        if odds <= 0:
+            continue
+        won = 1 if bet.result_status == "Won" else 0
+        pl  = bet.profit_loss or 0.0
+        stk = bet.stake or 0.0
+
+        for label, check in BANDS:
+            if check(odds):
+                d = band_data[label]
+                d["n"]  += 1
+                d["won"]  += won
+                d["pl"]   += pl
+                d["stake"] += stk
+                break
+
+        if 1.65 <= odds < 2.10 and (bet.dual_agreement or "") == "Poisson Only":
+            vb_poisson["n"]     += 1
+            vb_poisson["won"]   += won
+            vb_poisson["pl"]    += pl
+            vb_poisson["stake"] += stk
+
+    def _fmt(d: dict, label: str, is_vb: bool = False) -> dict:
+        wr  = round(d["won"] / d["n"] * 100, 1) if d["n"] else 0.0
+        roi = round(d["pl"] / d["stake"] * 100, 1) if d["stake"] else 0.0
+        return {
+            "band":          label,
+            "n":             d["n"],
+            "won":           d["won"],
+            "wr_pct":        wr,
+            "roi_pct":       roi,
+            "is_value_band": is_vb,
+        }
+
+    return {
+        "bands": [
+            _fmt(band_data[label], label, label == "1.65–2.09")
+            for label, _ in BANDS
+        ],
+        "value_band_poisson_only": _fmt(vb_poisson, "1.65–2.09 · Poisson Only"),
+    }

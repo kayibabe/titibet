@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Brain, Activity, BarChart2, Layers, TrendingUp, Zap, TrendingDown, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, Target, Coins, Crosshair, Users, Bot, User } from 'lucide-react'
-import { fetchAnalytics, fetchAnalyticsIntelligence, fetchStakingSimulation, fetchProbabilityCalibration, fetchAccaPerformance } from '../api/analytics'
+import { fetchAnalytics, fetchAnalyticsIntelligence, fetchStakingSimulation, fetchProbabilityCalibration, fetchAccaPerformance, fetchOddsBandBreakdown } from '../api/analytics'
 import AccuracyDashboard from '../components/analytics/AccuracyDashboard'
 import Leaderboard from '../components/analytics/Leaderboard'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Cell } from 'recharts'
@@ -918,6 +918,10 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
                 </Section>
               )}
 
+              <Section icon={TrendingUp} title="Value Band Breakdown" subtitle="win rate and ROI by bookmaker odds range · ◆ marks the highest-edge band">
+                <OddsBandBreakdown />
+              </Section>
+
               {isPro && data.bySource?.length > 0 && (
                 <Section icon={Zap} title="Pick Sources" subtitle="performance by how a bet was added" pro>
                   <ByMarketTable rows={data.bySource} title="" keyField="source" />
@@ -974,6 +978,101 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
           )}
 
         </>
+      )}
+    </div>
+  )
+}
+
+// ── Odds Band Breakdown ────────────────────────────────────────────────────────
+function OddsBandBreakdown() {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetchOddsBandBreakdown()
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <LoadingSpinner />
+  if (!data) return <p className="text-xs text-[var(--text)] opacity-50">No data available.</p>
+
+  const vb = data.value_band_poisson_only
+  return (
+    <div className="space-y-4">
+      {/* Main band table */}
+      <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-[var(--border)] bg-[var(--code-bg)]">
+              <th className="px-3 py-2 text-left font-semibold text-[var(--text-h)] whitespace-nowrap">Odds Band</th>
+              <th className="px-3 py-2 text-right font-semibold text-[var(--text-h)]">Bets</th>
+              <th className="px-3 py-2 text-right font-semibold text-[var(--text-h)]">Won</th>
+              <th className="px-3 py-2 text-right font-semibold text-[var(--text-h)]">WR %</th>
+              <th className="px-3 py-2 text-right font-semibold text-[var(--text-h)]">ROI %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.bands.map(row => (
+              <tr
+                key={row.band}
+                className={`border-b border-[var(--border)] transition-colors ${
+                  row.is_value_band
+                    ? 'bg-amber-500/8 hover:bg-amber-500/12'
+                    : 'hover:bg-[var(--code-bg)]'
+                }`}
+              >
+                <td className="px-3 py-2 font-medium text-[var(--text-h)] whitespace-nowrap">
+                  {row.is_value_band && <span className="text-amber-400 mr-1">◆</span>}
+                  {row.band}
+                  {row.is_value_band && <span className="ml-1.5 text-[10px] text-amber-400 font-bold">VALUE</span>}
+                </td>
+                <td className="px-3 py-2 text-right text-[var(--text)]">{row.n}</td>
+                <td className="px-3 py-2 text-right text-[var(--text)]">{row.won}</td>
+                <td className={`px-3 py-2 text-right font-semibold ${
+                  row.wr_pct >= 75 ? 'text-emerald-400' :
+                  row.wr_pct >= 60 ? 'text-amber-400' :
+                  'text-red-400'
+                }`}>{row.n > 0 ? `${row.wr_pct}%` : '—'}</td>
+                <td className={`px-3 py-2 text-right font-semibold ${
+                  row.roi_pct > 0 ? 'text-emerald-400' : 'text-red-400'
+                }`}>{row.n > 0 ? `${row.roi_pct > 0 ? '+' : ''}${row.roi_pct}%` : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Value Band Poisson Only spotlight */}
+      {vb && vb.n > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 p-3 space-y-1.5">
+          <div className="flex items-center gap-2">
+            <span className="text-amber-400 font-bold text-sm">◆</span>
+            <span className="text-xs font-bold text-amber-400">Poisson Only subset · 1.65–2.09</span>
+            <span className="ml-auto text-[10px] text-[var(--text)] opacity-60">{vb.n} bets</span>
+          </div>
+          <div className="grid grid-cols-3 gap-3 pt-1">
+            <div className="text-center">
+              <div className={`text-lg font-bold ${vb.wr_pct >= 75 ? 'text-emerald-400' : 'text-amber-400'}`}>{vb.wr_pct}%</div>
+              <div className="text-[10px] text-[var(--text)] opacity-60">Win Rate</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-bold text-[var(--text-h)]">{vb.won}/{vb.n}</div>
+              <div className="text-[10px] text-[var(--text)] opacity-60">Won / Total</div>
+            </div>
+            <div className="text-center">
+              <div className={`text-lg font-bold ${vb.roi_pct > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {vb.roi_pct > 0 ? '+' : ''}{vb.roi_pct}%
+              </div>
+              <div className="text-[10px] text-[var(--text)] opacity-60">ROI</div>
+            </div>
+          </div>
+          <p className="text-[10px] text-[var(--text)] opacity-65 pt-1 leading-relaxed">
+            When Poisson Only signals fall in the 1.65–2.09 range the model is finding home-team
+            scoring rates mispriced by bookmaker lines. This is the system's highest-edge segment.
+          </p>
+        </div>
       )}
     </div>
   )

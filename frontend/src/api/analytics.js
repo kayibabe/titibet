@@ -133,3 +133,13 @@ export async function fetchSignalAccuracy(lookbackDays = 90) {
   if (!res.ok) throw new Error(`Signal accuracy fetch failed: ${res.status}`)
   return res.json()
 }
+
+export async function fetchOddsBandBreakdown(filters = {}) {
+  const params = new URLSearchParams()
+  if (filters.date_from) params.set('date_from', filters.date_from)
+  if (filters.date_to)   params.set('date_to',   filters.date_to)
+  const qs = params.toString() ? `?${params}` : ''
+  const res = await apiFetch(`${BASE}/odds-band-breakdown${qs}`)
+  if (!res.ok) throw new Error(`Odds band breakdown fetch failed: ${res.status}`)
+  return res.json()
+}

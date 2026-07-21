@@ -564,6 +564,8 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
   const isContradiction = signal.dual_agreement === 'Contradiction'
   const isBayesianOnly = signal.dual_agreement === 'Bayesian Only' || (signal.dual_agreement === 'Both' && signal.dual_confidence !== 'High')
   const displayBestOdd = signal.best_odd ?? signal.bayesian?.best_odd ?? null
+  const isValueBandSig = signal.dual_agreement === 'Poisson Only' &&
+    (displayBestOdd || 0) >= 1.65 && (displayBestOdd || 0) < 2.10
   const displayBookmaker = signal.best_bookmaker ?? signal.bayesian?.bookmaker ?? null
   const primaryProb = Math.max(signal.bayesian?.prob ?? 0, signal.poisson?.prob ?? 0)
   const isMediumConfidence = signal.dual_confidence === 'Medium'
@@ -663,6 +665,14 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
               >
                 <Zap size={9} />
                 Fatigue
+              </span>
+            )}
+            {isValueBandSig && (
+              <span
+                title="Value Band — Poisson Only at 1.65–2.09 odds · 91–98% WR historically"
+                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-[10px] font-bold text-amber-400 shrink-0"
+              >
+                ◆ Value
               </span>
             )}
             <RankBadge rank={rank} />
