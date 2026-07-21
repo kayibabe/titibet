@@ -107,7 +107,7 @@ async def run_backtest(
     except Exception:
         perf_weights = None
     try:
-        underperforming_leagues: frozenset[str] = await _get_underperforming_leagues(db, min_roi_pct=60.0)
+        underperforming_leagues: frozenset[str] = await _get_underperforming_leagues(db, min_roi_pct=-20.0)
     except Exception:
         underperforming_leagues = frozenset()
     all_suppressed_leagues = underperforming_leagues | DISABLED_LEAGUES

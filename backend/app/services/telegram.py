@@ -374,7 +374,7 @@ async def push_kickoff_alerts(db: AsyncSession) -> int:
 
 async def _query_all_rows(db: AsyncSession, run_date: date) -> list[tuple[Signal, Fixture]]:
     """Fetch all un-deduplicated signal rows for run_date, with suppression applied."""
-    bad_leagues    = await _get_underperforming_leagues(db, min_roi_pct=60.0)
+    bad_leagues    = await _get_underperforming_leagues(db, min_roi_pct=-20.0)
     all_suppressed = bad_leagues | DISABLED_LEAGUES
 
     query = (

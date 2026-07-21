@@ -360,7 +360,7 @@ _OVER_GOALS_MARKETS: frozenset = frozenset({
 async def _get_underperforming_leagues(
     db: AsyncSession,
     min_bets: int = 5,
-    min_roi_pct: float = 20.0,
+    min_roi_pct: float = -20.0,
 ) -> frozenset[str]:
     """
     Returns a frozenset of lowercased league names to suppress, combining:
@@ -517,7 +517,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
     # Leagues with 5+ settled bets and ROI < 20% are suppressed entirely —
     # no signals generated for any fixture from these leagues until performance recovers.
     try:
-        underperforming_leagues: frozenset[str] = await _get_underperforming_leagues(db, min_roi_pct=60.0)
+        underperforming_leagues: frozenset[str] = await _get_underperforming_leagues(db, min_roi_pct=-20.0)
     except Exception:
         underperforming_leagues = frozenset()
 

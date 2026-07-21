@@ -166,7 +166,7 @@ async def build_acca_candidates(
         .where(Signal.dual_agreement == "Both")  # T2-only: single-engine legs lose money
     )
 
-    bad_leagues   = await _get_underperforming_leagues(db, min_roi_pct=60.0)
+    bad_leagues   = await _get_underperforming_leagues(db, min_roi_pct=-20.0)
     all_suppressed = bad_leagues | DISABLED_LEAGUES
     if all_suppressed:
         query = query.where(func.lower(func.trim(Fixture.league)).notin_(all_suppressed))

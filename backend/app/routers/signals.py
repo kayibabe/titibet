@@ -357,7 +357,7 @@ async def list_signals(
 
     # Serving-time suppression — catches signals that were generated before
     # suppression rules were configured, or when the backend was restarted.
-    bad_leagues = await _get_underperforming_leagues(db, min_roi_pct=60.0)
+    bad_leagues = await _get_underperforming_leagues(db, min_roi_pct=-20.0)
     # Merge dynamic ROI-suppressed leagues with the hard-coded blocklist
     all_suppressed_leagues = bad_leagues | DISABLED_LEAGUES
     if all_suppressed_leagues:
@@ -702,7 +702,7 @@ async def stat_driven_picks(
         .where(Signal.bayesian_best_odd.isnot(None))
     )
 
-    bad_leagues = await _get_underperforming_leagues(db, min_roi_pct=60.0)
+    bad_leagues = await _get_underperforming_leagues(db, min_roi_pct=-20.0)
     all_suppressed = bad_leagues | DISABLED_LEAGUES
     if all_suppressed:
         query = query.where(func.lower(func.trim(Fixture.league)).notin_(all_suppressed))
@@ -1070,7 +1070,7 @@ async def signals_diag(
     from app.services.signal_engine import _get_underperforming_leagues
     from app.core.config import DISABLED_LEAGUES
     try:
-        bad_leagues = await _get_underperforming_leagues(db, min_roi_pct=60.0)
+        bad_leagues = await _get_underperforming_leagues(db, min_roi_pct=-20.0)
     except Exception:
         bad_leagues = frozenset()
     all_suppressed = bad_leagues | DISABLED_LEAGUES
