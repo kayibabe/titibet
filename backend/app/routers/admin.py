@@ -34,6 +34,7 @@ from app.services.telegram import (
     _send_to as telegram_send_to,
     push_results_report as telegram_push_results,
     push_morning_digest as telegram_push_morning_digest,
+    push_value_band_alert as telegram_push_value_band,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -301,6 +302,30 @@ async def telegram_preview(
         })
 
     return {"date": today.isoformat(), "channels": result}
+
+
+@router.post("/telegram/push-value-band")
+async def telegram_push_value_band_endpoint(
+    date: Optional[str] = Query(None, description="Date in YYYY-MM-DD (defaults to tomorrow)"),
+    force: bool = Query(True, description="Bypass idempotency guard — always True for admin test"),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Manually trigger the Value Band alert to the Pro channel.
+    Defaults to tomorrow's signals. Pass force=true (default) to re-send
+    even if already sent today.
+    """
+    from datetime import date as _date, timedelta as _timedelta
+    if date:
+        try:
+            target = _date.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(400, f"Invalid date format: {date!r}. Use YYYY-MM-DD.")
+    else:
+        target = _date.today() + _timedelta(days=1)
+    sent = await telegram_push_value_band(db, target, force=force)
+    return {"sent": sent, "date": target.isoformat(), "force": force}
 
 
 @router.post("/telegram/push-results")

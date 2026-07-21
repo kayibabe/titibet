@@ -971,21 +971,28 @@ def build_value_band_message(
     return "\n".join(parts)
 
 
-async def push_value_band_alert(db: AsyncSession, run_date: date | None = None) -> int:
+async def push_value_band_alert(
+    db: AsyncSession,
+    run_date: date | None = None,
+    *,
+    force: bool = False,
+) -> int:
     """
     Send the Value Band alert to the Pro channel only.
 
     Queries tomorrow's signals, keeps Poisson Only rows at 1.65–2.09 odds,
     and sends one message if ≥1 qualifying signal exists. Idempotent per date
-    via telegram_push_log (push_type='value_band'). Returns 1 on success, 0 if
-    nothing was sent (no qualifying signals, already sent, or Telegram not configured).
+    via telegram_push_log (push_type='value_band'). Pass force=True to bypass
+    the idempotency guard (useful for admin test triggers). Returns 1 on
+    success, 0 if nothing was sent (no qualifying signals, already sent, or
+    Telegram not configured).
     """
     if not settings.telegram_bot_token or not settings.telegram_pro_chat_id:
         return 0
 
     run_date = run_date or (date.today() + timedelta(days=1))
 
-    if await _check_push_sent(db, run_date, "pro", "value_band"):
+    if not force and await _check_push_sent(db, run_date, "pro", "value_band"):
         logger.info("Value Band alert: already sent for %s — skipping", run_date)
         return 0
 
