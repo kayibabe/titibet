@@ -1530,3 +1530,47 @@ async def trigger_sync(
         "evening_extras": evening_extras,
         "note": "Running in background — check server logs for progress.",
     }
+
+
+@router.post("/db/purge-pre-jul2")
+async def purge_pre_jul2(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    One-shot cleanup: delete all tracked_bets, loss_analyses, and learning_proposals
+    created before 2026-07-02 (the date the bookmaker-odds contamination was fixed).
+    Pre-Jul-2 tracked_bets stored 1st-half odds (~2x real FT odds), making all WR/ROI
+    analytics unreliable. Fixtures, signals, and market_snapshots are preserved
+    (model training data — not contaminated).
+    """
+    CUTOFF = "2026-07-02"
+
+    r = await db.execute(
+        text("SELECT COUNT(*) FROM tracked_bets WHERE event_date < :c"), {"c": CUTOFF}
+    )
+    n_bets = r.scalar()
+
+    r = await db.execute(text("SELECT COUNT(*) FROM loss_analyses"))
+    n_loss = r.scalar()
+
+    r = await db.execute(text("SELECT COUNT(*) FROM learning_proposals"))
+    n_prop = r.scalar()
+
+    await db.execute(
+        text("DELETE FROM tracked_bets WHERE event_date < :c"), {"c": CUTOFF}
+    )
+    await db.execute(text("DELETE FROM loss_analyses"))
+    await db.execute(text("DELETE FROM learning_proposals"))
+    await db.commit()
+
+    r = await db.execute(text("SELECT COUNT(*) FROM tracked_bets"))
+    n_remaining = r.scalar()
+
+    return {
+        "deleted_tracked_bets":    n_bets,
+        "deleted_loss_analyses":   n_loss,
+        "deleted_learning_proposals": n_prop,
+        "tracked_bets_remaining":  n_remaining,
+        "cutoff":                  CUTOFF,
+    }
