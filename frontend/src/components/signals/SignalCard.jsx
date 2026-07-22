@@ -353,6 +353,52 @@ function useKickoff(kickoffAt, status) {
   return { localTime, countdown, urgent, isLive, isFinished, statusLabel: normalizedStatus || null }
 }
 
+// ── xG row — compact expected goals, market-aware, always visible ────────────
+function XGRow({ signal }) {
+  const adv     = signal.advanced
+  const lambdaH = adv?.zinb_lambda_h ?? signal.poisson?.lambda_h ?? null
+  const lambdaA = adv?.zinb_lambda_a ?? signal.poisson?.lambda_a ?? null
+  const market  = signal.market || ''
+
+  if (lambdaH == null && lambdaA == null) return null
+
+  const total = lambdaH != null && lambdaA != null ? lambdaH + lambdaA : null
+
+  // Colour hint: green when xG supports the market thesis, muted otherwise
+  const isOver  = market.startsWith('Over') || market === 'Home Over 0.5' || market === 'Away Over 0.5' || market === 'Home Over 1.5' || market === 'Away Over 1.5'
+  const isUnder = market === 'Under 2.5'
+
+  let primary = null
+  let secondary = null
+
+  if (market === 'Home Over 0.5' || market === 'Home Over 1.5') {
+    primary   = lambdaH != null ? `${lambdaH.toFixed(1)} home xG` : null
+    secondary = lambdaA != null ? `${lambdaA.toFixed(1)} away` : null
+  } else if (market === 'Away Over 0.5' || market === 'Away Over 1.5') {
+    primary   = lambdaA != null ? `${lambdaA.toFixed(1)} away xG` : null
+    secondary = lambdaH != null ? `${lambdaH.toFixed(1)} home` : null
+  } else if (total != null) {
+    primary   = `${total.toFixed(1)} xG`
+    secondary = lambdaH != null && lambdaA != null ? `${lambdaH.toFixed(1)} · ${lambdaA.toFixed(1)}` : null
+  }
+
+  if (!primary) return null
+
+  const accentColor = isOver
+    ? 'text-emerald-400'
+    : isUnder
+      ? 'text-sky-400'
+      : 'text-[var(--text-h)]'
+
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-[var(--text)]">
+      <span className="opacity-40 leading-none select-none">⚽</span>
+      <span className={`font-semibold tabular-nums ${accentColor}`}>{primary}</span>
+      {secondary && <span className="opacity-40">{secondary}</span>}
+    </div>
+  )
+}
+
 // ── Probability line (primary block) ─────────────────────────────────────────
 // Full-width bar + large % + market chip + confidence badge.
 // Odds, bookmaker, agreement, and drift are shown below the bar (always visible).
@@ -691,6 +737,8 @@ export default function SignalCard({ signal, rank, isPro = true, isTracked = fal
           driftPct={signal.odds_drift_pct}
           isPro={isPro}
         />
+
+        <XGRow signal={signal} />
 
         {isContradiction && (
           <ContradictionAlert mixedSignals={signal.poisson?.mixed_signals} />
