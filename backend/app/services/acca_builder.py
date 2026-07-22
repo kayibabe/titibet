@@ -31,7 +31,7 @@ _MIN_PROB = 0.68            # was 0.62 — global floor for all ACCA legs
 # The market's track record of 0-0 losses (especially Tier 2/3) means we need
 # the model to be meaningfully more confident before compounding the leg.
 _HO05_ACCA_MIN_PROB = 0.75  # was 0.70 — stricter gate since HO0.5 is most problematic
-_ALLOWED_CONFIDENCE = {"High"}          # Medium legs lose money in ACCA context
+_ALLOWED_CONFIDENCE = {"High", "Medium"}  # Both+Medium has 77.3% WR on clean data
 # For Both+High ACCA legs both engines must individually clear this floor.
 # Raised 0.73 → 0.76 so weak Both+High signals that borderline-qualify for singles
 # are excluded from ACCA legs where the compounding risk is higher.
@@ -148,9 +148,10 @@ async def build_acca_candidates(
 ) -> list[dict]:
     """
     Return sorted ACCA candidate list for target_date, restricted to
-    High-confidence Both-engine signals (T2 pool).  2026-07-18 simulation
-    audit confirmed T2 delivers 66.7% ticket win rate; Medium and
-    single-engine legs lose money in ACCA context.  Optionally exclude
+    Both-engine signals at High or Medium confidence.  Clean post-Jul-2 data
+    shows Medium+Both at 77.3% WR — the probability floors (_MIN_PROB,
+    _HO05_ACCA_MIN_PROB) and Both-agreement requirement are the real quality
+    gates.  Single-engine legs are still excluded.  Optionally exclude
     specific fixture IDs so subsequent calls produce non-overlapping leg sets.
     """
     query = (
