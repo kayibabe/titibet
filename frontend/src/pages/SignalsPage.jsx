@@ -5,6 +5,7 @@ import { computeSignals, fetchSignals } from '../api/signals'
 import { syncData, fetchBets } from '../api/tracker'
 import { fetchValueBandStreak } from '../api/analytics'
 import SignalCard from '../components/signals/SignalCard'
+import AccaCard from '../components/signals/AccaCard'
 import { marketColor } from '../utils/format'
 import TrackModal from '../components/tracker/TrackModal'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
@@ -701,6 +702,9 @@ const reload = () => load(params)
             </div>
           </div>
         )}
+
+        {/* ── ACCA of the Day ───────────────────────────────────────────── */}
+        <AccaCard />
 
         {/* ── Filter + Sort bar ─────────────────────────────────────────── */}
         <div className="rounded-xl border border-[var(--border)] bg-[var(--code-bg)] overflow-hidden">

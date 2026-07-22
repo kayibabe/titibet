@@ -26,6 +26,7 @@ from app.routers import loss_analysis as loss_analysis_router
 from app.routers import auth as auth_router
 from app.routers import admin as admin_router
 from app.routers import payments as payments_router
+from app.routers import accumulators as accumulators_router
 from app.scheduler import get_scheduler
 import app.models.user  # noqa: F401 — ensures users table is created by init_db
 
@@ -278,6 +279,7 @@ app.include_router(advisor.router)
 app.include_router(loss_analysis_router.router)
 app.include_router(arb_router.router)
 app.include_router(leaderboard_router.router)
+app.include_router(accumulators_router.router)
 
 
 @app.get("/health")

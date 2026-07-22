@@ -37,17 +37,8 @@ _ALLOWED_CONFIDENCE = {"High"}          # Medium legs lose money in ACCA context
 # are excluded from ACCA legs where the compounding risk is higher.
 _ACCA_DUAL_HIGH_MIN_PROB = 0.76  # was 0.73
 
-# EV gate: each leg must offer at least 4% edge at the bookmaker price.
-# Compounding a negative- or zero-EV leg multiplies the loss across the ticket.
-# EV = model_prob × bookmaker_odd − 1. Legs with no bookmaker price receive
-# EV = 0 (fair price) and fail this gate — if we can't confirm edge we don't
-# compound the uncertainty.
-_ACCA_LEG_MIN_EV = 0.04
-
 # Expected ticket win probability floor. A ticket whose leg probabilities multiply
-# to below this value has a structural expectation of losing more than it wins even
-# at the target combined odds. 30% ≈ a 3-leg ticket at 67% probability per leg.
-# Below this we skip rather than build a lottery ticket.
+# to below this value is not built — 30% ≈ a 3-leg ticket at 67% per leg.
 _ACCA_WIN_PROB_FLOOR = 0.30
 
 
@@ -133,13 +124,19 @@ def build_accumulator(
         math.prod(c["primary_prob"] for c in legs), 4
     ) if legs else 0.0
 
+    # Drop the ticket entirely if win probability is below the structural floor.
+    if expected_win_prob < _ACCA_WIN_PROB_FLOOR:
+        legs = []
+        combined = 1.0
+        expected_win_prob = 0.0
+
     return {
         "target_odds":              target_odds,
         "combined_odds":            round(combined, 4),
         "legs":                     legs,
         "leg_count":                len(legs),
         "expected_win_probability": expected_win_prob,
-        "insufficient_picks":       combined < target_odds,
+        "insufficient_picks":       combined < target_odds or not legs,
     }
 
 
@@ -148,7 +145,6 @@ async def build_acca_candidates(
     target_date: date,
     *,
     exclude_fixture_ids: set[int] | None = None,
-    ev_threshold: float | None = None,  # unused — EV gate removed (same reason as singles)
 ) -> list[dict]:
     """
     Return sorted ACCA candidate list for target_date, restricted to
