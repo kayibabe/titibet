@@ -378,7 +378,7 @@ function XGRow({ signal }) {
     primary   = lambdaA != null ? `${lambdaA.toFixed(1)} away xG` : null
     secondary = lambdaH != null ? `${lambdaH.toFixed(1)} home` : null
   } else if (total != null) {
-    primary   = `${total.toFixed(1)} xG`
+    primary   = `${total.toFixed(1)} total xG`
     secondary = lambdaH != null && lambdaA != null ? `${lambdaH.toFixed(1)} · ${lambdaA.toFixed(1)}` : null
   }
 
@@ -394,7 +394,7 @@ function XGRow({ signal }) {
     <div className="flex items-center gap-1.5 text-xs text-[var(--text)]">
       <span className="opacity-40 leading-none select-none">⚽</span>
       <span className={`font-semibold tabular-nums ${accentColor}`}>{primary}</span>
-      {secondary && <span className="opacity-40">{secondary}</span>}
+      {secondary && <span className="opacity-40">({secondary})</span>}
     </div>
   )
 }
