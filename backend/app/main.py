@@ -125,6 +125,29 @@ async def lifespan(app: FastAPI):
     # cooldown/cache to re-pull fixtures AND odds from the live API and recompute
     # signals — used to recover today's signals. Set RUN_FORCE_SYNC_TODAY=true,
     # deploy/restart, then unset. Runs alone (startup_sync skipped above).
+    # One-shot: purge pre-Jul-2-2026 contaminated tracked_bets, loss_analyses,
+    # and learning_proposals. Set RUN_PURGE_PRE_JUL2=true, deploy/restart, then
+    # unset. Pre-Jul-2 tracked_bets stored 1st-half bookmaker odds (~2x real FT
+    # odds), making all historical WR/ROI analytics unreliable.
+    if os.getenv("RUN_PURGE_PRE_JUL2", "").lower() in ("1", "true", "yes"):
+        async def _purge_pre_jul2():
+            from app.core.database import AsyncSessionLocal as _S
+            from sqlalchemy import text as _text
+            CUTOFF = "2026-07-02"
+            async with _S() as _db:
+                try:
+                    r = await _db.execute(_text("SELECT COUNT(*) FROM tracked_bets WHERE event_date < :c"), {"c": CUTOFF})
+                    n = r.scalar()
+                    await _db.execute(_text("DELETE FROM tracked_bets WHERE event_date < :c"), {"c": CUTOFF})
+                    await _db.execute(_text("DELETE FROM loss_analyses"))
+                    await _db.execute(_text("DELETE FROM learning_proposals"))
+                    await _db.commit()
+                    r2 = await _db.execute(_text("SELECT COUNT(*) FROM tracked_bets"))
+                    logger.info("PURGE pre-Jul-2: deleted %d bets, %d remaining", n, r2.scalar())
+                except Exception:
+                    logger.exception("PURGE pre-Jul-2 failed")
+        _asyncio.create_task(_purge_pre_jul2())
+
     if _force_today:
         logger.info("RUN_FORCE_SYNC_TODAY set — forcing fresh sync+compute for today")
 
