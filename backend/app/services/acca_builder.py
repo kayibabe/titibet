@@ -130,9 +130,15 @@ def build_accumulator(
         combined = 1.0
         expected_win_prob = 0.0
 
+    # Bookmaker combined: multiply actual bookmaker odds per leg (what you'd
+    # see on a real slip). Falls back to fair_odds when no bookmaker price exists.
+    bookmaker_combined = round(
+        math.prod(c.get("odd") or c["fair_odds"] for c in legs), 4
+    ) if legs else 1.0
+
     return {
         "target_odds":              target_odds,
-        "combined_odds":            round(combined, 4),
+        "combined_odds":            bookmaker_combined,
         "legs":                     legs,
         "leg_count":                len(legs),
         "expected_win_probability": expected_win_prob,
