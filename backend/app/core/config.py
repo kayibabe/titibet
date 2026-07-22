@@ -643,13 +643,12 @@ MARKET_MIN_ODDS: dict = {
     "Over 1.5":        1.50,
     "Over 2.5":        1.55,
     "Under 2.5":       2.10,  # < 2.10 implies < 48% probability — no value at short Under 2.5
-    # Recalibrated 2026-07-02: the old 1.70 floor came from an audit run while
-    # team-total odds were contaminated with 1st-half prices (~2x full-time), so
-    # its ROI evidence is void. Real full-time Home Over 0.5 prices sit at
-    # 1.10-1.55; 1.30 keeps out near-certainty prices where any calibration
-    # error flips EV, while readmitting the market. Re-audit on corrected odds
-    # before trusting a data-derived floor again.
-    "Home Over 0.5":   1.30,
+    # 2026-07-22: raised 1.30 → 1.50 after clean post-Jul-2 audit showed
+    # 33 bets at 1.35-1.49 running 57.6% WR / -18.2% ROI (break-even needs 70%).
+    # At odds < 1.50 bookmakers have priced these with sharp-money precision;
+    # Poisson Only + Medium has no exploitable edge in that range.
+    # Aligns HO0.5 floor with B4's Both+Medium floor (1.50).
+    "Home Over 0.5":   1.50,
     "Away Over 0.5":   1.30,
     "Home Win to Nil": 1.40,
     "Away Win to Nil": 1.40,

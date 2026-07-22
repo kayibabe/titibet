@@ -148,6 +148,88 @@ async def lifespan(app: FastAPI):
                     logger.exception("PURGE pre-Jul-2 failed")
         _asyncio.create_task(_purge_pre_jul2())
 
+    # One-shot: delete tracked_bets that fail the current gate stack.
+    # Run after any gate change to align historical data with current rules.
+    # Set RUN_PURGE_NON_QUALIFYING=true, deploy/restart, then unset.
+    if os.getenv("RUN_PURGE_NON_QUALIFYING", "").lower() in ("1", "true", "yes"):
+        async def _purge_non_qualifying():
+            from app.core.database import AsyncSessionLocal as _S
+            from sqlalchemy import text as _text
+            from app.core.config import (
+                DISABLED_MARKETS, DISABLED_LEAGUES, MARKET_MIN_ODDS,
+                DUAL_HIGH_ODDS_CEILING, POISSON_ONLY_MAX_ODDS,
+                OVER_GOALS_SUPPRESSED_LEAGUES, HO05_DATA_POOR_COUNTRIES,
+                COPA_HO05_SUPPRESSED_LEAGUES, is_womens_fixture,
+            )
+
+            WOMEN_OVER = {"Home Over 0.5","Away Over 0.5","Over 1.5","Over 2.5"}
+            OVER_MKT   = {"Over 1.5","Over 2.5","Home Over 0.5","Home Over 1.5",
+                          "Away Over 0.5","Away Over 1.5"}
+            AWAY_SUPP  = {"primera b metropolitana"}
+            BOTH_MED_DISABLED = {"copa rio","primera nacional"}
+
+            async with _S() as _db:
+                try:
+                    rows = (await _db.execute(_text("""
+                        SELECT tb.id, tb.market_type, tb.odds, tb.dual_confidence,
+                               tb.dual_agreement, tb.league,
+                               f.country, f.league_tier, f.home_team, f.away_team,
+                               s.contradiction
+                        FROM tracked_bets tb
+                        LEFT JOIN fixtures f ON f.id = tb.fixture_id
+                        LEFT JOIN signals  s ON s.fixture_id = tb.fixture_id
+                                             AND s.market = tb.market_type
+                        WHERE tb.result_status IN ('Won','Lost') AND tb.stake > 0
+                    """))).fetchall()
+
+                    fail_ids = []
+                    for r in rows:
+                        mkt    = (r.market_type or "").strip()
+                        conf   = (r.dual_confidence or "").strip()
+                        agree  = (r.dual_agreement or "").strip()
+                        odds   = r.odds or 0.0
+                        league = (r.league or "").lower().strip()
+                        country= (r.country or "").lower().strip()
+                        tier   = r.league_tier or 3
+                        contra = r.contradiction or 0
+                        home_t = r.home_team or ""
+                        away_t = r.away_team or ""
+
+                        blocked = False
+                        if mkt in DISABLED_MARKETS: blocked = True
+                        elif league in DISABLED_LEAGUES or "friendlies" in league: blocked = True
+                        elif mkt in OVER_MKT and any(k in league for k in OVER_GOALS_SUPPRESSED_LEAGUES): blocked = True
+                        elif mkt in WOMEN_OVER and is_womens_fixture(league, home_t, away_t): blocked = True
+                        elif conf == "Low": blocked = True
+                        elif contra: blocked = True
+                        elif agree == "Both" and conf == "Medium" and (odds < 1.50 or odds >= 1.95): blocked = True
+                        elif agree == "Both" and conf == "Medium" and league in BOTH_MED_DISABLED: blocked = True
+                        elif mkt == "Over 1.5" and agree == "Bayesian Only": blocked = True
+                        elif conf == "High" and agree == "Both" and mkt in DUAL_HIGH_ODDS_CEILING and odds >= DUAL_HIGH_ODDS_CEILING[mkt]: blocked = True
+                        elif agree == "Poisson Only" and mkt in POISSON_ONLY_MAX_ODDS and odds >= POISSON_ONLY_MAX_ODDS[mkt]: blocked = True
+                        elif mkt == "Home Over 0.5" and conf == "High" and agree == "Both" and tier >= 3 and country in HO05_DATA_POOR_COUNTRIES: blocked = True
+                        elif mkt == "Home Over 0.5" and any(kw in league for kw in COPA_HO05_SUPPRESSED_LEAGUES): blocked = True
+                        elif mkt in {"Away Over 0.5","Away Over 1.5"} and any(k in league for k in AWAY_SUPP): blocked = True
+                        elif mkt == "Over 2.5" and tier >= 3: blocked = True
+                        else:
+                            min_o = MARKET_MIN_ODDS.get(mkt)
+                            if min_o and odds < min_o: blocked = True
+
+                        if blocked:
+                            fail_ids.append(r.id)
+
+                    if fail_ids:
+                        await _db.execute(
+                            _text(f"DELETE FROM tracked_bets WHERE id IN ({','.join(str(i) for i in fail_ids)})")
+                        )
+                        await _db.commit()
+
+                    r2 = (await _db.execute(_text("SELECT COUNT(*) FROM tracked_bets"))).scalar()
+                    logger.info("PURGE non-qualifying: deleted %d bets, %d remaining", len(fail_ids), r2)
+                except Exception:
+                    logger.exception("PURGE non-qualifying failed")
+        _asyncio.create_task(_purge_non_qualifying())
+
     if _force_today:
         logger.info("RUN_FORCE_SYNC_TODAY set — forcing fresh sync+compute for today")
 
