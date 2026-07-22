@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Sparkles, AlertTriangle, CheckCircle, MinusCircle, Loader2, RefreshCw, ArrowRight,
-  Download, FileText, Printer, Ticket, Zap, Clock, Bot,
+  Download, FileText, Printer, Zap, Clock, Bot,
 } from 'lucide-react'
-import { fetchAdvisorInsights, trackAcca, explainPicks } from '../../api/advisor'
+import { fetchAdvisorInsights, explainPicks } from '../../api/advisor'
 import { fetchSignals } from '../../api/signals'
 import { fetchBets } from '../../api/tracker'
 import ADVISORS_META from './advisorsMeta'
@@ -62,47 +62,6 @@ function buildReportHtml(data, date) {
         <span style="font-size:12px;color:#92400e;line-height:1.5;">${esc(w)}</span>
       </div>`).join('')
   }
-
-  const acca = data.accumulator
-  const accaSection = acca && acca.legs?.length ? `
-    <div style="margin-bottom:28px;border:2px solid #7c3aed;border-radius:10px;overflow:hidden;page-break-inside:avoid;">
-      <div style="padding:12px 18px;background:#ede9fe;border-bottom:1px solid #ddd6fe;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:16px;">🎟️</span>
-          <strong style="font-size:15px;color:#5b21b6;">Acca of the Day</strong>
-          ${acca.confidence ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:#fff;color:#7c3aed;border:1px solid #c4b5fd;">${esc(acca.confidence)}</span>` : ''}
-        </div>
-        ${acca.combined_odds ? `<span style="font-size:18px;font-weight:800;color:#7c3aed;">@ ${esc(acca.combined_odds)}</span>` : ''}
-      </div>
-      <div style="padding:14px 18px;space-y:8px;">
-        ${(acca.legs || []).map((leg, i) => {
-          const match = leg.home_team && leg.away_team ? `${leg.home_team} vs ${leg.away_team}` : '—'
-          const ko = fmtLegKickoff(leg.kickoff_at)
-          const resultColor = { won: '#16a34a', lost: '#dc2626', void: '#6b7280' }[leg.result] || '#9ca3af'
-          const resultLabel = { won: 'Won', lost: 'Lost', void: 'Void' }[leg.result] || ''
-          const resultLine = resultLabel
-            ? `<span style="font-size:11px;font-weight:700;color:${resultColor};">${resultLabel}${leg.score ? ` ${leg.score}` : ''}</span>`
-            : (leg.score ? `<span style="font-size:11px;color:#9ca3af;">${leg.score}</span>` : '')
-          return `<div style="display:flex;align-items:flex-start;gap:10px;margin:8px 0;padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;">
-            <span style="min-width:22px;height:22px;background:#ede9fe;color:#7c3aed;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">${i+1}</span>
-            <div style="flex:1;">
-              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                <strong style="font-size:13px;color:#111827;">${esc(match)}</strong>
-                ${leg.market ? `<span style="font-size:11px;padding:2px 7px;background:#ede9fe;color:#7c3aed;border-radius:4px;font-weight:600;">${esc(leg.market)}</span>` : ''}
-              </div>
-              ${ko ? `<p style="margin:3px 0 0;font-size:11px;color:#9ca3af;">${esc(ko)}</p>` : ''}
-              ${leg.reason ? `<p style="margin:4px 0 0;font-size:12px;color:#6b7280;line-height:1.5;">${esc(leg.reason)}</p>` : ''}
-            </div>
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;">
-              ${leg.odd != null ? `<span style="font-weight:700;font-size:13px;color:#111827;">${Number(leg.odd).toFixed(2)}</span>` : ''}
-              ${resultLine}
-            </div>
-          </div>`
-        }).join('')}
-        ${acca.combined_odds ? `<div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid #e5e7eb;margin-top:4px;font-size:12px;"><span style="color:#6b7280;">${acca.legs.length} legs combined</span><strong style="color:#7c3aed;">Combined odds: ${esc(acca.combined_odds)}</strong></div>` : ''}
-        ${acca.rationale ? `<p style="font-size:12px;color:#6b7280;line-height:1.6;margin-top:8px;padding-top:8px;border-top:1px solid #f3f4f6;">${esc(acca.rationale)}</p>` : ''}
-      </div>
-    </div>` : ''
 
   const advisorSections = (data.advisors || []).map(adv => {
     const verdict  = adv.result?.verdict  || 'Mixed'
@@ -175,9 +134,6 @@ function buildReportHtml(data, date) {
       <strong style="font-size:13px;color:${verdictColor[consensus] || '#374151'};">${esc(consensus)}</strong>
     </div>` : ''}
   </div>
-
-  <!-- Accumulator ticket -->
-  ${accaSection}
 
   <!-- Advisor sections -->
   ${advisorSections}
@@ -301,201 +257,6 @@ function LegResultBadge({ result, score }) {
       <Icon size={11} />
       {cfg.label}{score ? ` ${score}` : ''}
     </span>
-  )
-}
-
-// Overall ticket status derived from leg results — mirrors settle_acca_bets:
-// any leg lost → Lost; all decided and none lost → Won/Void; else still Pending.
-function accaTicketStatus(legs) {
-  if (!legs.length) return null
-  const results = legs.map(l => l.result || 'pending')
-  if (results.some(r => r === 'lost')) return 'lost'
-  if (results.every(r => r === 'pending')) return null
-  if (results.some(r => r === 'pending')) return 'pending'
-  if (results.every(r => r === 'void')) return 'void'
-  return 'won'
-}
-
-const TICKET_STATUS_CFG = {
-  won:     { cls: 'text-green-400 border-green-500/40 bg-green-500/10',  label: '✅ Won'  },
-  lost:    { cls: 'text-red-400   border-red-500/40   bg-red-500/10',    label: '❌ Lost' },
-  void:    { cls: 'text-[var(--text)] border-[var(--border)] bg-[var(--code-bg)]', label: '⚪ Void' },
-  pending: { cls: 'text-amber-400 border-amber-500/40 bg-amber-500/10',  label: '⏳ Live'  },
-}
-
-function AccaTicket({ acca, date, index = 0, total = 1 }) {
-  const [isTracked, setIsTracked] = useState(Boolean(acca?.tracked))
-  const [trackBusy, setTrackBusy] = useState(false)
-  const [trackErr,  setTrackErr]  = useState(null)
-
-  useEffect(() => {
-    setIsTracked(Boolean(acca?.tracked))
-    setTrackErr(null)
-  }, [acca])
-
-  if (!acca) return null
-  const { legs = [], combined_odds, rationale, confidence, error } = acca
-  const ticketStatus = accaTicketStatus(legs)
-
-  async function handleTrack() {
-    if (trackBusy || isTracked) return
-    setTrackBusy(true)
-    setTrackErr(null)
-    try {
-      await trackAcca(date, combined_odds)
-      setIsTracked(true)
-    } catch (e) {
-      setTrackErr(e.message)
-    } finally {
-      setTrackBusy(false)
-    }
-  }
-
-  const confCfg = {
-    High:   { cls: 'text-green-400 border-green-500/40 bg-green-500/10',  dot: 'bg-green-400' },
-    Medium: { cls: 'text-amber-400 border-amber-500/40 bg-amber-500/10',  dot: 'bg-amber-400' },
-    Low:    { cls: 'text-red-400   border-red-500/40   bg-red-500/10',    dot: 'bg-red-400'   },
-  }[confidence] || { cls: 'text-[var(--text)] border-[var(--border)] bg-[var(--code-bg)]', dot: 'bg-[var(--text)]' }
-
-  return (
-    <div className="rounded-xl border-2 border-[var(--accent)]/40 bg-[var(--bg)] overflow-hidden shadow-sm">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-4 py-3 bg-[var(--accent)]/10 border-b border-[var(--accent)]/20">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Ticket size={15} className="text-[var(--accent)] shrink-0" />
-          <span className="text-sm font-bold text-[var(--text-h)]">
-            {total > 1
-              ? index === 0 ? 'Top Pick' : `Alt Pick ${index}`
-              : 'Acca of the Day'}
-          </span>
-          {total > 1 && (
-            <span className="text-[10px] text-[var(--text)] opacity-50">
-              {index + 1}/{total}
-            </span>
-          )}
-          {total <= 1 && (
-            <span className="text-[10px] text-[var(--text)] opacity-55 hidden sm:inline">AI-selected accumulator</span>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {ticketStatus && (
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${TICKET_STATUS_CFG[ticketStatus].cls}`}>
-              {TICKET_STATUS_CFG[ticketStatus].label}
-            </span>
-          )}
-          {legs.length === 0 && !error ? (
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-[var(--text)] border-[var(--border)] bg-[var(--code-bg)] opacity-70">
-              Unavailable
-            </span>
-          ) : confidence && (
-            <span className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full border ${confCfg.cls}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${confCfg.dot}`} />
-              {confidence}
-            </span>
-          )}
-          {combined_odds && (
-            <span className="text-sm font-bold text-[var(--accent)] tabular-nums">
-              @{combined_odds}
-            </span>
-          )}
-          {legs.length > 0 && !error && (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-green-500/10 text-green-400 border border-green-500/25">
-              <CheckCircle size={10} />
-              Tracked automatically · K50,000
-            </span>
-          )}
-          {legs.length > 0 && !error && !isTracked && (
-            <button
-              onClick={handleTrack}
-              disabled={trackBusy}
-              title="Add this acca to your personal tracker at a K50,000 stake"
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-all"
-            >
-              {trackBusy ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
-              {trackBusy ? 'Adding…' : '+ My Tracker'}
-            </button>
-          )}
-          {legs.length > 0 && !error && isTracked && (
-            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] text-[var(--accent)] font-semibold">
-              ✓ In tracker
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Body */}
-      <div className="px-4 py-3 space-y-3">
-        {error && (
-          <p className="text-xs text-red-400 opacity-80">Acca builder unavailable — {error}</p>
-        )}
-
-        {trackErr && (
-          <p className="text-xs text-red-400 opacity-80">Could not track — {trackErr}</p>
-        )}
-
-        {legs.length > 0 && (
-          <div className="space-y-2">
-            {legs.map((leg, i) => {
-              const match = leg.home_team && leg.away_team
-                ? `${leg.home_team} vs ${leg.away_team}`
-                : leg.match_name || '—'
-              const ko = fmtLegKickoff(leg.kickoff_at)
-              return (
-                <div key={i} className="flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--code-bg)] px-3 py-2.5">
-                  {/* Leg number */}
-                  <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] text-[10px] font-bold flex items-center justify-center mt-0.5">
-                    {i + 1}
-                  </span>
-                  <div className="flex-1 min-w-0 space-y-0.5">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-xs font-semibold text-[var(--text-h)] truncate">{match}</span>
-                      {leg.market && (
-                        <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-md bg-[var(--accent)]/15 text-[var(--accent)] font-semibold">
-                          {leg.market}
-                        </span>
-                      )}
-                    </div>
-                    {ko && (
-                      <p className="text-[10px] text-[var(--text)] opacity-60 flex items-center gap-1">
-                        <Clock size={9} />
-                        {ko}
-                      </p>
-                    )}
-                    {leg.reason && (
-                      <p className="text-[11px] text-[var(--text)] opacity-75 leading-snug">{leg.reason}</p>
-                    )}
-                  </div>
-                  <div className="shrink-0 flex flex-col items-end gap-1">
-                    {leg.odd != null && (
-                      <span className="text-xs font-bold text-[var(--text-h)] tabular-nums">{Number(leg.odd).toFixed(2)}</span>
-                    )}
-                    <LegResultBadge result={leg.result} score={leg.score} />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-
-        {/* Combined odds footer */}
-        {legs.length > 0 && combined_odds && (
-          <div className="flex items-center justify-between pt-1 border-t border-[var(--border)] text-xs">
-            <span className="text-[var(--text)] opacity-70">{legs.length} legs combined</span>
-            <span className="font-bold text-[var(--accent)] tabular-nums">Combined odds: {combined_odds}</span>
-          </div>
-        )}
-
-        {rationale && (
-          <p className="text-[11px] text-[var(--text)] opacity-75 leading-relaxed border-t border-[var(--border)] pt-2">
-            {rationale}
-          </p>
-        )}
-
-        {!error && legs.length === 0 && (
-          <p className="text-xs text-[var(--text)] opacity-60 text-center py-2">No accumulator generated for this date.</p>
-        )}
-      </div>
-    </div>
   )
 }
 
@@ -1073,32 +834,6 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
         {data && isConfigured && !data.advisors?.length && (
           <p className="text-sm text-[var(--text)] opacity-75 text-center py-10">{data.message}</p>
         )}
-
-        {/* ── Acca of the Day (flagship section) ──────────────── */}
-        {/* Acca skeleton while loading */}
-        {loading && (
-          <div className="rounded-xl border-2 border-[var(--accent)]/30 bg-[var(--bg)] overflow-hidden animate-pulse shadow-sm">
-            <div className="flex items-center gap-2 px-4 py-3 bg-[var(--accent)]/10 border-b border-[var(--accent)]/20">
-              <div className="w-4 h-4 rounded bg-[var(--border)]" />
-              <div className="h-3.5 w-36 rounded bg-[var(--border)]" />
-              <div className="ml-auto h-3 w-20 rounded-full bg-[var(--border)]" />
-            </div>
-            <div className="px-4 py-4 space-y-2.5">
-              {[1,2,3,4].map(i => <div key={i} className="h-12 rounded-lg bg-[var(--border)]" />)}
-              <div className="h-3 w-2/3 rounded bg-[var(--border)] mt-2" />
-            </div>
-          </div>
-        )}
-
-        {/* Acca tickets — one or more non-overlapping tickets */}
-        {!loading && (() => {
-          const tickets = data?.accumulators?.length
-            ? data.accumulators
-            : data?.accumulator ? [data.accumulator] : []
-          return tickets.map((t, i) => (
-            <AccaTicket key={i} acca={t} date={date} index={i} total={tickets.length} />
-          ))
-        })()}
 
         {/* Signal overview table — shown once both signals and advisor data are loaded */}
         {!loading && signals.length > 0 && data?.advisors?.length > 0 && (
