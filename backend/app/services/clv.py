@@ -42,7 +42,16 @@ _BET_TO_SELECTION: dict[str, str] = {
     "Exactly 1 Goal":  "1",
     "Exactly 2 Goals": "2",
     "Exactly 3 Goals": "3",
-    # Team totals — selection_name matches the Over/Under label directly
+    # Team totals: MarketSnapshot stores market_type="Total - Home"/"Total - Away"
+    # with selection_name="Over 0.5", "Under 0.5", etc. — strip the side prefix.
+    "Home Over 0.5":  "Over 0.5",
+    "Home Over 1.5":  "Over 1.5",
+    "Home Under 0.5": "Under 0.5",
+    "Home Under 1.5": "Under 1.5",
+    "Away Over 0.5":  "Over 0.5",
+    "Away Over 1.5":  "Over 1.5",
+    "Away Under 0.5": "Under 0.5",
+    "Away Under 1.5": "Under 1.5",
 }
 
 # Maps standardized market_type → the set of raw market_type names in MarketSnapshot.
