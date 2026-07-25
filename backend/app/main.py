@@ -251,6 +251,76 @@ async def lifespan(app: FastAPI):
 
         _asyncio.create_task(_force_sync_today())
 
+    # One-shot date range backfill: ingest fixtures, recompute signals, auto-track
+    # picks, then settle all pending bets. Designed for filling gaps after outages
+    # or running the full pipeline with updated gate settings.
+    #
+    # Set  RUN_BACKFILL_DATES=YYYY-MM-DD           to backfill a single date.
+    # Set  RUN_BACKFILL_DATES=YYYY-MM-DD:YYYY-MM-DD to backfill a date range.
+    # Deploy/restart, check logs, then unset the secret and redeploy.
+    _backfill_spec = os.getenv("RUN_BACKFILL_DATES", "").strip()
+    if _backfill_spec:
+        async def _run_backfill():
+            import asyncio as _aio
+            from datetime import date as _date, timedelta as _td
+            from sqlalchemy import text as _text
+            from app.core.database import AsyncSessionLocal as _S
+            from app.services.ingestion import sync_date as _sync
+            from app.services.signal_engine import compute_signals_for_date as _csfd
+            from app.services.auto_tracker import auto_track_date as _atd
+            from app.services.settlement import settle_bets_for_date as _settle
+
+            parts = _backfill_spec.split(":")
+            try:
+                _start = _date.fromisoformat(parts[0])
+                _end   = _date.fromisoformat(parts[1]) if len(parts) > 1 else _start
+            except ValueError:
+                logger.error("RUN_BACKFILL_DATES: invalid format %r — use YYYY-MM-DD or YYYY-MM-DD:YYYY-MM-DD", _backfill_spec)
+                return
+
+            logger.info("BACKFILL: starting %s → %s", _start, _end)
+            _cur = _start
+            while _cur <= _end:
+                _ds = _cur.isoformat()
+                async with _S() as _db:
+                    try:
+                        snap_n = (await _db.execute(_text(
+                            "SELECT COUNT(*) FROM market_snapshots ms "
+                            "JOIN fixtures f ON f.id = ms.fixture_id WHERE f.event_date = :d"
+                        ), {"d": _ds})).scalar() or 0
+
+                        if snap_n > 0:
+                            logger.info("BACKFILL %s: %d snapshots in DB — skipping ingestion, recomputing signals", _ds, snap_n)
+                        else:
+                            run = await _aio.wait_for(_sync(_db, _cur, force=True), timeout=120)
+                            logger.info("BACKFILL %s: ingest=%s fixtures=%s", _ds, run.status, getattr(run, "fixtures_pulled", "?"))
+                            if run.status != "success":
+                                logger.warning("BACKFILL %s: ingestion failed, skipping", _ds)
+                                _cur += _td(days=1)
+                                continue
+
+                        n_sig = await _aio.wait_for(_csfd(_db, _cur), timeout=90)
+                        await _db.commit()
+                        n_track = await _atd(_db, _cur)
+                        logger.info("BACKFILL %s: %d signals, %d bets tracked", _ds, n_sig, n_track)
+                    except _aio.TimeoutError:
+                        logger.error("BACKFILL %s: timed out", _ds)
+                    except Exception:
+                        logger.exception("BACKFILL %s: unexpected error", _ds)
+                _cur += _td(days=1)
+
+            # Final: settle all pending bets across all dates
+            async with _S() as _db:
+                try:
+                    info = await _settle(_db, None)
+                    logger.info("BACKFILL settle-all: %s", info)
+                except Exception:
+                    logger.exception("BACKFILL settle-all failed")
+
+            logger.info("BACKFILL complete: %s → %s", _start, _end)
+
+        _asyncio.create_task(_run_backfill())
+
     yield
     scheduler.shutdown(wait=False)
     logger.info("TiTiBet shut down.")
