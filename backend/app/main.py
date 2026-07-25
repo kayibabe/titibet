@@ -335,6 +335,20 @@ async def lifespan(app: FastAPI):
 
         _asyncio.create_task(_run_backfill())
 
+    # CLV backfill — runs on every startup but is a no-op once all settled bets
+    # have closing_odds populated. Covers system bets (user_id IS NULL) that the
+    # /compute-clv endpoint skips (it filters by the authenticated user_id).
+    async def _startup_clv_backfill():
+        from app.services.clv import compute_clv_all as _clv_all
+        async with AsyncSessionLocal() as _db:
+            result = await _clv_all(_db, force=False)
+            if result["updated"]:
+                logger.info("CLV startup backfill: %d bet(s) updated", result["updated"])
+            else:
+                logger.debug("CLV startup backfill: nothing to update")
+
+    _asyncio.create_task(_startup_clv_backfill())
+
     yield
     scheduler.shutdown(wait=False)
     logger.info("TiTiBet shut down.")
