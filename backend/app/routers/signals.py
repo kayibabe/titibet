@@ -433,8 +433,8 @@ async def list_signals(
             )
         ]
 
-    # ── Universal signal quality baseline (B-1 … B-5) ───────────────────────
-    # Every signal clears these five gates regardless of market.
+    # ── Universal signal quality baseline (B-1 … B-6) ───────────────────────
+    # Every signal clears these gates regardless of market.
     # Per-market overrides (DUAL_HIGH_ODDS_CEILING, COPA_HO05_SUPPRESSED_LEAGUES,
     # etc.) are applied afterward and are unaffected.
     #
@@ -456,6 +456,12 @@ async def list_signals(
     # B-5: Drop Both+Medium signals from BOTH_MEDIUM_DISABLED_LEAGUES — leagues with
     #      confirmed 0-0 patterns that both engines systematically mis-model.
     #      Poisson Only signals from these leagues are unaffected.
+    # B-6: Drop Home Over 0.5 when zinb_lambda_h < 0.85 — the ZINB model (which
+    #      accounts for zero-inflation and is more conservative than standard Poisson)
+    #      expects fewer than 0.85 home goals. At that level P(home scores ≥ 1) ≈ 57%,
+    #      well below the 65.4% break-even at 1.53 odds. These are heavy home underdogs
+    #      (cup ties, promoted sides) where Poisson passes on league-average priors but
+    #      ZINB correctly flags the structural weakness in the home attack.
     _WOMEN_UNIVERSAL_MARKETS: frozenset = WOMEN_OVER_SUPPRESSED_MARKETS | frozenset({
         "1X (Home or Draw)", "X2 (Draw or Away)", "12 (Home or Away)",
         "Over 0.5 1H", "Home Win to Nil", "Away Win to Nil",
@@ -477,6 +483,11 @@ async def list_signals(
             sig.dual_agreement == "Both"
             and sig.dual_confidence == "Medium"
             and (fix.league or "").lower().strip() in BOTH_MEDIUM_DISABLED_LEAGUES
+        )
+        and not (                                                        # B-6
+            sig.market == "Home Over 0.5"
+            and sig.zinb_lambda_h is not None
+            and sig.zinb_lambda_h < 0.85
         )
     ]
 
