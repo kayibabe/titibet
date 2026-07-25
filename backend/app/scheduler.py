@@ -24,11 +24,12 @@ from datetime import date, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy import select, distinct
+from sqlalchemy import select, distinct, func
 
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
-from app.models import TrackedBet, Fixture
+from app.models import TrackedBet, Fixture, Signal
+from app.models.odds import MarketSnapshot
 from app.services import ingestion
 from app.services.signal_engine import compute_signals_for_date
 from app.services.auto_tracker import auto_track_date, auto_track_acca_signals
@@ -169,6 +170,90 @@ async def catchup_past_dates() -> int:
             except Exception:
                 logger.exception("League watch guard failed — continuing normally")
         return n_settled
+
+
+async def catchup_missed_tracking_dates(lookback_days: int = 14) -> int:
+    """
+    Detect and recover dates where market snapshots exist but no system
+    TrackedBet rows were ever created (e.g. server was down during the
+    auto-tracking step of a scheduled sync).
+
+    Unlike catchup_past_dates(), which requires Pending bets to already exist,
+    this function catches the earlier failure mode: the bets were never created
+    at all, making the date invisible to settlement-based catch-up.
+
+    Returns the total number of bets created across all recovered dates.
+    """
+    async with AsyncSessionLocal() as db:
+        today = date.today()
+        cutoff = today - timedelta(days=lookback_days)
+
+        # Dates in the lookback window that have at least one market snapshot.
+        snapshot_dates_result = await db.execute(
+            select(distinct(Fixture.event_date))
+            .join(MarketSnapshot, MarketSnapshot.fixture_id == Fixture.id)
+            .where(Fixture.event_date >= cutoff, Fixture.event_date < today)
+        )
+        snapshot_dates: set[date] = {r[0] for r in snapshot_dates_result.all() if r[0]}
+
+        if not snapshot_dates:
+            return 0
+
+        # Dates in that same window that already have at least one system single bet.
+        tracked_dates_result = await db.execute(
+            select(distinct(TrackedBet.event_date))
+            .where(
+                TrackedBet.event_date >= cutoff,
+                TrackedBet.event_date < today,
+                TrackedBet.user_id.is_(None),
+                TrackedBet.source_rule_key != "system_acca",
+            )
+        )
+        tracked_dates: set[date] = {r[0] for r in tracked_dates_result.all() if r[0]}
+
+        gap_dates = sorted(snapshot_dates - tracked_dates)
+        if not gap_dates:
+            return 0
+
+        for d in gap_dates:
+            logger.warning(
+                "Tracking gap detected: %s has market snapshots but 0 system bets — recovering",
+                d,
+            )
+
+        total_created = 0
+        for d in gap_dates:
+            try:
+                # Recompute signals from existing snapshots if they're absent.
+                sig_count = await db.scalar(
+                    select(func.count())
+                    .select_from(Signal)
+                    .join(Fixture, Signal.fixture_id == Fixture.id)
+                    .where(Fixture.event_date == d)
+                    .where(Signal.is_candidate == False)  # noqa: E712
+                ) or 0
+                if sig_count == 0:
+                    await compute_signals_for_date(db, d)
+
+                n = await auto_track_date(db, d)
+                await db.commit()
+                total_created += n
+                logger.info("Tracking gap recovered: %s — %d bet(s) created", d, n)
+            except Exception:
+                logger.exception("Tracking gap recovery failed for %s — skipping", d)
+
+        if total_created:
+            # Settle the recovered bets immediately.
+            try:
+                settle_info = await settle_bets_for_date(db, None)
+                logger.info(
+                    "Tracking gap settlement: %d bet(s) settled after recovery",
+                    settle_info.get("settled", 0),
+                )
+            except Exception:
+                logger.exception("Settlement after tracking-gap recovery failed")
+
+        return total_created
 
 
 async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool = False, evening_extras: bool = False) -> None:
@@ -443,6 +528,14 @@ async def startup_sync() -> None:
 
     # Step 2: resolve any pending bets from past dates before syncing today.
     await catchup_past_dates()
+
+    # Step 2b: recover dates where snapshots exist but bets were never created.
+    n_recovered = await catchup_missed_tracking_dates()
+    if n_recovered:
+        logger.warning(
+            "Startup: recovered %d bet(s) from tracking gap(s) — check logs for affected dates",
+            n_recovered,
+        )
 
     # Step 3: sync today normally.
     logger.info("Startup sync: pulling today (%s)", date.today())
