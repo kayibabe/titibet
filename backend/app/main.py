@@ -288,21 +288,35 @@ async def lifespan(app: FastAPI):
                             "SELECT COUNT(*) FROM market_snapshots ms "
                             "JOIN fixtures f ON f.id = ms.fixture_id WHERE f.event_date = :d"
                         ), {"d": _ds})).scalar() or 0
+                        sig_n = (await _db.execute(_text(
+                            "SELECT COUNT(*) FROM signals s "
+                            "JOIN fixtures f ON f.id = s.fixture_id "
+                            "WHERE f.event_date = :d AND s.is_candidate = 0"
+                        ), {"d": _ds})).scalar() or 0
 
-                        if snap_n > 0:
-                            logger.info("BACKFILL %s: %d snapshots in DB — skipping ingestion, recomputing signals", _ds, snap_n)
+                        if snap_n > 0 and sig_n > 0:
+                            # Signals already in DB — skip expensive recompute, just auto-track
+                            logger.info("BACKFILL %s: %d signals exist — skipping recompute, auto-tracking", _ds, sig_n)
+                            n_track = await _atd(_db, _cur)
+                            logger.info("BACKFILL %s: %d bets tracked", _ds, n_track)
+                        elif snap_n > 0:
+                            # Snapshots present but no signals — recompute
+                            n_sig = await _aio.wait_for(_csfd(_db, _cur), timeout=120)
+                            await _db.commit()
+                            n_track = await _atd(_db, _cur)
+                            logger.info("BACKFILL %s: computed %d signals, %d bets tracked", _ds, n_sig, n_track)
                         else:
+                            # No snapshots — ingest from API
                             run = await _aio.wait_for(_sync(_db, _cur, force=True), timeout=120)
                             logger.info("BACKFILL %s: ingest=%s fixtures=%s", _ds, run.status, getattr(run, "fixtures_pulled", "?"))
                             if run.status != "success":
                                 logger.warning("BACKFILL %s: ingestion failed, skipping", _ds)
                                 _cur += _td(days=1)
                                 continue
-
-                        n_sig = await _aio.wait_for(_csfd(_db, _cur), timeout=90)
-                        await _db.commit()
-                        n_track = await _atd(_db, _cur)
-                        logger.info("BACKFILL %s: %d signals, %d bets tracked", _ds, n_sig, n_track)
+                            n_sig = await _aio.wait_for(_csfd(_db, _cur), timeout=120)
+                            await _db.commit()
+                            n_track = await _atd(_db, _cur)
+                            logger.info("BACKFILL %s: ingest+compute %d signals, %d bets tracked", _ds, n_sig, n_track)
                     except _aio.TimeoutError:
                         logger.error("BACKFILL %s: timed out", _ds)
                     except Exception:
