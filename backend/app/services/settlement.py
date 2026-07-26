@@ -234,10 +234,15 @@ async def settle_bets_for_date(
     await db.commit()
 
     # Compute CLV for each just-settled bet while market_snapshots are still present.
+    # Bets whose closing line was already captured pre-kickoff by
+    # capture_closing_odds_for_pending() keep that value — it is the true
+    # closing price; the snapshot-window estimate here is the fallback.
     if just_settled:
         from app.services.clv import compute_clv_for_bet
         clv_updated = 0
         for bet in just_settled:
+            if bet.closing_odds is not None:
+                continue
             closing, clv_pct = await compute_clv_for_bet(bet, db)
             if closing is not None:
                 bet.closing_odds = closing

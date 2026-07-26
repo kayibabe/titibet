@@ -633,6 +633,25 @@ async def _kickoff_alert_job() -> None:
 
 
 
+async def _closing_odds_job() -> None:
+    """
+    Hourly closing-line capture — pulls fresh odds for fixtures with pending
+    bets kicking off within the next 80 minutes and writes closing_odds +
+    clv_pct onto the bet rows. This is the only reliable CLV source:
+    market_snapshots is deleted/rewritten every sync, so no price history
+    survives to settlement time (audit 2026-07-26). Cost: one API call per
+    tracked fixture per day (~2-5 calls/day at current volume).
+    """
+    from app.services.clv import capture_closing_odds_for_pending
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await capture_closing_odds_for_pending(db)
+            if result["captured"] or result["no_line"]:
+                logger.info("Closing-odds job: %s", result)
+        except Exception:
+            logger.exception("Closing-odds job failed — continuing normally")
+
+
 async def _daily_calibration_job() -> None:
     """
     Daily calibration audit — runs at 05:00 UTC every day.
@@ -815,6 +834,16 @@ def get_scheduler() -> AsyncIOScheduler:
             replace_existing=True,
             misfire_grace_time=120,
         )
+        # Closing-line capture — hourly at :30 (offset from kickoff alerts at :00).
+        # 80-minute lookahead + hourly cadence ⇒ every fixture with a pending bet
+        # gets its true closing odds written 20-80 minutes before kickoff.
+        _scheduler.add_job(
+            _closing_odds_job,
+            CronTrigger(minute="30"),
+            id="closing-odds-capture",
+            replace_existing=True,
+            misfire_grace_time=600,
+        )
         # Daily calibration audit — every day 05:00 UTC.
         # Computes Brier skill, ECE, per-market calibration gaps over the last 90 days.
         # Daily re-runs are cheap (90-day window) and catch model drift faster than weekly.
@@ -840,7 +869,8 @@ def get_scheduler() -> AsyncIOScheduler:
         logger.info(
             "Scheduler configured: %d syncs "
             "(04:00=morning-confirm, 19:00=evening-tomorrow, 23:00=settle-only) "
-            "+ kickoff alerts 04:00-22:00 UTC + daily calibration + weekly cleanup",
+            "+ kickoff alerts 04:00-22:00 UTC + hourly closing-odds capture "
+            "+ daily calibration + weekly cleanup",
             len(settings.sync_times_list),
         )
     return _scheduler

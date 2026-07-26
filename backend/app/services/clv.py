@@ -3,9 +3,19 @@ clv.py — Closing Line Value computation.
 
 CLV = (closing_odds / bet_odds - 1) × 100
 
-closing_odds is taken as the best odds available in the 4-hour window before
-kickoff (the canonical closing line). Falls back to the best pre-kickoff odds
-within 24 hours if the narrow window has no data.
+closing_odds is taken from two sources, in order of preference:
+
+1. capture_closing_odds_for_pending() — an hourly scheduler job that pulls
+   fresh odds from API-Football for fixtures with pending bets kicking off
+   within the next ~80 minutes and writes the true closing line onto the bet
+   row itself. The bet row is the durable store: market_snapshots is a
+   current-state cache that ingestion deletes and rewrites every sync, so it
+   cannot serve as a price history.
+2. compute_clv_for_bet() — snapshot-based fallback, only trusted when a
+   snapshot exists inside the 4-hour pre-kickoff window. There is deliberately
+   NO wider fallback: comparing the bet price to the very snapshot it was
+   placed from yields a meaningless CLV of 0, which is worse than no data
+   (audit 2026-07-26: 6 of 9 recorded CLVs were such tautologies).
 
 A positive CLV means you got better than the closing market price —
 the canonical evidence of genuine model edge, independent of outcome variance.
@@ -13,7 +23,7 @@ the canonical evidence of genuine model edge, independent of outcome variance.
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,8 +98,8 @@ async def compute_clv_for_bet(bet: TrackedBet, db: AsyncSession) -> tuple[float 
     """
     Returns (closing_odds, clv_pct) for a single bet.
     Uses the best odds in market_snapshots within the 4-hour pre-kickoff window.
-    Falls back to best pre-kickoff odds within 24 hours if the narrow window is empty.
-    Returns (None, None) if no snapshot data exists.
+    Returns (None, None) when no snapshot lands in that window — a missing CLV
+    is honest; a CLV computed against the bet's own opening price is not.
     """
     if not bet.fixture_id or not bet.market_type or not bet.odds or bet.odds <= 0:
         return None, None
@@ -119,16 +129,6 @@ async def compute_clv_for_bet(bet: TrackedBet, db: AsyncSession) -> tuple[float 
                 MarketSnapshot.pulled_at >= window_start,
                 MarketSnapshot.pulled_at <= fixture_row.kickoff_at,
             )
-        )
-        closing = result.scalar_one_or_none()
-
-    # Fallback: best odds at any point before kickoff
-    if not closing or closing <= 0:
-        fallback = _base_conditions()
-        if fixture_row and fixture_row.kickoff_at:
-            fallback.append(MarketSnapshot.pulled_at <= fixture_row.kickoff_at)
-        result = await db.execute(
-            select(func.max(MarketSnapshot.odds)).where(*fallback)
         )
         closing = result.scalar_one_or_none()
 
@@ -171,3 +171,81 @@ async def compute_clv_all(db: AsyncSession, force: bool = False, user_id: int | 
 
     log.info("CLV computation done: %d updated, %d skipped (no snapshot)", updated, skipped)
     return {"updated": updated, "skipped_no_data": skipped}
+
+
+def _best_odds_from_api_rows(rows: list[dict], market_type: str) -> float | None:
+    """Best (max) odds for a bet's market from parsed /odds API rows."""
+    selection_name = _BET_TO_SELECTION.get(market_type, market_type)
+    market_scope = _MARKET_TYPE_SCOPE.get(market_type)
+    best = None
+    for row in rows:
+        if row.get("selection_name") != selection_name:
+            continue
+        if market_scope and row.get("market_type") not in market_scope:
+            continue
+        odds = row.get("odds")
+        if odds and odds > 1.0 and (best is None or odds > best):
+            best = odds
+    return best
+
+
+async def capture_closing_odds_for_pending(
+    db: AsyncSession, lookahead_minutes: int = 80,
+) -> dict:
+    """
+    Capture true closing lines for pending bets kicking off soon.
+
+    For every pending bet without closing_odds whose fixture kicks off within
+    the next `lookahead_minutes`, pull fresh odds from API-Football (one call
+    per fixture, force-bypassing the file cache) and write closing_odds +
+    clv_pct directly onto the bet row. Run hourly with an 80-minute lookahead
+    so every kickoff is captured 20-80 minutes out.
+    """
+    from app.services import api_client
+
+    # kickoff_at is stored naive-UTC; compare with a naive-UTC now.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    window_end = now + timedelta(minutes=lookahead_minutes)
+
+    rows = await db.execute(
+        select(TrackedBet, Fixture)
+        .join(Fixture, TrackedBet.fixture_id == Fixture.id)
+        .where(
+            TrackedBet.result_status == "Pending",
+            TrackedBet.closing_odds.is_(None),
+            TrackedBet.odds.is_not(None),
+            Fixture.kickoff_at.is_not(None),
+            Fixture.kickoff_at > now,
+            Fixture.kickoff_at <= window_end,
+        )
+    )
+    pairs = list(rows.all())
+    if not pairs:
+        return {"captured": 0, "no_line": 0, "fixtures": 0}
+
+    # One API call per distinct fixture, shared across its bets.
+    odds_by_fixture: dict[int, list[dict]] = {}
+    for _, fixture in pairs:
+        if fixture.id not in odds_by_fixture:
+            odds_by_fixture[fixture.id] = await api_client.fetch_fixture_odds(
+                fixture.external_fixture_id, force=True,
+            )
+
+    captured = 0
+    no_line = 0
+    for bet, fixture in pairs:
+        closing = _best_odds_from_api_rows(odds_by_fixture[fixture.id], bet.market_type)
+        if closing is None:
+            no_line += 1
+            continue
+        bet.closing_odds = round(closing, 3)
+        bet.clv_pct = round((closing / bet.odds - 1.0) * 100, 2)
+        captured += 1
+
+    if captured:
+        await db.commit()
+    log.info(
+        "Closing-odds capture: %d bet(s) captured, %d without a live line, %d fixture pull(s)",
+        captured, no_line, len(odds_by_fixture),
+    )
+    return {"captured": captured, "no_line": no_line, "fixtures": len(odds_by_fixture)}

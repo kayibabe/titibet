@@ -464,15 +464,17 @@ def _parse_fixture_row(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def fetch_fixture_odds(fixture_id: int) -> list[dict[str, Any]]:
+async def fetch_fixture_odds(fixture_id: int, *, force: bool = False) -> list[dict[str, Any]]:
     """
-    Fetch all odds for a specific fixture (used in backtester / deep-dive refresh).
-    Single API call — all bookmakers returned together, filtered client-side.
+    Fetch all odds for a specific fixture (used in backtester / deep-dive refresh
+    and closing-odds capture). Single API call — all bookmakers returned together,
+    filtered client-side. force=True bypasses the file cache (closing-line capture
+    must see the live price, not a snapshot from an earlier sync).
     """
     now  = datetime.now(timezone.utc)
     rows: list[dict[str, Any]] = []
     try:
-        payload = await _get(f"/odds?fixture={fixture_id}")
+        payload = await _get(f"/odds?fixture={fixture_id}", force=force)
     except Exception:
         return rows
     for entry in payload.get("response", []):
