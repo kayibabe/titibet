@@ -287,15 +287,19 @@ function PickSourceWidget({ bySource }) {
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
+const MAX_VISIBLE = 4
+
 export default function BriefingPanel({ data, onApplySignalFilter }) {
   const [open, setOpen] = useState(true)
+  const [showAll, setShowAll] = useState(false)
 
   if (!data) return null
 
   const insights = computeInsights(data)
-  const hasSource = (data.bySource ?? []).filter(r => (r.bets ?? 0) >= 5).length > 0
+  if (insights.length === 0) return null
 
-  if (insights.length === 0 && !hasSource) return null
+  const visible = showAll ? insights : insights.slice(0, MAX_VISIBLE)
+  const hidden  = insights.length - MAX_VISIBLE
 
   return (
     <div className="rounded-xl border border-[var(--border)] overflow-hidden">
@@ -308,11 +312,9 @@ export default function BriefingPanel({ data, onApplySignalFilter }) {
         <div className="flex items-center gap-2.5">
           <Sparkles size={14} className="text-indigo-400" />
           <span className="text-sm font-semibold text-[var(--text-h)]">Intelligence Briefing</span>
-          {insights.length > 0 && (
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-              {insights.length} insights
-            </span>
-          )}
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+            {insights.length} insights
+          </span>
         </div>
         {open
           ? <ChevronUp size={14} className="text-[var(--text)] opacity-50" />
@@ -321,19 +323,21 @@ export default function BriefingPanel({ data, onApplySignalFilter }) {
       </button>
 
       {open && (
-        <>
-          {/* Insights grid */}
-          {insights.length > 0 && (
-            <div className="p-4 grid gap-2.5 sm:grid-cols-2">
-              {insights.map((ins, i) => (
-                <InsightCard key={i} insight={ins} onApplySignalFilter={onApplySignalFilter} />
-              ))}
-            </div>
+        <div className="p-4 space-y-3">
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            {visible.map((ins, i) => (
+              <InsightCard key={i} insight={ins} onApplySignalFilter={onApplySignalFilter} />
+            ))}
+          </div>
+          {hidden > 0 && (
+            <button
+              onClick={() => setShowAll(v => !v)}
+              className="w-full text-xs text-[var(--accent)] hover:text-[var(--text-h)] transition-colors py-1"
+            >
+              {showAll ? 'Show fewer' : `Show ${hidden} more insight${hidden > 1 ? 's' : ''} ↓`}
+            </button>
           )}
-
-          {/* Pick source widget */}
-          <PickSourceWidget bySource={data.bySource} />
-        </>
+        </div>
       )}
     </div>
   )

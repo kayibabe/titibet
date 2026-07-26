@@ -634,6 +634,87 @@ function TierBreakdown({ rows = [] }) {
   )
 }
 
+// ── League Breakdown — Tier + League Performance merged ───────────────────────
+function LeagueBreakdownSection({ byTier, byLeague, isPro, onUpgrade }) {
+  const [tab, setTab] = useState('tier')
+  const hasTier   = (byTier   ?? []).length > 0
+  const hasLeague = (byLeague ?? []).length > 0
+  if (!hasTier && !hasLeague) return null
+
+  const tabs = [
+    hasTier   && { id: 'tier',   label: 'By Tier'   },
+    hasLeague && { id: 'league', label: 'By League'  },
+  ].filter(Boolean)
+
+  return (
+    <Section icon={Layers} title="League Breakdown" subtitle="performance by tier and competition">
+      <div className="space-y-4">
+        {tabs.length > 1 && (
+          <div className="flex gap-1 border-b border-[var(--border)]">
+            {tabs.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`px-3 py-1.5 text-xs font-medium border-b-2 -mb-px transition-colors ${
+                  tab === t.id
+                    ? 'border-[var(--accent)] text-[var(--accent)]'
+                    : 'border-transparent text-[var(--text)] opacity-70 hover:opacity-100 hover:text-[var(--text-h)]'
+                }`}
+              >
+                {t.label}
+                {t.id === 'league' && !isPro && (
+                  <span className="ml-1 text-[9px] font-bold text-[var(--accent)] opacity-70">PRO</span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {tab === 'tier' && hasTier && <TierBreakdown rows={byTier} />}
+
+        {tab === 'league' && (
+          isPro
+            ? hasLeague && (
+                <div className="space-y-5">
+                  <LeagueInsights rows={byLeague} />
+                  <ByMarketTable rows={byLeague} title="" keyField="league" />
+                </div>
+              )
+            : <UpgradePrompt required="pro" variant="inline" feature="League Performance requires a Pro subscription." onUpgrade={onUpgrade} />
+        )}
+      </div>
+    </Section>
+  )
+}
+
+// ── Value & ACCA — merged into sub-tabs ───────────────────────────────────────
+function ValueAccaSection() {
+  const [tab, setTab] = useState('value')
+  return (
+    <Section icon={Coins} title="Value &amp; ACCA" subtitle="odds-band edge and accumulator performance">
+      <div className="space-y-4">
+        <div className="flex gap-1 border-b border-[var(--border)]">
+          {[{ id: 'value', label: 'Value Bands' }, { id: 'acca', label: 'ACCA' }].map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-3 py-1.5 text-xs font-medium border-b-2 -mb-px transition-colors ${
+                tab === t.id
+                  ? 'border-[var(--accent)] text-[var(--accent)]'
+                  : 'border-transparent text-[var(--text)] opacity-70 hover:opacity-100 hover:text-[var(--text-h)]'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {tab === 'value' && <OddsBandBreakdown />}
+        {tab === 'acca'  && <AccaPerformanceCard />}
+      </div>
+    </Section>
+  )
+}
+
 const ANALYTICS_TABS = [
   { id: 'overview',  label: 'Overview',  desc: 'P&L and performance summary' },
   { id: 'markets',   label: 'Markets',   desc: 'Market, league and signal breakdown' },
@@ -810,11 +891,7 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
           ══════════════════════════════════════════════════════════════════ */}
           {analyticsTab === 'overview' && (
             <div className="space-y-5">
-              <Section icon={Target} title="Model Accuracy" subtitle="how often each signal prediction was correct across all settled fixtures">
-                <AccuracyDashboard />
-              </Section>
-
-              <Section icon={Activity} title="Performance Breakdown" subtitle={activePreset === 'All' ? 'All-time' : activePreset ? `Last ${activePreset}` : dateFrom && dateTo ? formatPeriodLabel(dateFrom, dateTo) : 'period summary'}>
+              <Section icon={Activity} title="Performance" subtitle={activePreset === 'All' ? 'All-time' : activePreset ? `Last ${activePreset}` : dateFrom && dateTo ? formatPeriodLabel(dateFrom, dateTo) : 'period summary'}>
                 <div className="space-y-5">
 
                   {/* System Auto-Tracked panel */}
@@ -865,9 +942,6 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
                 </div>
               </Section>
 
-              {/* Calibration lives canonically in Strategy → Model Calibration,
-                  so it is not duplicated here on Overview. */}
-
               {isPro ? (
                 <Section icon={BarChart2} title="P&L Trend" subtitle="cumulative profit over time" pro>
                   <TrendChart data={data.trend} />
@@ -875,10 +949,6 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
               ) : (
                 <Section icon={BarChart2} title="P&L Trend" subtitle="cumulative profit over time" pro locked onUpgrade={onUpgrade}>{null}</Section>
               )}
-
-              <Section icon={Users} title="Bettor Leaderboard" subtitle="top performers ranked by hit rate">
-                <Leaderboard />
-              </Section>
             </div>
           )}
 
@@ -888,27 +958,30 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
           ══════════════════════════════════════════════════════════════════ */}
           {analyticsTab === 'markets' && (
             <div className="space-y-5">
-              {data.byTier.length > 0 && (
-                <Section icon={Layers} title="League Tier Breakdown" subtitle="Home Over 0.5 performance by league tier">
-                  <TierBreakdown rows={data.byTier} />
+
+              {/* 1 — Signal Accuracy: model hit rate across all signals (not just tracked bets) */}
+              <Section icon={Target} title="Signal Accuracy" subtitle="hit rate across all generated signals — not just tracked bets">
+                <AccuracyDashboard />
+              </Section>
+
+              {/* 2 — Market Performance */}
+              {data.byMarket.length > 0 && (
+                <Section icon={TrendingUp} title="Market Performance" subtitle="ROI and hit rate by bet type">
+                  <MarketPerformanceContent rows={data.byMarket} onApplySignalFilter={onApplySignalFilter} />
                 </Section>
               )}
 
-              {isPro ? (
-                data.byLeague.length > 0 && (
-                  <Section icon={Layers} title="League Performance" subtitle="results by competition" pro>
-                    <div className="space-y-5">
-                      <LeagueInsights rows={data.byLeague} />
-                      <ByMarketTable rows={data.byLeague} title="" keyField="league" />
-                    </div>
-                  </Section>
-                )
-              ) : (
-                <Section icon={Layers} title="League Performance" pro locked onUpgrade={onUpgrade}>{null}</Section>
-              )}
+              {/* 3 — League Breakdown: Tier + League Performance merged */}
+              <LeagueBreakdownSection
+                byTier={data.byTier}
+                byLeague={data.byLeague}
+                isPro={isPro}
+                onUpgrade={onUpgrade}
+              />
 
+              {/* 4 — Signal Quality: Confidence + Agreement */}
               {(data.byConfidence.length > 0 || data.byAgreement.length >= 2) && (
-                <Section icon={TrendingUp} title="Signal Quality" subtitle="how each confidence tier and engine agreement type performs">
+                <Section icon={Zap} title="Signal Quality" subtitle="how each confidence tier and engine agreement type performs">
                   <SignalQualityContent
                     byConfidence={data.byConfidence}
                     byAgreement={data.byAgreement}
@@ -918,24 +991,12 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
                 </Section>
               )}
 
-              <Section icon={TrendingUp} title="Value Band Breakdown" subtitle="win rate and ROI by bookmaker odds range · ◆ marks the highest-edge band">
-                <OddsBandBreakdown />
-              </Section>
+              {/* 5 — Value & ACCA: odds-band edge + accumulator performance merged */}
+              <ValueAccaSection />
 
-              {isPro && data.bySource?.length > 0 && (
-                <Section icon={Zap} title="Pick Sources" subtitle="performance by how a bet was added" pro>
-                  <ByMarketTable rows={data.bySource} title="" keyField="source" />
-                </Section>
-              )}
-
-              {isPro && data.byRule.length > 0 && (
-                <Section icon={Zap} title="Signal Rules" subtitle="outcomes by rule trigger" pro>
-                  <ByMarketTable rows={data.byRule} title="" keyField="rule_key" />
-                </Section>
-              )}
-
-              <Section icon={Layers} title="ACCA Performance" subtitle="leg hit rate and ticket hit rate by market and leg count">
-                <AccaPerformanceCard />
+              {/* 6 — Leaderboard */}
+              <Section icon={Users} title="Bettor Leaderboard" subtitle="top performers ranked by hit rate">
+                <Leaderboard />
               </Section>
 
             </div>
@@ -960,8 +1021,13 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
                   produces. Sub-tabs replace the former Self-Learning Engine,
                   Model Intelligence and Parameter Hub sections, which overlapped. */}
               {isPro ? (
-                <Section icon={Brain} title="Engine Health" subtitle="weights, threshold changes and active parameters" pro>
-                  <EngineHealth insights={insights} onApplySignalFilter={onApplySignalFilter} />
+                <Section icon={Brain} title="Engine Health" subtitle="weights, thresholds, parameters and pick sources" pro>
+                  <EngineHealth
+                    insights={insights}
+                    bySource={data.bySource}
+                    byRule={data.byRule}
+                    onApplySignalFilter={onApplySignalFilter}
+                  />
                 </Section>
               ) : (
                 <Section icon={Brain} title="Engine Health" pro locked onUpgrade={onUpgrade}>{null}</Section>
@@ -1224,14 +1290,13 @@ function AccaPerformanceCard() {
 }
 
 // ── Engine Health — unified self-learning view ───────────────────────────────
-// Replaces the former Self-Learning Engine, Model Intelligence and Parameter Hub
-// sections, which surfaced overlapping slices of the same self-learning output.
-function EngineHealth({ insights, onApplySignalFilter }) {
+function EngineHealth({ insights, bySource, byRule, onApplySignalFilter }) {
   const [tab, setTab] = useState('weights')
   const TABS = [
     { id: 'weights',    label: 'Weights' },
-    { id: 'thresholds', label: 'Threshold Changes' },
-    { id: 'parameters', label: 'Active Parameters' },
+    { id: 'thresholds', label: 'Thresholds' },
+    { id: 'parameters', label: 'Parameters' },
+    { id: 'sources',    label: 'Sources & Rules' },
   ]
   return (
     <div className="space-y-4">
@@ -1253,6 +1318,38 @@ function EngineHealth({ insights, onApplySignalFilter }) {
       {tab === 'weights'    && <ModelInsightsContent insights={insights} />}
       {tab === 'thresholds' && <ModelIntelligenceDashboard />}
       {tab === 'parameters' && <ParameterHub onApplySignalFilter={onApplySignalFilter} />}
+      {tab === 'sources'    && <SourcesAndRules bySource={bySource} byRule={byRule} onApplySignalFilter={onApplySignalFilter} />}
+    </div>
+  )
+}
+
+function SourcesAndRules({ bySource, byRule, onApplySignalFilter }) {
+  const hasSources = (bySource ?? []).length > 0
+  const hasRules   = (byRule   ?? []).length > 0
+
+  if (!hasSources && !hasRules) {
+    return (
+      <p className="text-xs text-[var(--text)] opacity-55 text-center py-6">
+        No source or rule data yet — needs settled bets across multiple sources.
+      </p>
+    )
+  }
+  return (
+    <div className="space-y-6">
+      {hasSources && (
+        <div className="space-y-2">
+          <h4 className="text-[11px] font-semibold text-[var(--text-h)] uppercase tracking-wide opacity-70">Pick Sources</h4>
+          <p className="text-[10px] text-[var(--text)] opacity-55">Performance by how a bet was added to the tracker.</p>
+          <ByMarketTable rows={bySource} title="" keyField="source" />
+        </div>
+      )}
+      {hasRules && (
+        <div className="space-y-2">
+          <h4 className="text-[11px] font-semibold text-[var(--text-h)] uppercase tracking-wide opacity-70">Signal Rules</h4>
+          <p className="text-[10px] text-[var(--text)] opacity-55">Outcomes by signal rule trigger.</p>
+          <ByMarketTable rows={byRule} title="" keyField="rule_key" onFilterSignals={onApplySignalFilter} />
+        </div>
+      )}
     </div>
   )
 }
