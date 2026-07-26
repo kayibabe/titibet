@@ -48,6 +48,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const [settleResult, setSettleResult] = useState(null)
   const [computingCLV, setComputingCLV] = useState(false)
   const [showImport, setShowImport]     = useState(false)
+  const [showAdvisory, setShowAdvisory] = useState(false)
   const [moreOpen, setMoreOpen]         = useState(false)
   const [clvResult, setClvResult]       = useState(null)
   const [deduping, setDeduping]           = useState(false)
@@ -77,8 +78,8 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const filteredBets = useMemo(() => {
     if (sourceFilter === 'system') return bets.filter(isSystemPick)
     if (sourceFilter === 'manual') return bets.filter(b => !isSystemPick(b) && !isAdvisoryPick(b))
-    return bets.filter(b => !isAdvisoryPick(b))
-  }, [bets, sourceFilter]) // eslint-disable-line
+    return showAdvisory ? bets : bets.filter(b => !isAdvisoryPick(b))
+  }, [bets, sourceFilter, showAdvisory]) // eslint-disable-line
 
   // Analytics summary for the currently filtered view — same backend
   // build_analytics() implementation the Analytics page uses, scoped with
@@ -417,6 +418,20 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
               {label}
             </button>
           ))}
+          {sourceFilter !== 'manual' && (
+            <button
+              onClick={() => setShowAdvisory(v => !v)}
+              title="Advisory picks are zero-stake shadow rows written by the AI advisor (Scout, Strategist, Skeptic)"
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-colors ml-2 ${
+                showAdvisory
+                  ? 'bg-violet-500/20 text-violet-300 border-violet-500/50'
+                  : 'border-[var(--border)] text-[var(--text)] opacity-50 hover:opacity-75 hover:bg-[var(--bg)]'
+              }`}
+            >
+              <Bot size={11} />
+              Advisory{showAdvisory ? '' : ' picks hidden'}
+            </button>
+          )}
         </div>
       </div>
 
