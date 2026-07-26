@@ -5,6 +5,7 @@ import { fmtDate, fmtDateTime } from '../utils/format'
 import TelegramPanel from '../components/admin/TelegramPanel'
 import QuotaWidget from '../components/admin/QuotaWidget'
 import LearningProposalsPanel from '../components/admin/LearningProposalsPanel'
+import ShadowTrialPanel from '../components/admin/ShadowTrialPanel'
 
 const TIER_OPTIONS = ['free', 'pro']
 const STATUS_OPTIONS = ['inactive', 'active', 'cancelled', 'past_due']
@@ -483,6 +484,9 @@ export default function AdminPage() {
           <LearningProposalsPanel />
         </div>
       </div>
+
+      {/* Shadow trial candidates */}
+      <ShadowTrialPanel />
 
       {/* Telegram panel */}
       <TelegramPanel />

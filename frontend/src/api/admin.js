@@ -177,6 +177,19 @@ export async function backfillDates({ dateFrom, dateTo, dryRun = false } = {}) {
   return res.json()
 }
 
+/** Shadow-trial candidates: signals held back from the live feed for performance auditing. */
+export async function fetchShadowCandidates({ market, settledOnly = false, limit = 300 } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (market) params.set('market', market)
+  if (settledOnly) params.set('settled_only', 'true')
+  const res = await apiFetch(`/api/admin/shadow-candidates?${params}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to fetch shadow candidates')
+  }
+  return res.json()
+}
+
 /** Trigger a full sync (ingest + signals + track + settle) for a single date. */
 export async function triggerSync({ date, morningExtras = false, eveningExtras = false } = {}) {
   const params = new URLSearchParams()
