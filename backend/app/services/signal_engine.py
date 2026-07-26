@@ -783,10 +783,19 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             #      Bayesian derived_prob >= 0.70 AND odds imply positive EV (prob*odd > 1).
             #      Covers inter-season fixtures where only goals lines are published.
             # is_candidate is refined after is_dual_signal is known (below).
-            _candidate_markets = {"Over 1.5", "Over 2.5"}
+            #
+            # Away Over 0.5 shadow trial (2026-07-26): the Tier-2 Poisson-only gate
+            # below is hard-coded to Home Over 0.5, so AO0.5 has zero signal supply
+            # despite the away_o05 rule computing every sync. Candidacy here mirrors
+            # the exact shape that would be promoted — Poisson-strong only (no
+            # Bayesian-fallback path), odds 1.30–2.10 (HO0.5's POISSON_ONLY_MAX_ODDS
+            # cap) — so the audit measures the promotable population and nothing else.
+            # Promote to Tier 2 only after ≥50 settled candidates clear ~62% WR.
+            _candidate_markets = {"Over 1.5", "Over 2.5", "Away Over 0.5"}
             _cand_best_odd = (
                 poi_signal_odds.get("over1_5") if market == "Over 1.5"
                 else poi_signal_odds.get("over2_5") if market == "Over 2.5"
+                else poi_signal_odds.get("away_o05") if market == "Away Over 0.5"
                 else None
             )
             _poi_strong_candidate = p is not None and p.rule_pass and p.rule_strong
@@ -804,6 +813,10 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 and _cand_best_odd is not None
                 and _cand_best_odd >= 1.30
             )
+            if market == "Away Over 0.5" and is_candidate and not (
+                _poi_strong_candidate and _cand_best_odd < 2.10
+            ):
+                is_candidate = False
 
             # Skip signals with no actionable confidence. This covers two cases:
             # (a) Zombie: both engines failed (confidence="None", agreement="None")

@@ -1532,6 +1532,129 @@ async def trigger_sync(
     }
 
 
+@router.get("/shadow-candidates")
+async def shadow_candidates(
+    market: Optional[str] = Query(None, description="Filter by market name"),
+    settled_only: bool = Query(False, description="Only rows with a final result"),
+    limit: int = Query(300),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Shadow-trial candidates: signals stored with is_candidate=True that are excluded
+    from the live feed while their performance is audited.
+
+    Each row includes a model-computed outcome ('Won' / 'Lost' / 'Pending') derived
+    from the fixture final score, plus per-market summary stats and progress toward
+    the 50-candidate promotion threshold.
+    """
+    from app.models.fixture import Fixture
+
+    q = (
+        select(Signal, Fixture)
+        .join(Fixture, Signal.fixture_id == Fixture.id)
+        .where(Signal.is_candidate == True)  # noqa: E712
+        .order_by(Fixture.event_date.desc(), Fixture.kickoff_at.desc())
+        .limit(limit)
+    )
+    if market:
+        q = q.where(Signal.market == market)
+
+    rows = list((await db.execute(q)).all())
+
+    PROMOTION_THRESHOLD = 50
+
+    def _outcome(sig: Signal, fix: Fixture) -> str:
+        """Derive trial outcome from fixture scores for the candidate market."""
+        if fix.home_score is None or fix.away_score is None:
+            return "Pending"
+        final_status = (fix.status or "").upper()
+        if final_status not in {"FT", "AET", "PEN", "AWD", "WO"}:
+            return "Pending"
+        total = fix.home_score + fix.away_score
+        m = sig.market
+        if m == "Over 1.5":
+            return "Won" if total >= 2 else "Lost"
+        if m == "Over 2.5":
+            return "Won" if total >= 3 else "Lost"
+        if m == "Away Over 0.5":
+            return "Won" if fix.away_score >= 1 else "Lost"
+        return "Pending"
+
+    # Build row-level response
+    items = []
+    for sig, fix in rows:
+        outcome = _outcome(sig, fix)
+        if settled_only and outcome == "Pending":
+            continue
+        primary_prob = max(
+            (v for v in [sig.bayesian_prob, sig.poisson_prob] if v is not None),
+            default=None,
+        )
+        items.append({
+            "signal_id":    sig.id,
+            "date":         fix.event_date.isoformat() if fix.event_date else None,
+            "fixture":      f"{fix.home_team} vs {fix.away_team}",
+            "country":      fix.country,
+            "league":       fix.league,
+            "market":       sig.market,
+            "probability":  round(primary_prob, 4) if primary_prob else None,
+            "odds":         sig.bayesian_best_odd,
+            "confidence":   sig.dual_confidence,
+            "agreement":    sig.dual_agreement,
+            "quality":      sig.dual_quality_score,
+            "score":        f"{fix.home_score}–{fix.away_score}" if fix.home_score is not None else None,
+            "outcome":      outcome,
+        })
+
+    # Build per-market summary from all candidate rows (not just this page)
+    summary_q = (
+        select(Signal, Fixture)
+        .join(Fixture, Signal.fixture_id == Fixture.id)
+        .where(Signal.is_candidate == True)  # noqa: E712
+    )
+    all_rows = list((await db.execute(summary_q)).all())
+
+    by_market: dict[str, dict] = {}
+    for sig, fix in all_rows:
+        mkt = sig.market
+        if mkt not in by_market:
+            by_market[mkt] = {"market": mkt, "n": 0, "settled": 0, "wins": 0,
+                               "sum_odds": 0.0, "odds_count": 0}
+        s = by_market[mkt]
+        s["n"] += 1
+        outcome = _outcome(sig, fix)
+        if outcome != "Pending":
+            s["settled"] += 1
+            if outcome == "Won":
+                s["wins"] += 1
+        if sig.bayesian_best_odd:
+            s["sum_odds"] += sig.bayesian_best_odd
+            s["odds_count"] += 1
+
+    summaries = []
+    for mkt, s in sorted(by_market.items()):
+        settled = s["settled"]
+        wins = s["wins"]
+        summaries.append({
+            "market":             mkt,
+            "n_total":            s["n"],
+            "n_settled":          settled,
+            "n_wins":             wins,
+            "win_rate_pct":       round(100 * wins / settled, 1) if settled else None,
+            "avg_odds":           round(s["sum_odds"] / s["odds_count"], 3) if s["odds_count"] else None,
+            "pending_to_promote": max(0, PROMOTION_THRESHOLD - settled),
+            "promotion_ready":    settled >= PROMOTION_THRESHOLD,
+        })
+
+    return {
+        "promotion_threshold": PROMOTION_THRESHOLD,
+        "by_market":           summaries,
+        "candidates":          items,
+        "total_returned":      len(items),
+    }
+
+
 @router.post("/db/purge-pre-jul2")
 async def purge_pre_jul2(
     db: AsyncSession = Depends(get_db),
