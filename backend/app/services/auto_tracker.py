@@ -255,14 +255,25 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         if signal.bos_passed and signal.market in _OVER_MARKETS:
             continue
 
-        # B-4 gate (mirrors router): Both+Medium only at 1.50–1.94 odds.
-        # < 1.50: 53.8% WR — correct block. ≥ 1.95: thin sample, excluded pending data.
-        # Full-data audit Jul-2026: 13 bets at 1.65–2.09 ran 69.2% WR — previously
-        # blocked gate was wrong; ceiling raised to 1.95 to capture the viable range.
+        # B-4 gate (mirrors router): Both+Medium only at 1.55–1.94 odds.
+        # < 1.50: 53.8% WR — correct block. 1.50–1.55: +2.6% ROI only, too thin.
+        # Jul-2026 backtest (n=129 signals): Both+Med ≥1.55 → 70.6% WR, +15.0% ROI;
+        # 1.50–1.55 sub-band → 67.7% WR, +2.6% ROI; floor raised from 1.50 to 1.55.
+        # ≥ 1.95: thin sample, excluded pending data.
         if (
             signal.dual_agreement == "Both"
             and signal.dual_confidence == "Medium"
-            and not (1.50 <= (signal.bayesian_best_odd or 0.0) < 1.95)
+            and not (1.55 <= (signal.bayesian_best_odd or 0.0) < 1.95)
+        ):
+            continue
+
+        # Poisson-Only odds floor: require ≥1.45 for auto-tracking.
+        # Jul-2026 backtest: Poisson Only <1.40 → 63.6% WR, −15.9% ROI (n=22);
+        # 1.40–1.55 → 72.7% WR, +3.6% ROI. Floor at 1.45 removes the sub-1.40
+        # junk tier (NPL-type picks) while preserving profitable Poisson Only signals.
+        if (
+            signal.dual_agreement == "Poisson Only"
+            and (signal.bayesian_best_odd or 0.0) < 1.45
         ):
             continue
 
