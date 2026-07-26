@@ -1548,6 +1548,7 @@ async def shadow_candidates(
     from the fixture final score, plus per-market summary stats and progress toward
     the 50-candidate promotion threshold.
     """
+    from app.models.signal import Signal
     from app.models.fixture import Fixture
 
     q = (
