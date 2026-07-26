@@ -699,15 +699,27 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
 
         all_markets = set(bay_by_market.keys()) | set(poi_by_market.keys())
 
+        # Candidate-only markets: inject into the loop even when the Poisson rule
+        # didn't pass (rule_pass=False means no live signal, but we still want to
+        # evaluate candidacy so the shadow trial accumulates data).
+        for _ckey, _cmkt in (("away_o05", "Away Over 0.5"),):
+            if _ckey in poi_by_key and _cmkt not in all_markets:
+                all_markets.add(_cmkt)
+
         fixture_league = (fixture.league or "").strip()
         # Recompute tier from league/country name — not the cached DB value.
         # This ensures config changes (e.g. adding World Cup to TIER_1_LEAGUES)
         # take effect immediately without needing to re-ingest fixtures.
         fixture_league_tier = get_league_tier(fixture.league or "", fixture.country or "")
 
+        # Markets that are disabled for live signals but still need candidate data collection.
+        _SHADOW_TRIAL_MARKETS: frozenset = frozenset({"Away Over 0.5"})
+
         for market in all_markets:
             # Skip markets that have been permanently disabled (e.g. BTTS No, Under 3.5).
-            if market in DISABLED_MARKETS:
+            # Exception: shadow trial markets pass through so candidacy can be evaluated —
+            # they will be gated to is_candidate=True only (never emitted as live signals).
+            if market in DISABLED_MARKETS and market not in _SHADOW_TRIAL_MARKETS:
                 continue
 
             # ── Market maximum odds cap ───────────────────────────────────────
@@ -813,10 +825,16 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 and _cand_best_odd is not None
                 and _cand_best_odd >= 1.30
             )
-            if market == "Away Over 0.5" and is_candidate and not (
-                _poi_strong_candidate and _cand_best_odd < 2.10
-            ):
-                is_candidate = False
+            # AO0.5 shadow trial: accept rule_pass (≥60%) not rule_strong (≥72%),
+            # because away λ rarely clears 72% — we need data, not perfection.
+            # The live gate (if promoted) can tighten back to rule_strong.
+            if market == "Away Over 0.5":
+                is_candidate = (
+                    p is not None and p.rule_pass
+                    and _cand_best_odd is not None
+                    and 1.30 <= _cand_best_odd < 2.10
+                    and (ds.confidence != "High" or ds.agreement != "Both")
+                )
 
             # Skip signals with no actionable confidence. This covers two cases:
             # (a) Zombie: both engines failed (confidence="None", agreement="None")
@@ -932,6 +950,12 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             # Once ≥50 settled candidates exist, run a hit-rate / ROI audit and
             # enable as Tier 3 if numbers hold.
             is_candidate = is_candidate and not is_dual_signal
+
+            # Shadow trial markets must never become live signals — enforce candidate-only.
+            if market in _SHADOW_TRIAL_MARKETS:
+                is_dual_signal = False
+                is_poisson_signal = False
+                is_bayesian_signal = False
 
             if not is_dual_signal and not is_poisson_signal and not is_bayesian_signal and not is_candidate:
                 continue

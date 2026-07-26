@@ -29,6 +29,16 @@ export async function updateUser(userId, patch) {
   return res.json()
 }
 
+export async function fetchShadowCandidates({ market, settledOnly, limit = 300 } = {}) {
+  const params = new URLSearchParams()
+  if (market) params.set('market', market)
+  if (settledOnly) params.set('settled_only', 'true')
+  if (limit) params.set('limit', limit)
+  const res = await apiFetch(`/api/admin/shadow-candidates?${params}`)
+  if (!res.ok) throw new Error(`Failed to load shadow candidates: ${res.status}`)
+  return res.json()
+}
+
 export async function triggerAdminSettle() {
   const res = await apiFetch('/api/admin/settle', { method: 'POST' })
   if (!res.ok) {
