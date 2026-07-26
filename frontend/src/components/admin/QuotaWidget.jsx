@@ -63,14 +63,14 @@ export default function QuotaWidget() {
 
       {error && <p className="text-[10px] text-red-400">{error}</p>}
 
-      {quota && (
+      {quota && limit != null && (
         <>
           <div className="flex items-end gap-1.5 mb-2">
             <span className={`text-2xl font-bold tabular-nums ${statusColor}`}>
               {remaining ?? '—'}
             </span>
             <span className="text-xs text-[var(--text)] opacity-80 pb-0.5">
-              / {limit ?? '—'} remaining
+              / {limit} remaining
             </span>
             {pctUsed != null && (
               <span className="text-[10px] text-[var(--text)] opacity-65 pb-0.5 ml-auto">
@@ -83,8 +83,8 @@ export default function QuotaWidget() {
         </>
       )}
 
-      {!quota && !loading && !error && (
-        <p className="text-xs text-[var(--text)] opacity-70">No API calls made yet this session.</p>
+      {!loading && !error && limit == null && (
+        <p className="text-xs text-[var(--text)] opacity-70">No API calls made yet — quota updates after the first sync.</p>
       )}
     </div>
   )
