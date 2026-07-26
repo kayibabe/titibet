@@ -187,8 +187,16 @@ function BackfillPanel() {
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState(null)
 
+  const daySpan = dateFrom && dateTo
+    ? Math.round((new Date(dateTo) - new Date(dateFrom)) / 86400000) + 1
+    : 0
+
   async function run(dryRun) {
     if (!dateFrom) { setError('Start date required'); return }
+    if (!dryRun && daySpan > 7) {
+      setError(`Range is ${daySpan} days — each day fits ZINB models and can take 20–40 s. Keep live runs to ≤7 days to avoid a server timeout.`)
+      return
+    }
     setLoading(true)
     setError(null)
     setResult(null)

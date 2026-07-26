@@ -48,6 +48,9 @@ primary_region = 'jnb'
   min_machines_running = 1
   processes = ['app']
 
+  [http_service.http_options]
+    response_timeout = 300
+
   [[http_service.checks]]
     interval = '30s'
     timeout = '10s'

@@ -171,8 +171,14 @@ export async function backfillDates({ dateFrom, dateTo, dryRun = false } = {}) {
   if (dateTo) params.set('date_to', dateTo)
   const res = await apiFetch(`/api/admin/backfill-dates?${params}`, { method: 'POST' })
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || 'Backfill failed')
+    let detail = `HTTP ${res.status}`
+    try {
+      const err = await res.json()
+      detail = err.detail || err.message || detail
+    } catch {
+      try { detail = `HTTP ${res.status} — ${(await res.text()).slice(0, 200)}` } catch {}
+    }
+    throw new Error(detail)
   }
   return res.json()
 }
