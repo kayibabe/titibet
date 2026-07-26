@@ -1,7 +1,5 @@
-import { useState } from 'react'
 import { Sparkles } from 'lucide-react'
 import AIAdvisorPanel from '../components/signals/AIAdvisorPanel'
-import AIChatPanel from '../components/signals/AIChatPanel'
 import UpgradePrompt from '../components/shared/UpgradePrompt'
 import useTier from '../hooks/useTier'
 
@@ -31,17 +29,6 @@ export default function AdvisorPage({ onUpgrade }) {
       </div>
 
       <AIAdvisorPanel date={today} tabMode />
-
-      {/* Chat section */}
-      <div className="flex items-center gap-3">
-        <div className="flex-1 h-px bg-[var(--border)]" />
-        <span className="text-[10px] font-bold text-[var(--text)] opacity-40 tracking-widest uppercase">Ask the AI</span>
-        <div className="flex-1 h-px bg-[var(--border)]" />
-      </div>
-
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-5">
-        <AIChatPanel />
-      </div>
     </div>
   )
 }
