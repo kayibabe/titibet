@@ -51,7 +51,12 @@ FLAT_STAKE = 50_000.0
 # Defence-in-depth: even if a gate fails or a heavy fixture day generates many
 # qualifying signals, total daily exposure is bounded.
 # Jul-18 postmortem: 13 bets on one day (vs typical 1-4) caused -146.5k loss.
-MAX_DAILY_SINGLE_BETS: int = 5
+# Raised 5→8 for August season open: gates are now tighter (Both-only, quality
+# floor 0.45, B-4 band, market/league suppressions) so the risk of 8+ junk
+# signals passing simultaneously is low. Headroom for heavy multi-league days
+# (PL + Bundesliga + La Liga + Serie A opening weekend) where 6-8 clean
+# Both-agreement signals are plausible.
+MAX_DAILY_SINGLE_BETS: int = 8
 
 
 async def _load_kelly_multipliers(db: AsyncSession) -> dict[str, float]:
