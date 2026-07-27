@@ -809,12 +809,16 @@ WOMEN_OVER_SUPPRESSED_MARKETS: frozenset[str] = frozenset({
     "Home Over 0.5", "Away Over 0.5", "Over 1.5", "Over 2.5",
 })
 
-# Countries where Both+High Home Over 0.5 signals are blocked at Tier 3.
-# In data-sparse markets both engines can agree confidently but on insufficient
-# historical data — overconfidence from noise, not genuine edge.
-# Applied only to Both+High; Poisson Only / Medium continues to qualify.
-# Derived from June 2026 loss analysis: Ethiopia, Iraq, Mali, Uzbekistan all
-# produced Both+High HO0.5 losses at 0% hit rate (0/4 in those countries).
+# Countries where Both (High or Medium) Home Over 0.5 signals are blocked at Tier 3.
+# In data-sparse markets both engines can agree on insufficient historical data —
+# overconfidence from noise, not genuine edge. Applies to Both+High AND Both+Medium
+# at auto-tracking time (auto_tracker.py). The router still shows Both+High to
+# subscribers; auto-tracker is the stricter gate.
+# Derived from June–July 2026 loss analysis across all Home Over 0.5 bets:
+#   Ethiopia ×2 losses (0-0, 0-0), Iraq/Mali/Uzbekistan ×4 losses at 0% hit rate.
+#   Ireland ×3 losses, Lebanon ×1 loss (Jul 3 2026).
+#   Kuwait ×1 loss (Al Qadsia 0-0, Jun 29 2026).
+#   Belarus ×1 loss (Bate Borisov 0-1 @1.56, Jul 2 2026).
 HO05_DATA_POOR_COUNTRIES: frozenset[str] = frozenset({
     "ethiopia", "iraq", "mali", "uzbekistan",
     # Jul 3 2026: 3 Irish losses (Premier Division 0-2, First Division 0-1) + 1 Lebanese loss
@@ -822,11 +826,21 @@ HO05_DATA_POOR_COUNTRIES: frozenset[str] = frozenset({
     # home-team scoring rates in these lower-quality domestic environments.
     "ireland",
     "lebanon",
+    # Jul 2026 additions: Kuwait (Premier League 0-0) + Belarus (Bate Borisov 0-1 @1.56).
+    # Both scored 0 home goals despite high-confidence Both-agreement signals.
+    "kuwait",
+    "belarus",
 })
 
-# South American cup competition name substrings where Home Over 0.5 signals are suppressed.
-# Cup fixtures use rotation/reserve line-ups and single-leg knockout format
-# incentivises parking the bus — home-team scoring rates drop sharply vs. league games.
+# Cup / international competition name substrings where Home Over 0.5 signals are suppressed.
+# Two categories of structural failure:
+#   LatAm cups — rotation/reserve line-ups + single-leg knockout format incentivises
+#   parking the bus; home-team scoring rates drop sharply vs. league games.
+#   International tournaments (World Cup, Copa América, etc.) — neutral venues mean
+#   the "home" team has no genuine home advantage; both models overestimate scoring
+#   probability because they are calibrated on league home-ground fixtures.
+# Jul-2026 losses: Paraguay vs Australia 0-0 (World Cup), Haiti vs Scotland 0-1 (World Cup),
+#   Union Espanola vs Colo Colo 0-3 (Copa Chile) — all Home Over 0.5.
 # Unlike OVER_GOALS_SUPPRESSED_LEAGUES (which blocks all over markets), this is
 # surgical: Over 2.5 and Over 1.5 are unaffected since cup matches can still be
 # open; it's the home-scoring guarantee that fails in cup context.
@@ -842,6 +856,16 @@ COPA_HO05_SUPPRESSED_LEAGUES: frozenset[str] = frozenset({
     # Peruvian Copa de la Liga uses rotation/reserve squads — same structural pattern
     # as other LatAm cups where home scoring drops sharply vs. league games.
     "copa de la liga",
+    # International tournaments: neutral-venue fixtures — "home" is just API ordering,
+    # not a genuine home ground. Jul-2026: Paraguay 0-0, Haiti 0-1 in World Cup.
+    "world cup",
+    "copa america",
+    "nations league",
+    "gold cup",
+    "africa cup",
+    "asian cup",
+    "concacaf",
+    "olympic",
 })
 
 # League tiers where Over 2.5 signals are suppressed system-wide.

@@ -236,12 +236,12 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             continue
 
-        # Skip Both+High Home Over 0.5 from data-poor countries at Tier 3.
-        # Both engines can agree with high confidence on insufficient historical
-        # data — the agreement reflects noise, not genuine edge.
+        # Skip Both (High or Medium) Home Over 0.5 from data-poor countries at Tier 3.
+        # Both engines can agree on insufficient historical data — the agreement
+        # reflects noise, not genuine edge. Expanded from Both+High-only to cover
+        # Both+Medium: Jul-2026 Ethiopian PL losses slipped through as Both+Medium.
         if (
             signal.market == "Home Over 0.5"
-            and signal.dual_confidence == "High"
             and signal.dual_agreement == "Both"
             and (fixture.league_tier or 3) >= 3
             and (fixture.country or "").lower() in HO05_DATA_POOR_COUNTRIES
@@ -253,6 +253,24 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         _OVER_MARKETS = {"Home Over 0.5", "Away Over 0.5", "Over 1.5", "Over 2.5",
                          "Home Over 1.5", "Away Over 1.5"}
         if signal.bos_passed and signal.market in _OVER_MARKETS:
+            continue
+
+        # Low-odds Home Over 0.5 quality gate.
+        # At odds < 1.70 (implied prob > 59%) the model is highly confident, but
+        # Jul-2026 showed shutout losses at exactly these odds: Bate Borisov 1.56
+        # (0-1), Al Hikma 1.58 (0-1), Orgryte 1.53 (0-0). Low odds do not
+        # guarantee home scoring — they just mean both engines are confidently wrong.
+        # Require stricter quality floor (≥0.55, one band above the standard B gate)
+        # AND broad bookmaker support (≥3 books) before auto-tracking at these odds.
+        if (
+            signal.market == "Home Over 0.5"
+            and (signal.bayesian_best_odd or 0.0) < 1.70
+            and (
+                not signal.dual_quality_score
+                or signal.dual_quality_score < 0.55
+                or (signal.bayesian_bookmaker_count or 0) < 3
+            )
+        ):
             continue
 
         # B-4 gate (mirrors router): Both+Medium only at 1.55–1.94 odds.
