@@ -390,7 +390,7 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
     return inserted
 
 
-_ACCA_TARGET_TIERS = [4.0, 3.5, 3.0]
+_ACCA_TARGET_TIERS = [3.0, 3.5, 4.0]  # 3.0 primary → 2-leg tickets from 1.70–1.99 band (~1.78×1.78=3.17)
 _ACCA_MIN_CANDIDATES = 2
 
 

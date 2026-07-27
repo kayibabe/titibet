@@ -333,5 +333,11 @@ async def build_acca_candidates(
             "quality_score": sig.dual_quality_score,
         })
 
-    candidates.sort(key=lambda c: c["fair_odds"])
+    # Prefer legs in the 1.70–1.99 bookmaker-odds band first (lower variance,
+    # confirmed profitability); within each band group sort by fair_odds ascending.
+    def _band_priority(c: dict) -> int:
+        odd = c.get("odd") or c["fair_odds"]
+        return 0 if 1.70 <= odd < 2.00 else 1
+
+    candidates.sort(key=lambda c: (_band_priority(c), c["fair_odds"]))
     return candidates
