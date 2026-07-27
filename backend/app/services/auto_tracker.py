@@ -277,6 +277,13 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             continue
 
+        # Quality floor: Grade B or above (dual_quality_score ≥ 0.45) required.
+        # Jul-2026 audit: Grade C (0.30–0.45) → 61.1% WR, net-negative;
+        # Grade None (no quality computed) → 40% WR. Both drag overall performance
+        # and should never be auto-tracked regardless of agreement/confidence/odds.
+        if not signal.dual_quality_score or signal.dual_quality_score < 0.45:
+            continue
+
         # Over 1.5 confidence gate: only track High-confidence signals.
         # Jul-2026 audit: Medium-confidence Over 1.5 at 1.30–1.56 odds lands as
         # structural negative EV — market no-vig (~67-77%) exceeds model prob
