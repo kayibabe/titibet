@@ -277,12 +277,26 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             continue
 
-        # Quality floor: Grade B or above (dual_quality_score ≥ 0.45) required.
-        # Jul-2026 audit: Grade C (0.30–0.45) → 61.1% WR, net-negative;
-        # Grade None (no quality computed) → 40% WR. Both drag overall performance
-        # and should never be auto-tracked regardless of agreement/confidence/odds.
-        if not signal.dual_quality_score or signal.dual_quality_score < 0.45:
-            continue
+        # Quality floor — two tiers by signal type:
+        #
+        # Both+High exception: team_total_context_penalty artificially crushes
+        # Both+High quality (penalty stacks: odds≥2.20 × low_lambda → floor 0.78).
+        # 59 settled signals: 74.6% WR, +73% ROI. Even at quality <0.30 the WR
+        # is 69.6% at avg odds 2.30. Use a lower floor of 0.20 + books ≥ 3.
+        #
+        # Everything else: Grade B or above (≥ 0.45) required.
+        # Jul-2026 audit: Grade C → 61.1% WR net-negative; None → 40% WR.
+        is_both_high = (
+            signal.dual_agreement == "Both" and signal.dual_confidence == "High"
+        )
+        if is_both_high:
+            if not signal.dual_quality_score or signal.dual_quality_score < 0.20:
+                continue
+            if (signal.bayesian_bookmaker_count or 0) < 3:
+                continue
+        else:
+            if not signal.dual_quality_score or signal.dual_quality_score < 0.45:
+                continue
 
         # Over 1.5 confidence gate: only track High-confidence signals.
         # Jul-2026 audit: Medium-confidence Over 1.5 at 1.30–1.56 odds lands as
