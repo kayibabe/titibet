@@ -333,11 +333,19 @@ async def build_acca_candidates(
             "quality_score": sig.dual_quality_score,
         })
 
-    # Prefer legs in the 1.70–1.99 bookmaker-odds band first (lower variance,
-    # confirmed profitability); within each band group sort by fair_odds ascending.
+    # Prefer legs in the 1.70–1.99 bookmaker-odds band, ranked by confidence:
+    #   0 — Both+High  in 1.70–1.99  (highest conviction, confirmed 100% WR)
+    #   1 — Both+Medium in 1.70–1.99 (still strong, second pick)
+    #   2 — everything else (outside band or single-engine, fallback only)
+    # Within each priority tier sort by fair_odds ascending (most certain first).
     def _band_priority(c: dict) -> int:
         odd = c.get("odd") or c["fair_odds"]
-        return 0 if 1.70 <= odd < 2.00 else 1
+        in_band = 1.70 <= odd < 2.00
+        if in_band and c.get("confidence") == "High":
+            return 0
+        if in_band and c.get("confidence") == "Medium":
+            return 1
+        return 2
 
     candidates.sort(key=lambda c: (_band_priority(c), c["fair_odds"]))
     return candidates
