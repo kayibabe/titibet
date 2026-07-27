@@ -273,26 +273,28 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             continue
 
-        # B-4 gate (mirrors router): Both+Medium only at 1.55–1.94 odds.
+        # B-4 gate (mirrors router): Both+Medium only at 1.55–1.99 odds.
         # < 1.50: 53.8% WR — correct block. 1.50–1.55: +2.6% ROI only, too thin.
         # Jul-2026 backtest (n=129 signals): Both+Med ≥1.55 → 70.6% WR, +15.0% ROI;
         # 1.50–1.55 sub-band → 67.7% WR, +2.6% ROI; floor raised from 1.50 to 1.55.
-        # ≥ 1.95: thin sample, excluded pending data.
+        # Ceiling raised 1.95 → 2.00 to align with the 1.70–1.99 profitable band
+        # confirmed by odds-band analysis (100% WR on 8 settled bets in that range).
         if (
             signal.dual_agreement == "Both"
             and signal.dual_confidence == "Medium"
-            and not (1.55 <= (signal.bayesian_best_odd or 0.0) < 1.95)
+            and not (1.55 <= (signal.bayesian_best_odd or 0.0) < 2.00)
         ):
             continue
 
-        # Poisson-Only odds floor: require ≥1.45 for auto-tracking.
-        # Jul-2026 backtest: Poisson Only <1.40 → 63.6% WR, −15.9% ROI (n=22);
-        # 1.40–1.55 → 72.7% WR, +3.6% ROI. Floor at 1.45 removes the sub-1.40
-        # junk tier (NPL-type picks) while preserving profitable Poisson Only signals.
-        if (
-            signal.dual_agreement == "Poisson Only"
-            and (signal.bayesian_best_odd or 0.0) < 1.45
-        ):
+        # Require Both-engine agreement for auto-tracking.
+        # 42 settled singles: every single bet is Both-agreement (73.8% WR).
+        # Poisson Only / Bayesian Only singles have zero settled bets — the
+        # 5-bet daily cap and quality sort already crowd them out because
+        # Both-agreement signals score higher. Making this explicit prevents
+        # any regression if cap or quality weights change in future.
+        # Single-engine signals remain visible on the Signals page but are
+        # not auto-tracked.
+        if signal.dual_agreement not in {"Both"}:
             continue
 
         # Quality floor — two tiers by signal type:
