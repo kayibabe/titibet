@@ -573,6 +573,117 @@ def _evaluate_dc_signals(
     return results
 
 
+# ── ZINB goal-total evaluators ───────────────────────────────────────────────
+#
+# These evaluators use team-level expected goals from the ZINBGoalModel
+# (zinb_lambda_h / zinb_lambda_a) rather than CS-odds-derived lambdas.
+# Thresholds encode the user-specified "good" (rule_pass) and "excellent"
+# (rule_strong) criteria from the ZINB market design spec.
+# Probabilities use Poisson CDF on the ZINB total lambda — a proven
+# approximation when overdispersion is low (typical for most leagues).
+
+
+def _zinb_over15(lh: float, la: float, signal_odds: dict) -> PoissonResult:
+    total = lh + la
+    mo = signal_odds.get("over1_5")
+    min_odd = MARKET_MIN_ODDS.get("Over 1.5")
+    if mo is not None and min_odd is not None and mo < min_odd:
+        return PoissonResult(
+            rule_key="zinb_over15", market="Over 1.5",
+            rule_pass=False, rule_strong=False,
+            poisson_prob=None, edge_pct=None, has_edge=False,
+            grade="N", lambda_h=lh, lambda_a=la, lambda_total=total,
+        )
+    _pass = (total >= 2.7 and lh >= 0.7 and la >= 0.7
+             and max(lh, la) >= 1.2 and min(lh, la) >= 0.5)
+    _strong = (total >= 3.0 and lh >= 1.0 and la >= 1.0
+               and max(lh, la) >= 1.5 and min(lh, la) >= 0.6)
+    cdf1 = poisson_cdf(total, 1)
+    prob = 1.0 - cdf1 if cdf1 is not None else None
+    return PoissonResult(
+        rule_key="zinb_over15", market="Over 1.5",
+        rule_pass=_pass, rule_strong=_strong,
+        poisson_prob=prob, edge_pct=None, has_edge=False,
+        grade=_grade(_pass, _strong),
+        lambda_h=lh, lambda_a=la, lambda_total=total,
+    )
+
+
+def _zinb_over25(lh: float, la: float, signal_odds: dict) -> PoissonResult:
+    total = lh + la
+    mo = signal_odds.get("over2_5")
+    min_odd = MARKET_MIN_ODDS.get("Over 2.5")
+    if mo is not None and min_odd is not None and mo < min_odd:
+        return PoissonResult(
+            rule_key="zinb_over25", market="Over 2.5",
+            rule_pass=False, rule_strong=False,
+            poisson_prob=None, edge_pct=None, has_edge=False,
+            grade="N", lambda_h=lh, lambda_a=la, lambda_total=total,
+        )
+    _pass = (total >= 3.3 and lh >= 1.0 and la >= 0.6
+             and max(lh, la) >= 1.5 and abs(lh - la) <= 2.0)
+    _strong = (total >= 3.8 and lh >= 1.3 and la >= 1.3
+               and max(lh, la) >= 1.7 and abs(lh - la) <= 1.8)
+    cdf2 = poisson_cdf(total, 2)
+    prob = 1.0 - cdf2 if cdf2 is not None else None
+    return PoissonResult(
+        rule_key="zinb_over25", market="Over 2.5",
+        rule_pass=_pass, rule_strong=_strong,
+        poisson_prob=prob, edge_pct=None, has_edge=False,
+        grade=_grade(_pass, _strong),
+        lambda_h=lh, lambda_a=la, lambda_total=total,
+    )
+
+
+def _zinb_under25(lh: float, la: float) -> PoissonResult:
+    total = lh + la
+    _pass = (total <= 2.2 and lh <= 1.3 and la <= 1.3 and max(lh, la) <= 1.4)
+    _strong = (total <= 1.8 and lh <= 1.0 and la <= 1.0 and max(lh, la) <= 1.2)
+    prob = poisson_cdf(total, 2)
+    return PoissonResult(
+        rule_key="zinb_under25", market="Under 2.5",
+        rule_pass=_pass, rule_strong=_strong,
+        poisson_prob=prob, edge_pct=None, has_edge=False,
+        grade=_grade(_pass, _strong),
+        lambda_h=lh, lambda_a=la, lambda_total=total,
+    )
+
+
+def _zinb_under35(lh: float, la: float) -> PoissonResult:
+    total = lh + la
+    _pass = (total <= 3.0 and lh <= 1.5 and la <= 1.5 and max(lh, la) <= 2.0)
+    _strong = (total <= 2.4 and lh <= 1.3 and la <= 1.3 and max(lh, la) <= 1.7)
+    prob = poisson_cdf(total, 3)
+    return PoissonResult(
+        rule_key="zinb_under35", market="Under 3.5",
+        rule_pass=_pass, rule_strong=_strong,
+        poisson_prob=prob, edge_pct=None, has_edge=False,
+        grade=_grade(_pass, _strong),
+        lambda_h=lh, lambda_a=la, lambda_total=total,
+    )
+
+
+def evaluate_zinb_goals(
+    lh: float,
+    la: float,
+    signal_odds: dict,
+) -> list[PoissonResult]:
+    """
+    Evaluate all four ZINB goal-total markets for a fixture.
+
+    Called from signal_engine after ZINBGoalModel.predict_goals() — only when
+    both lh and la are > 0.1 (i.e., the model is fitted for this league).
+    Returns results for all four markets regardless of rule_pass so they
+    populate poi_by_key for MARKET_TO_POISSON_KEY keyed lookup.
+    """
+    return [
+        _zinb_over15(lh, la, signal_odds),
+        _zinb_over25(lh, la, signal_odds),
+        _zinb_under25(lh, la),
+        _zinb_under35(lh, la),
+    ]
+
+
 # ── Contradiction detection ───────────────────────────────────────────────────
 
 def detect_contradictions(results: dict[str, PoissonResult]) -> list[str]:

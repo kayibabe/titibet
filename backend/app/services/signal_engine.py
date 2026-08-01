@@ -56,9 +56,13 @@ settings = get_settings()
 # Map market name -> Poisson rule key (used in dual fusion).
 # Keys must match Signal.market values exactly (what the DB stores).
 MARKET_TO_POISSON_KEY: dict[str, str] = {
-    "Under 2.5":    "cs00u25",   # CS cascade rule — enables dual-model agreement for Under 2.5
-    "Over 1.5":     "over15",    # dedicated evaluator (rule_strong capable); cs00o15 cascade hardcodes rule_strong=False
-    "Over 2.5":     "over25",
+    # ZINB evaluators — team-level λH/λA thresholds from ZINBGoalModel.
+    # When ZINB is fitted for the league (lh/la > 0.1), these take priority
+    # over the CS-cascade results still available in poi_by_market as fallback.
+    "Over 1.5":     "zinb_over15",
+    "Over 2.5":     "zinb_over25",
+    "Under 2.5":    "zinb_under25",
+    "Under 3.5":    "zinb_under35",
     "Home Over 0.5":  "home_o05",
     "Away Over 0.5":  "away_o05",
     "Over 0.5 1H":    "over05fh",
@@ -251,7 +255,7 @@ def _build_poisson_odds(snapshots: list[MarketSnapshot]) -> tuple[dict, dict]:
         if mt in GOALS_MARKET_NAMES:
             key_map = {
                 "Over 1.5": "over1_5", "Over 2.5": "over2_5",
-                "Under 2.5": "under2_5",
+                "Under 2.5": "under2_5", "Under 3.5": "under3_5",
             }
             k = key_map.get(sel)
             if k and (k not in signal_odds or s.odds > signal_odds[k]):
@@ -692,6 +696,15 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             r.market: r for r in poi_result.results if r.rule_pass
         }
 
+        # ZINB goal-market evaluation — team-level λ thresholds from ZINBGoalModel.
+        # Injected before all_markets is built so passing ZINB markets enter the loop.
+        # Guard: lh/la > 0.1 confirms the model is fitted for this league (not fallback).
+        if _zinb_lh and _zinb_la and _zinb_lh > 0.1 and _zinb_la > 0.1:
+            for _zr in poi_engine.evaluate_zinb_goals(_zinb_lh, _zinb_la, poi_signal_odds):
+                poi_by_key[_zr.rule_key] = _zr
+                if _zr.rule_pass:
+                    poi_by_market.setdefault(_zr.market, _zr)
+
         bay_by_market: dict[str, bay_engine.BayesianResult] = {}
         if bay_result:
             for mr in bay_result.market_results:
@@ -864,7 +877,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                     continue
 
             # League under-goals suppression.
-            if market == "Under 2.5":
+            if market in {"Under 2.5", "Under 3.5"}:
                 league_lower = (fixture.league or "").lower()
                 if _league_matches_suppression(league_lower, UNDER_GOALS_SUPPRESSED_LEAGUES):
                     continue

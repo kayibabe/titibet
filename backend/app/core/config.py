@@ -390,9 +390,12 @@ DISABLED_MARKETS: frozenset = frozenset({
     # Validated: 86.8% WR / +10.8% ROI across 76 tracked bets at avg 1.258 odds.
     # All other markets suppressed at serving time and compute time until
     # a broader re-audit establishes independent edge for each.
-    "Over 1.5",
-    "Over 2.5",
-    "Under 2.5",
+    #
+    # Re-enabled 2026-08-01 via ZINB team-level λ gates (evaluate_zinb_goals):
+    #   "Over 1.5"  — total λ ≥ 2.7, team-level H/A λ conditions
+    #   "Over 2.5"  — total λ ≥ 3.3, team-level H/A λ conditions
+    #   "Under 2.5" — total λ ≤ 2.2, team-level H/A λ conditions
+    #   "Under 3.5" — total λ ≤ 3.0, team-level H/A λ conditions (was retired 2026-06-15)
     "Away Over 0.5",
     "Over 0.5 1H",
     "1X (Home or Draw)",
@@ -574,6 +577,9 @@ MAX_SIGNALS_PER_MARKET: dict[str, int] = {
 MARKET_MAX_ODDS: dict[str, float] = {
     "Home Over 1.5": 6.0,  # home team scores 2+ — realistic ceiling ~5.0 in standard markets
     "Away Over 1.5": 6.0,  # away team scores 2+ — similar realistic ceiling
+    # Under 3.5 above 1.95 means bookmakers price a >50/50 chance of 4+ goals —
+    # the ZINB model's low-λ signal would be fighting a clearly high-scoring market.
+    "Under 3.5": 1.95,
 }
 
 # Maximum odds for Poisson-only signals (no Bayesian confirmation).
