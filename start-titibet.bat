@@ -33,9 +33,9 @@ netstat -aon 2>nul | findstr ":8010 " | findstr "LISTENING" >nul
 if not errorlevel 1 (
     echo [INFO] Port 8010 is already in use. Verifying whether it is TiTiBet...
     powershell -NoProfile -Command ^
-      "$openapi = $null; " ^
-      "try { $openapi = Invoke-RestMethod -UseBasicParsing http://localhost:8010/openapi.json -TimeoutSec 5 } catch { } " ^
-      "if ($openapi -and $openapi.info -and $openapi.info.title -eq 'TiTiBet') { exit 0 } " ^
+      "$h = $null; " ^
+      "try { $h = Invoke-RestMethod -UseBasicParsing http://localhost:8010/health -TimeoutSec 5 } catch { } " ^
+      "if ($h -and $h.status -eq 'ok') { exit 0 } " ^
       "exit 1"
     if errorlevel 1 (
         echo [ERROR] Port 8010 is occupied by a different service.
@@ -76,14 +76,14 @@ if errorlevel 1 (
     echo       Reusing existing TiTiBet backend on port 8010.
 )
 
-:: Wait for TiTiBet backend identity instead of any generic 200 /health response.
-echo       Waiting for TiTiBet backend on http://localhost:8010/openapi.json ...
+:: Wait for TiTiBet backend health endpoint to confirm it is ready.
+echo       Waiting for TiTiBet backend on http://localhost:8010/health ...
 powershell -NoProfile -Command ^
   "$deadline = (Get-Date).AddSeconds(60); " ^
   "while ((Get-Date) -lt $deadline) { " ^
   "  try { " ^
-  "    $openapi = Invoke-RestMethod -UseBasicParsing http://localhost:8010/openapi.json -TimeoutSec 3; " ^
-  "    if ($openapi.info.title -eq 'TiTiBet') { exit 0 } " ^
+  "    $h = Invoke-RestMethod -UseBasicParsing http://localhost:8010/health -TimeoutSec 3; " ^
+  "    if ($h.status -eq 'ok') { exit 0 } " ^
   "  } catch { } " ^
   "  Start-Sleep -Seconds 1; " ^
   "} " ^

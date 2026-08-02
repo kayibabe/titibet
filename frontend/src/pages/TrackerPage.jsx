@@ -74,7 +74,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
 
   const isAdvisoryPick = b => ADVISORY_KEYS.includes(b.source_rule_key)
   const isSystemPick   = b => SYSTEM_SIGNAL_KEYS.includes(b.source_rule_key)
-  const isManualPick   = b => b.source_rule_key == null
+  const isManualPick   = b => b.source_rule_key == null || b.source_rule_key === 'manual'
 
   // Client-side source filter
   const filteredBets = useMemo(() => {
