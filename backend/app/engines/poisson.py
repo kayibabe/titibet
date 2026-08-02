@@ -598,10 +598,12 @@ def _zinb_over15(lh: float, la: float, signal_odds: dict) -> PoissonResult:
             poisson_prob=None, edge_pct=None, has_edge=False,
             grade="N", lambda_h=lh, lambda_a=la, lambda_total=total,
         )
-    _pass = (total >= 2.7 and lh >= 0.7 and la >= 0.7
-             and max(lh, la) >= 1.2 and min(lh, la) >= 0.5)
-    _strong = (total >= 3.0 and lh >= 1.0 and la >= 1.0
-               and max(lh, la) >= 1.5 and min(lh, la) >= 0.6)
+    # Raised from 2.7 → 4.0 (2026-08-02): retroactive WR at 2.7-3.2 was 67.9% —
+    # negative EV at typical 1.20-1.30 bookmaker odds. 4.0+ band: 90.5% WR (n=74).
+    _pass = (total >= 4.0 and lh >= 1.4 and la >= 1.0
+             and max(lh, la) >= 2.0 and min(lh, la) >= 0.8)
+    _strong = (total >= 4.5 and lh >= 1.7 and la >= 1.2
+               and max(lh, la) >= 2.2 and min(lh, la) >= 1.0)
     cdf1 = poisson_cdf(total, 1)
     prob = 1.0 - cdf1 if cdf1 is not None else None
     return PoissonResult(
@@ -649,8 +651,11 @@ def _zinb_under25(lh: float, la: float, signal_odds: dict = None) -> PoissonResu
             poisson_prob=poisson_cdf(total, 2), edge_pct=None, has_edge=False,
             grade="N", lambda_h=lh, lambda_a=la, lambda_total=total,
         )
-    _pass = (total <= 2.2 and lh <= 1.3 and la <= 1.3 and max(lh, la) <= 1.4)
-    _strong = (total <= 1.8 and lh <= 1.0 and la <= 1.0 and max(lh, la) <= 1.2)
+    # Lower bound 1.5 added (2026-08-02): the 0-1.5 band (88.5% WR) is priced at
+    # 1.05-1.15 by bookmakers — no edge. The 1.5-2.2 band (73.8% WR) at 1.40-1.60
+    # odds is where the genuine value sits.
+    _pass = (1.5 <= total <= 2.2 and lh <= 1.3 and la <= 1.3 and max(lh, la) <= 1.4)
+    _strong = (1.5 <= total <= 1.8 and lh <= 1.0 and la <= 1.0 and max(lh, la) <= 1.2)
     prob = poisson_cdf(total, 2)
     return PoissonResult(
         rule_key="zinb_under25", market="Under 2.5",
@@ -671,8 +676,11 @@ def _zinb_under35(lh: float, la: float, signal_odds: dict = None) -> PoissonResu
             poisson_prob=poisson_cdf(total, 3), edge_pct=None, has_edge=False,
             grade="N", lambda_h=lh, lambda_a=la, lambda_total=total,
         )
-    _pass = (total <= 3.0 and lh <= 1.5 and la <= 1.5 and max(lh, la) <= 2.0)
-    _strong = (total <= 2.4 and lh <= 1.3 and la <= 1.3 and max(lh, la) <= 1.7)
+    # Lower bound 2.0 added (2026-08-02): the 0-2.0 band (95.0% WR) is priced at
+    # 1.05-1.10 by bookmakers — no edge. The 2.0-3.0 band (77.0% WR) at 1.30-1.60
+    # odds carries genuine edge; min-odds floor of 1.20 provides additional guard.
+    _pass = (2.0 <= total <= 3.0 and lh <= 1.5 and la <= 1.5 and max(lh, la) <= 2.0)
+    _strong = (2.0 <= total <= 2.4 and lh <= 1.3 and la <= 1.3 and max(lh, la) <= 1.7)
     prob = poisson_cdf(total, 3)
     return PoissonResult(
         rule_key="zinb_under35", market="Under 3.5",
