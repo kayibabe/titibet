@@ -17,7 +17,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
-from app.core.config import POISSON_RULES, MARKET_MIN_ODDS, ZINB_OVER15_MIN_ODDS
+from app.core.config import POISSON_RULES, MARKET_MIN_ODDS, ZINB_OVER15_MIN_ODDS, ZINB_UNDER25_MIN_ODDS, ZINB_UNDER35_MIN_ODDS
 
 R = POISSON_RULES  # shorthand
 
@@ -639,8 +639,16 @@ def _zinb_over25(lh: float, la: float, signal_odds: dict) -> PoissonResult:
     )
 
 
-def _zinb_under25(lh: float, la: float) -> PoissonResult:
+def _zinb_under25(lh: float, la: float, signal_odds: dict = None) -> PoissonResult:
     total = lh + la
+    mo = (signal_odds or {}).get("under2_5")
+    if mo is not None and mo < ZINB_UNDER25_MIN_ODDS:
+        return PoissonResult(
+            rule_key="zinb_under25", market="Under 2.5",
+            rule_pass=False, rule_strong=False,
+            poisson_prob=poisson_cdf(total, 2), edge_pct=None, has_edge=False,
+            grade="N", lambda_h=lh, lambda_a=la, lambda_total=total,
+        )
     _pass = (total <= 2.2 and lh <= 1.3 and la <= 1.3 and max(lh, la) <= 1.4)
     _strong = (total <= 1.8 and lh <= 1.0 and la <= 1.0 and max(lh, la) <= 1.2)
     prob = poisson_cdf(total, 2)
@@ -653,8 +661,16 @@ def _zinb_under25(lh: float, la: float) -> PoissonResult:
     )
 
 
-def _zinb_under35(lh: float, la: float) -> PoissonResult:
+def _zinb_under35(lh: float, la: float, signal_odds: dict = None) -> PoissonResult:
     total = lh + la
+    mo = (signal_odds or {}).get("under3_5")
+    if mo is not None and mo < ZINB_UNDER35_MIN_ODDS:
+        return PoissonResult(
+            rule_key="zinb_under35", market="Under 3.5",
+            rule_pass=False, rule_strong=False,
+            poisson_prob=poisson_cdf(total, 3), edge_pct=None, has_edge=False,
+            grade="N", lambda_h=lh, lambda_a=la, lambda_total=total,
+        )
     _pass = (total <= 3.0 and lh <= 1.5 and la <= 1.5 and max(lh, la) <= 2.0)
     _strong = (total <= 2.4 and lh <= 1.3 and la <= 1.3 and max(lh, la) <= 1.7)
     prob = poisson_cdf(total, 3)
@@ -689,8 +705,8 @@ def evaluate_zinb_goals(
     return [
         _zinb_over15(lh, la, signal_odds),
         _zinb_over25(lh, la, signal_odds),
-        _zinb_under25(lh, la),
-        _zinb_under35(lh, la),
+        _zinb_under25(lh, la, signal_odds),
+        _zinb_under35(lh, la, signal_odds),
     ]
 
 
