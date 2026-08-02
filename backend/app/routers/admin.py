@@ -304,6 +304,73 @@ async def telegram_preview(
     return {"date": today.isoformat(), "channels": result}
 
 
+@router.get("/shadow-observations")
+async def get_shadow_observations(
+    observation_type: str = Query("ho05_high_odds"),
+    limit: int = Query(100, le=500),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """
+    Return settled and pending signal_observations for the given type.
+    Includes running WR, ROI, and streak so you can monitor the HO0.5
+    high-odds band without touching tracked_bets.
+    """
+    from app.models.signal_observation import SignalObservation
+    from sqlalchemy import desc as _desc
+
+    rows = list(
+        (await db.execute(
+            select(SignalObservation)
+            .where(SignalObservation.observation_type == observation_type)
+            .order_by(_desc(SignalObservation.event_date), _desc(SignalObservation.id))
+            .limit(limit)
+        )).scalars().all()
+    )
+
+    settled = [r for r in rows if r.result_status in ("Won", "Lost")]
+    n = len(settled)
+    won = sum(1 for r in settled if r.result_status == "Won")
+    wr_pct = round(100 * won / n, 1) if n else None
+    roi_pct = round(sum(r.profit_loss for r in settled) / n * 100, 1) if n else None
+
+    streak = 0
+    for r in sorted(settled, key=lambda x: (x.settled_at or x.event_date or ""), reverse=True):
+        if r.result_status == "Won":
+            streak += 1
+        else:
+            break
+
+    return {
+        "observation_type": observation_type,
+        "summary": {
+            "total_settled": n,
+            "won": won,
+            "lost": n - won,
+            "wr_pct": wr_pct,
+            "roi_pct": roi_pct,
+            "current_streak": streak,
+            "pending": len([r for r in rows if r.result_status == "Pending"]),
+        },
+        "observations": [
+            {
+                "id":             r.id,
+                "event_date":     r.event_date.isoformat() if r.event_date else None,
+                "match_name":     r.match_name,
+                "league":         r.league,
+                "country":        r.country,
+                "league_tier":    r.league_tier,
+                "odds":           r.odds,
+                "signal_grade":   r.signal_grade,
+                "result_status":  r.result_status,
+                "profit_loss":    r.profit_loss,
+                "settled_at":     r.settled_at.isoformat() if r.settled_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
 @router.post("/telegram/push-value-band")
 async def telegram_push_value_band_endpoint(
     date: Optional[str] = Query(None, description="Date in YYYY-MM-DD (defaults to tomorrow)"),

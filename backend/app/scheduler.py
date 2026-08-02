@@ -33,6 +33,7 @@ from app.models.odds import MarketSnapshot
 from app.services import ingestion
 from app.services.signal_engine import compute_signals_for_date
 from app.services.auto_tracker import auto_track_date, auto_track_acca_signals
+from app.services.shadow_tracker import shadow_track_date, settle_shadow_observations
 from app.services.settlement import settle_bets_for_date, FINAL_STATUSES
 from app.services.loss_analysis_agent import run_loss_analysis_pipeline
 from app.services.strategy_pipeline import run_strategy_pipeline, check_suppression_reactivations
@@ -119,6 +120,7 @@ async def catchup_past_dates() -> int:
 
         # Settle all pending bets now that fixture statuses are refreshed.
         n_settled = (await settle_bets_for_date(db, None))["settled"]
+        await settle_shadow_observations(db)
         if n_settled:
             logger.info("Catch-up settlement: %d pending bet(s) settled.", n_settled)
             # Push results for any fully-settled date after catch-up.
@@ -279,12 +281,19 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                         logger.info("Auto-tracker: %d new system bet(s) for %s", n_tracked, run_date)
                 except Exception:
                     logger.exception("Auto-tracker failed for %s — continuing normally", run_date)
+                try:
+                    n_shadow = await shadow_track_date(db, run_date)
+                    if n_shadow:
+                        logger.info("Shadow tracker: %d observation(s) for %s", n_shadow, run_date)
+                except Exception:
+                    logger.exception("Shadow tracker failed for %s — continuing normally", run_date)
                 # ACCA tracking runs in morning_extras (first daily sync) via auto_track_acca_legs.
                 # The signal-model fallback (auto_track_acca_signals) runs at the END of
                 # morning_extras — after the advisor ACCA has had a chance to build tickets,
                 # so its deference guard correctly skips it when the advisor succeeded.
                 # Settle every pending bet with a final fixture (any event_date), not only run_date.
                 n_settled = (await settle_bets_for_date(db, None))["settled"]
+                await settle_shadow_observations(db)
                 logger.info(
                     "Scheduler: %s done — %d fixtures, %d signals, %d bets settled",
                     run_date, run.fixtures_pulled, count, n_settled,

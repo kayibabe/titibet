@@ -135,6 +135,28 @@ TABLE_MIGRATIONS: list[str] = [
         created_at      DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS signal_observations (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        observation_type TEXT    NOT NULL,
+        fixture_id       INTEGER REFERENCES fixtures(id),
+        event_date       DATE,
+        match_name       TEXT    NOT NULL,
+        league           TEXT,
+        country          TEXT,
+        league_tier      INTEGER,
+        market_type      TEXT    NOT NULL,
+        dual_agreement   TEXT,
+        dual_confidence  TEXT,
+        signal_grade     TEXT,
+        odds             REAL    NOT NULL,
+        bookmaker        TEXT,
+        result_status    TEXT    NOT NULL DEFAULT 'Pending',
+        profit_loss      REAL             DEFAULT 0.0,
+        created_at       DATETIME         DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+        settled_at       DATETIME
+    )
+    """,
 ]
 
 

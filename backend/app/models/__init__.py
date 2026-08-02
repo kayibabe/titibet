@@ -6,9 +6,10 @@ from app.models.backtest import BacktestResult
 from app.models.ingestion import IngestionRun
 from app.models.loss_analysis import LossAnalysis
 from app.models.learning_proposal import LearningProposal
+from app.models.signal_observation import SignalObservation
 
 __all__ = [
     "Fixture", "MarketSnapshot", "Signal", "TrackedBet",
     "BacktestResult", "IngestionRun",
-    "LossAnalysis", "LearningProposal",
+    "LossAnalysis", "LearningProposal", "SignalObservation",
 ]
