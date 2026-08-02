@@ -646,6 +646,9 @@ MARKET_MIN_ODDS: dict = {
     # no-vig probability; Medium Bayesian confidence (55-70%) cannot beat that.
     # After EV gating was removed (2026-07-02) the 1.30 floor admitted anti-value
     # signals (e.g. A Lyga @ 1.30, Belarus PL @ 1.56) where model prob < market prob.
+    # Note: ZINB-backed Over 1.5 uses ZINB_OVER15_MIN_ODDS (1.25) instead —
+    # see _zinb_over15() in poisson.py. ZINB team-level evidence + High confidence
+    # gate in auto_tracker give 81% WR which provides clear edge at 1.25+ odds.
     "Over 1.5":        1.50,
     "Over 2.5":        1.55,
     "Under 2.5":       2.10,  # < 2.10 implies < 48% probability — no value at short Under 2.5
@@ -670,6 +673,13 @@ MARKET_MIN_ODDS: dict = {
     "Over 8.5 Corners": 1.40,
     "Under 9.5 Corners": 1.60,
 }
+
+# ZINB Over 1.5 uses a lower min-odds floor than the global MARKET_MIN_ODDS["Over 1.5"]
+# because ZINB team-level λ evidence (81.1% WR retroactive, n=206) provides ~5% edge
+# at 1.30 odds. Auto-tracking is further guarded by the High confidence gate and
+# dual_agreement == "Both" requirement in auto_tracker, so there is no overlap
+# with the Medium-confidence 1.30-1.49 band that drove the 2026-07-10 floor raise.
+ZINB_OVER15_MIN_ODDS: float = 1.25
 
 
 # =============================================================================

@@ -340,6 +340,22 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             continue
 
+        # ZINB Over 2.5: only track rule_strong band (total ≥ 3.8).
+        # Retroactive backtest (n=50, total 3.3-3.8): 58% WR — marginal edge at
+        # typical 1.75-1.90 odds. rule_strong band (n=53, total 3.8+): 73.6% WR —
+        # clear edge. Reconstruct strong condition from stored ZINB lambdas.
+        if signal.market == "Over 2.5" and signal.poisson_rule_key == "zinb_over25":
+            _lh = signal.zinb_lambda_h or 0.0
+            _la = signal.zinb_lambda_a or 0.0
+            _zinb_o25_strong = (
+                _lh + _la >= 3.8
+                and _lh >= 1.3 and _la >= 1.3
+                and max(_lh, _la) >= 1.7
+                and abs(_lh - _la) <= 1.8
+            )
+            if not _zinb_o25_strong:
+                continue
+
         agreement = signal.dual_agreement or ""
         confidence = signal.dual_confidence or ""
         match_name = f"{fixture.home_team} vs {fixture.away_team}"

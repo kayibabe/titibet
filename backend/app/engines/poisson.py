@@ -17,7 +17,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
-from app.core.config import POISSON_RULES, MARKET_MIN_ODDS
+from app.core.config import POISSON_RULES, MARKET_MIN_ODDS, ZINB_OVER15_MIN_ODDS
 
 R = POISSON_RULES  # shorthand
 
@@ -586,8 +586,12 @@ def _evaluate_dc_signals(
 def _zinb_over15(lh: float, la: float, signal_odds: dict) -> PoissonResult:
     total = lh + la
     mo = signal_odds.get("over1_5")
-    min_odd = MARKET_MIN_ODDS.get("Over 1.5")
-    if mo is not None and min_odd is not None and mo < min_odd:
+    # ZINB Over 1.5 uses ZINB_OVER15_MIN_ODDS (1.25) — lower than the global
+    # MARKET_MIN_ODDS["Over 1.5"] (1.50). Retroactive WR is 81.1% (n=206),
+    # giving ~5% edge at 1.30 odds. Auto-tracking is further guarded by High
+    # confidence + Both-agreement gates in auto_tracker.
+    min_odd = ZINB_OVER15_MIN_ODDS
+    if mo is not None and mo < min_odd:
         return PoissonResult(
             rule_key="zinb_over15", market="Over 1.5",
             rule_pass=False, rule_strong=False,
