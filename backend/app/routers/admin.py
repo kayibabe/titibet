@@ -1656,6 +1656,82 @@ async def shadow_candidates(
     }
 
 
+@router.get("/zinb-backtest")
+async def zinb_backtest(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+    market: str = Query(default="Over 2.5", description="Over 1.5 | Over 2.5 | Under 2.5 | Under 3.5"),
+    total_min: float = Query(default=3.3),
+    total_max: float = Query(default=3.8),
+):
+    """
+    Retroactive ZINB backtest: win rate for settled fixtures where the stored
+    ZINB lambdas satisfy the given total λ range.  Uses signals.zinb_lambda_h/a
+    which are written for every fixture at signal-compute time (including before
+    the ZINB goal markets were enabled), so this covers the full history.
+
+    Only counts fixtures with settled scores (home_score IS NOT NULL).
+    Win = the market outcome was correct (e.g. Over 2.5 → home+away >= 3).
+    """
+    _win_expr = {
+        "Over 1.5":  "f.home_score + f.away_score >= 2",
+        "Over 2.5":  "f.home_score + f.away_score >= 3",
+        "Under 2.5": "f.home_score + f.away_score <= 2",
+        "Under 3.5": "f.home_score + f.away_score <= 3",
+    }
+    if market not in _win_expr:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Unknown market: {market}")
+    win_sql = _win_expr[market]
+
+    # Apply the same team-level guards used in poisson.evaluate_zinb_goals
+    _team_guards = {
+        "Over 1.5":  "s.zinb_lambda_h >= 0.7 AND s.zinb_lambda_a >= 0.7 AND MAX(s.zinb_lambda_h, s.zinb_lambda_a) >= 1.2 AND MIN(s.zinb_lambda_h, s.zinb_lambda_a) >= 0.5",
+        "Over 2.5":  "s.zinb_lambda_h >= 1.0 AND s.zinb_lambda_a >= 0.6 AND MAX(s.zinb_lambda_h, s.zinb_lambda_a) >= 1.5 AND ABS(s.zinb_lambda_h - s.zinb_lambda_a) <= 2.0",
+        "Under 2.5": "s.zinb_lambda_h <= 1.3 AND s.zinb_lambda_a <= 1.3 AND MAX(s.zinb_lambda_h, s.zinb_lambda_a) <= 1.4",
+        "Under 3.5": "s.zinb_lambda_h <= 1.5 AND s.zinb_lambda_a <= 1.5 AND MAX(s.zinb_lambda_h, s.zinb_lambda_a) <= 2.0",
+    }
+    guards = _team_guards[market]
+
+    rows = await db.execute(text(f"""
+        SELECT
+            COUNT(DISTINCT s.fixture_id)                                          AS total,
+            SUM(CASE WHEN {win_sql} THEN 1 ELSE 0 END)                            AS wins,
+            SUM(CASE WHEN NOT ({win_sql}) THEN 1 ELSE 0 END)                      AS losses,
+            ROUND(AVG(s.zinb_lambda_h + s.zinb_lambda_a), 3)                     AS avg_total,
+            ROUND(AVG(s.zinb_lambda_h), 3)                                        AS avg_lh,
+            ROUND(AVG(s.zinb_lambda_a), 3)                                        AS avg_la
+        FROM (
+            SELECT DISTINCT fixture_id,
+                            zinb_lambda_h, zinb_lambda_a
+            FROM signals
+            WHERE zinb_lambda_h IS NOT NULL
+              AND zinb_lambda_a IS NOT NULL
+              AND zinb_lambda_h + zinb_lambda_a >= :total_min
+              AND zinb_lambda_h + zinb_lambda_a <= :total_max
+        ) s
+        JOIN fixtures f ON s.fixture_id = f.id
+        WHERE f.home_score IS NOT NULL
+          AND f.away_score IS NOT NULL
+          AND {guards}
+    """), {"total_min": total_min, "total_max": total_max})
+    row = rows.first()
+    total = row[0] or 0
+    wins  = row[1] or 0
+    return {
+        "market":     market,
+        "total_min":  total_min,
+        "total_max":  total_max,
+        "total":      total,
+        "wins":       wins,
+        "losses":     row[2] or 0,
+        "win_rate":   round(wins / total, 4) if total else None,
+        "avg_total":  row[3],
+        "avg_lh":     row[4],
+        "avg_la":     row[5],
+    }
+
+
 @router.post("/db/purge-pre-jul2")
 async def purge_pre_jul2(
     db: AsyncSession = Depends(get_db),

@@ -255,10 +255,15 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
 
         # BOS gate: stable/defensive fixture (bos_passed=True) contradicts any
         # Over-goals pick — the model flags low scoring but we'd be betting on goals.
+        # Exemption: ZINB-backed Over markets use team-level goal model thresholds
+        # that already encode defensive context; BOS (bookmaker strength imbalance)
+        # was designed for match-result markets and doesn't add signal here.
         _OVER_MARKETS = {"Home Over 0.5", "Away Over 0.5", "Over 1.5", "Over 2.5",
                          "Home Over 1.5", "Away Over 1.5"}
+        _ZINB_OVER_KEYS = {"zinb_over15", "zinb_over25"}
         if signal.bos_passed and signal.market in _OVER_MARKETS:
-            continue
+            if signal.poisson_rule_key not in _ZINB_OVER_KEYS:
+                continue
 
         # Low-odds Home Over 0.5 quality gate.
         # At odds < 1.70 (implied prob > 59%) the model is highly confident, but

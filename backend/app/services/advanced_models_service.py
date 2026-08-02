@@ -364,6 +364,57 @@ class AdvancedModelsService:
         except Exception:
             return fallback_lh, fallback_la
 
+    def zinb_goals_prob(
+        self,
+        league: str,
+        home_team: str,
+        away_team: str,
+        market: str,
+    ) -> Optional[float]:
+        """
+        Compute goal-total market probability from the ZINB score matrix.
+
+        More accurate than Poisson CDF on total λ because the matrix sums over
+        the full ZINB joint distribution, capturing overdispersion and
+        zero-inflation that the Poisson approximation ignores (both reduce
+        tail weight for Over markets, so the CDF slightly overstates probability).
+
+        Returns None when the ZINB model is unavailable for this league.
+        """
+        league_key = league.lower().strip()
+        model = self._zinb_models.get(league_key)
+        if model is None or not model.fitted:
+            return None
+        try:
+            matrix = model.score_matrix(
+                _team_hash(home_team),
+                _team_hash(away_team),
+            )
+        except Exception:
+            return None
+        if matrix is None:
+            return None
+        try:
+            _thresholds = {
+                "Over 1.5":  ("ge", 2),
+                "Over 2.5":  ("ge", 3),
+                "Under 2.5": ("le", 2),
+                "Under 3.5": ("le", 3),
+            }
+            direction, k = _thresholds.get(market, (None, None))
+            if direction is None:
+                return None
+            n = matrix.shape[0]
+            total = 0.0
+            for i in range(n):
+                for j in range(n):
+                    t = i + j
+                    if (direction == "ge" and t >= k) or (direction == "le" and t <= k):
+                        total += matrix[i, j]
+            return float(total)
+        except Exception:
+            return None
+
     def glicko_r_diff(self, home_team: str, away_team: str) -> Optional[float]:
         """Return home_rating - away_rating, or None if Glicko-2 not fitted."""
         if self._glicko is None:

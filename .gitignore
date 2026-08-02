@@ -47,6 +47,7 @@ backend/server.err.log
 # Root-level DB files and archives (dev artefacts)
 sisibet.db
 titibet.db
+titibet_prod.db
 *.zip
 
 # API-Football file cache (ephemeral, never commit)

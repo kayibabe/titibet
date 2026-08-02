@@ -675,6 +675,12 @@ def evaluate_zinb_goals(
     both lh and la are > 0.1 (i.e., the model is fitted for this league).
     Returns results for all four markets regardless of rule_pass so they
     populate poi_by_key for MARKET_TO_POISSON_KEY keyed lookup.
+
+    Probabilities here use Poisson CDF on total λ (fast, no matrix needed).
+    signal_engine immediately overwrites poisson_prob with the ZINB score matrix
+    sum for any market that passes — see the correction block after this call.
+    The matrix sum is more accurate: ZINB overdispersion and zero-inflation both
+    reduce tail weight, so the Poisson CDF slightly overstates Over probability.
     """
     return [
         _zinb_over15(lh, la, signal_odds),

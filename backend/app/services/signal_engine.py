@@ -704,6 +704,22 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 poi_by_key[_zr.rule_key] = _zr
                 if _zr.rule_pass:
                     poi_by_market.setdefault(_zr.market, _zr)
+            # Replace Poisson CDF approximation with score-matrix probability for any
+            # ZINB Over/Under market that passed. The Poisson CDF on total λ overstates
+            # Over probability (ZINB overdispersion + zero-inflation reduce tail weight).
+            _ZINB_GOAL_MARKETS = {"Over 1.5": "zinb_over15", "Over 2.5": "zinb_over25",
+                                  "Under 2.5": "zinb_under25", "Under 3.5": "zinb_under35"}
+            from dataclasses import replace as _dcreplace
+            for _mkt, _rkey in _ZINB_GOAL_MARKETS.items():
+                _zr = poi_by_market.get(_mkt)
+                if _zr is not None and _zr.rule_key == _rkey:
+                    _mp = adv.zinb_goals_prob(
+                        fixture.league or "", fixture.home_team, fixture.away_team, _mkt
+                    )
+                    if _mp is not None:
+                        _corrected = _dcreplace(_zr, poisson_prob=round(_mp, 6))
+                        poi_by_market[_mkt] = _corrected
+                        poi_by_key[_rkey] = _corrected
 
         bay_by_market: dict[str, bay_engine.BayesianResult] = {}
         if bay_result:
