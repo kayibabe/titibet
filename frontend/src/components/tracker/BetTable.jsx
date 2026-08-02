@@ -1,5 +1,5 @@
 ﻿import { useState, useMemo } from 'react'
-import { Download, Lock, Ticket, Bot, Pencil, Trash2, X, Clock, CheckCircle, AlertTriangle, MinusCircle, ClipboardList, ChevronDown } from 'lucide-react'
+import { Download, Lock, Ticket, Bot, User, Pencil, Trash2, X, Clock, CheckCircle, AlertTriangle, MinusCircle, ClipboardList, ChevronDown } from 'lucide-react'
 import { fmtK, fmtPL, fmtPLCompact, marketColor } from '../../utils/format'
 import { updateBet, deleteBet } from '../../api/tracker'
 
@@ -391,6 +391,12 @@ function BetRow({ bet, onRefresh }) {
             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-violet-500/15 text-violet-400 border border-violet-500/25 text-[10px] font-semibold">
               <Bot size={9} />
               System
+            </span>
+          )}
+          {bet.source_rule_key == null && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-slate-500/15 text-slate-400 border border-slate-500/25 text-[10px] font-semibold">
+              <User size={9} />
+              Manual
             </span>
           )}
           <span className={`font-medium ${marketColor(bet.market_type)}`}>{bet.market_type}</span>

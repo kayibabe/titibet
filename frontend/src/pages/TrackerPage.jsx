@@ -16,6 +16,7 @@ import useTier from '../hooks/useTier'
 const STATUS_OPTIONS = ['', 'Pending', 'Won', 'Lost', 'Void']
 
 const ADVISORY_KEYS = ['scout_pick', 'strategist_pick', 'skeptic_pick']
+const SYSTEM_SIGNAL_KEYS = ['system_auto', 'system_dual', 'system_acca', 'acca_advisory']
 
 const SOURCE_OPTIONS = [
   { value: '',       label: 'All Picks',    icon: null },
@@ -72,12 +73,13 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const betFilters = { date_from: dateFrom || undefined, date_to: dateTo || undefined, result_status: statusFilter || undefined }
 
   const isAdvisoryPick = b => ADVISORY_KEYS.includes(b.source_rule_key)
-  const isSystemPick   = b => !isAdvisoryPick(b) && b.market_type !== 'Accumulator'
+  const isSystemPick   = b => SYSTEM_SIGNAL_KEYS.includes(b.source_rule_key)
+  const isManualPick   = b => b.source_rule_key == null
 
   // Client-side source filter
   const filteredBets = useMemo(() => {
     if (sourceFilter === 'system') return bets.filter(isSystemPick)
-    if (sourceFilter === 'manual') return bets.filter(b => !isSystemPick(b) && !isAdvisoryPick(b))
+    if (sourceFilter === 'manual') return bets.filter(isManualPick)
     return showAdvisory ? bets : bets.filter(b => !isAdvisoryPick(b))
   }, [bets, sourceFilter, showAdvisory]) // eslint-disable-line
 
