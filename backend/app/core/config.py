@@ -652,6 +652,10 @@ MARKET_MIN_ODDS: dict = {
     "Over 1.5":        1.50,
     "Over 2.5":        1.55,
     "Under 2.5":       2.10,  # < 2.10 implies < 48% probability — no value at short Under 2.5
+    # Under 3.5: ZINB_UNDER35_MIN_ODDS=1.30 in poisson.py guards when bookmaker U3.5
+    # prices are available. This entry closes the gap when mo=None (bookmaker doesn't
+    # publish dedicated totals) — auto_tracker checks bayesian_best_odd against this floor.
+    "Under 3.5":       1.30,
     # 2026-07-22: raised 1.30 → 1.50 after clean post-Jul-2 audit showed
     # 33 bets at 1.35-1.49 running 57.6% WR / -18.2% ROI (break-even needs 70%).
     # At odds < 1.50 bookmakers have priced these with sharp-money precision;
