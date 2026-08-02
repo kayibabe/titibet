@@ -1687,8 +1687,8 @@ async def zinb_backtest(
     # Apply the same team-level guards used in poisson.evaluate_zinb_goals
     # (Updated 2026-08-02 to match revised thresholds from backtest analysis)
     _team_guards = {
-        # Over 1.5: raised to 4.0+ (2.7-4.0 was 67.9% WR = negative EV at ~1.25 odds)
-        "Over 1.5":  "s.zinb_lambda_h >= 1.4 AND s.zinb_lambda_a >= 1.0 AND MAX(s.zinb_lambda_h, s.zinb_lambda_a) >= 2.0 AND MIN(s.zinb_lambda_h, s.zinb_lambda_a) >= 0.8",
+        # Over 1.5: raised to 4.5+ (4.0-4.5 band rarely clears 1.25 floor; 4.5+ is 93.8% WR)
+        "Over 1.5":  "s.zinb_lambda_h >= 1.7 AND s.zinb_lambda_a >= 1.2 AND MAX(s.zinb_lambda_h, s.zinb_lambda_a) >= 2.2 AND MIN(s.zinb_lambda_h, s.zinb_lambda_a) >= 1.0",
         "Over 2.5":  "s.zinb_lambda_h >= 1.0 AND s.zinb_lambda_a >= 0.6 AND MAX(s.zinb_lambda_h, s.zinb_lambda_a) >= 1.5 AND ABS(s.zinb_lambda_h - s.zinb_lambda_a) <= 2.0",
         # Under 2.5: lower bound 1.5 (0-1.5 band priced at 1.05-1.15, no edge)
         "Under 2.5": "s.zinb_lambda_h <= 1.3 AND s.zinb_lambda_a <= 1.3 AND MAX(s.zinb_lambda_h, s.zinb_lambda_a) <= 1.4",

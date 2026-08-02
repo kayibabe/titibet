@@ -598,12 +598,14 @@ def _zinb_over15(lh: float, la: float, signal_odds: dict) -> PoissonResult:
             poisson_prob=None, edge_pct=None, has_edge=False,
             grade="N", lambda_h=lh, lambda_a=la, lambda_total=total,
         )
-    # Raised from 2.7 → 4.0 (2026-08-02): retroactive WR at 2.7-3.2 was 67.9% —
-    # negative EV at typical 1.20-1.30 bookmaker odds. 4.0+ band: 90.5% WR (n=74).
-    _pass = (total >= 4.0 and lh >= 1.4 and la >= 1.0
-             and max(lh, la) >= 2.0 and min(lh, la) >= 0.8)
-    _strong = (total >= 4.5 and lh >= 1.7 and la >= 1.2
-               and max(lh, la) >= 2.2 and min(lh, la) >= 1.0)
+    # Raised 2.7 → 4.0 (2026-08-02), then 4.0 → 4.5 (2026-08-02):
+    # 4.0-4.5 band (88% WR) rarely clears the 1.25 min-odds floor in practice —
+    # bookmakers price Over 1.5 at 1.10-1.20 when λ≈4.2. 4.5+ band (93.8% WR,
+    # n=48) is where bookmakers genuinely misprice due to outlier match expectations.
+    _pass = (total >= 4.5 and lh >= 1.7 and la >= 1.2
+             and max(lh, la) >= 2.2 and min(lh, la) >= 1.0)
+    _strong = (total >= 5.0 and lh >= 2.0 and la >= 1.5
+               and max(lh, la) >= 2.5 and min(lh, la) >= 1.2)
     cdf1 = poisson_cdf(total, 1)
     prob = 1.0 - cdf1 if cdf1 is not None else None
     return PoissonResult(

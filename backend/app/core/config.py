@@ -684,12 +684,12 @@ ZINB_OVER15_MIN_ODDS: float = 1.25
 # ZINB Under 2.5: retroactive WR 82.4% (n=102, λ≤2.2). Break-even odds = 1/0.824 = 1.214.
 # Floor at 1.25 gives ~3% edge minimum. Bookmakers price at 1.15-1.35 for these fixtures;
 # the floor admits signals where the market shows meaningful uncertainty.
-ZINB_UNDER25_MIN_ODDS: float = 1.25
+ZINB_UNDER25_MIN_ODDS: float = 1.45
 
 # ZINB Under 3.5: retroactive WR 87.4% (n=174, λ≤3.0). No global MARKET_MIN_ODDS entry
 # exists for this market, so without a floor it could track at 1.05 (negative EV).
 # Break-even = 1/0.874 = 1.145. Floor at 1.20 gives ~4% edge minimum.
-ZINB_UNDER35_MIN_ODDS: float = 1.20
+ZINB_UNDER35_MIN_ODDS: float = 1.30
 
 
 # =============================================================================
