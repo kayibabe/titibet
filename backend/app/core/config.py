@@ -367,7 +367,7 @@ DISABLED_MARKETS: frozenset = frozenset({
     "Away Over 1.5",  # retired 2026-06-02: 41.1% hit (-15.5% ROI) across 73 bets
     # "Away Over 0.5" — re-enabled: away_o05 Poisson rule restored (mirrors home_o05, side="a")
     "Home Over 1.5",  # retired 2026-06-15: home_o15 rule removed
-    "Under 3.5",      # retired 2026-06-15: under35 + u35_flip rules removed
+    # "Under 3.5" — re-enabled 2026-08-02 via ZINB _zinb_under35 evaluator (λ 2.0-3.0 band, 77.0% WR)
     "Home Under 1.5", # retired 2026-06-15: hu15_flip rule removed
     "Away Under 1.5", # retired 2026-06-15: au15_flip rule removed
     "Over 0.5",       # retired 2026-06-15: over05ft rule removed

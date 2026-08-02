@@ -289,9 +289,17 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         # 1.50–1.55 sub-band → 67.7% WR, +2.6% ROI; floor raised from 1.50 to 1.55.
         # Ceiling raised 1.95 → 2.00 to align with the 1.70–1.99 profitable band
         # confirmed by odds-band analysis (100% WR on 8 settled bets in that range).
+        # Scoped to Over-goals markets: Under markets (Under 2.5, Under 3.5) have
+        # inverse dynamics — short odds = low expected goals = higher model confidence
+        # = higher WR. The 1.30-1.55 Under band is genuinely profitable.
+        _B4_OVER_MARKETS = {
+            "Home Over 0.5", "Away Over 0.5", "Over 0.5 1H",
+            "Over 1.5", "Over 2.5", "Over 3.5",
+        }
         if (
             signal.dual_agreement == "Both"
             and signal.dual_confidence == "Medium"
+            and signal.market in _B4_OVER_MARKETS
             and not (1.55 <= (signal.bayesian_best_odd or 0.0) < 2.00)
         ):
             continue
