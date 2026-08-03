@@ -863,50 +863,6 @@ HO05_DATA_POOR_COUNTRIES: frozenset[str] = frozenset({
     # Both scored 0 home goals despite high-confidence Both-agreement signals.
     "kuwait",
     "belarus",
-    # Aug 2026: St George Willawong vs Brisbane Strikers (Queensland PL, 0-1).
-    # State-level semi-professional competitions — low and unreliable Poisson data.
-    # A-League is already blocked via OVER_GOALS_SUPPRESSED_LEAGUES; this catches
-    # state leagues (Queensland PL, NPLW, etc.) stored at any tier.
-    "australia",
-})
-
-# Countries where Under 3.5 auto-tracking is suppressed at ANY tier.
-# ZINB λ calibration is unreliable in these competitions due to thin historical
-# data — the model fires confidently but games produce 4–5 goal outcomes.
-# Aug-2026: FC Urartu vs Pyunik (Armenia T1, 2–2) and AB vs Skála (Faroe Islands
-# T2, 3–2) — both Grade A, both wrong. Meistaradeildin is also in
-# UNDER_GOALS_SUPPRESSED_LEAGUES (league-name gate), but this country gate
-# handles leagues not caught by the substring match (e.g. Armenian PL stored as
-# "Premier League" which doesn't contain a suppressed substring).
-U35_DATA_POOR_COUNTRIES: frozenset[str] = frozenset({
-    "armenia",        # Aug-2026: Urartu 2-2 vs Pyunik (T1, 4 total goals) @ 1.19
-    "nicaragua",      # Aug-2026: Ferretti 4-1 vs Matagalpa (T3, 5 goals) @ 1.36 — also caught by T3 gate
-    "andorra",        # data-poor micro-league; ZINB has no reliable λ base
-    "san marino",     # same pattern — micro-league, high-variance scorelines
-    "liechtenstein",  # same pattern
-    "mongolia",       # thin data, large variance in scoring rates
-    "guam",           # very low data quality
-})
-
-# Home teams from these nations competing in UEFA club competitions (Champions
-# League, Europa League, Conference League) are structurally outclassed regardless
-# of home-ground advantage.  The "home" fixture provides no meaningful scoring
-# advantage when the quality gap is vast.
-# This gate is applied in auto_tracker when the league name contains a UEFA
-# competition keyword AND the home side's Glicko differential is very negative.
-# The Glicko gate at -150 already catches most cases; this set acts as a named
-# catalogue for documentation and potential future use.
-# Aug-2026: HB Torshavn (Faroe Islands) 0-3 vs Motherwell (UECL) — Glicko was
-# the primary gate; this frozenset makes the intent explicit.
-SMALL_FOOTBALL_NATIONS_HO05: frozenset[str] = frozenset({
-    "faroe-islands",
-    "andorra",
-    "san marino",
-    "liechtenstein",
-    "gibraltar",
-    "malta",
-    "moldova",
-    "kosovo",
 })
 
 # Cup / international competition name substrings where Home Over 0.5 signals are suppressed.
