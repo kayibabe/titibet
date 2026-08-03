@@ -579,6 +579,12 @@ async def _cleanup_old_snapshots() -> None:
             if deleted_snaps:
                 logger.info("Cleanup: removed %d stale market_snapshots rows.", deleted_snaps)
 
+            # 1b. VACUUM — reclaim freed pages from snapshot deletion.
+            # Runs while the DB is at its smallest (post-purge). Takes ~10-30 s
+            # on a 300 MB DB; safe under WAL mode with concurrent readers.
+            await db.execute(text("VACUUM"))
+            logger.info("Cleanup: VACUUM complete — freed disk space reclaimed")
+
             # 2. Deactivate stale learning proposals
             #    — change types not consumed by current code
             unused_types = ("tier_suppression", "quality_threshold")

@@ -12,6 +12,8 @@ RUN npm run build
 # ── Stage 2: Python backend ───────────────────────────────────────────────────
 FROM python:3.13-slim
 WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Install Python dependencies
 COPY backend/requirements.txt ./
