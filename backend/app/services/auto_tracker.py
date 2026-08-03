@@ -34,6 +34,7 @@ from app.models.user import User as _User  # noqa: F401 — registers users tabl
 from app.core.config import (
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
     WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
+    U35_DATA_POOR_COUNTRIES, SMALL_FOOTBALL_NATIONS_HO05,
     DISABLED_LEAGUES, DISABLED_MARKETS, OVER_GOALS_SUPPRESSED_LEAGUES,
     UNDER_GOALS_SUPPRESSED_LEAGUES,
     OVER25_SUPPRESSED_TIERS, MARKET_MIN_ODDS, HALVED_STAKE_LEAGUES,
@@ -247,6 +248,39 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         if signal.market == "Under 3.5" and (fixture.league_tier or 3) >= 3:
             continue
 
+        # Under 3.5 — data-poor country gate (any tier).
+        # ZINB λ calibration is unreliable in these nations even at Tier 1/2 —
+        # thin historical data means confident Grade A signals still lose to
+        # high-scoring outliers.  The Tier-3 gate above catches most cases but
+        # misses Tier 1 leagues (e.g. Armenian Premier League stored as T1).
+        # Aug-2026: FC Urartu vs Pyunik (Armenia T1) 2–2 @ 1.19 odds — Grade A loss.
+        if (
+            signal.market == "Under 3.5"
+            and (fixture.country or "").lower() in U35_DATA_POOR_COUNTRIES
+        ):
+            logger.debug(
+                "auto_track: skipping %s U3.5 — data-poor country (%s)",
+                fixture.home_team, fixture.country,
+            )
+            continue
+
+        # Home Over 0.5 — Australia all-tiers gate.
+        # State-level Australian competitions (Queensland PL, NPL, etc.) are
+        # classified inconsistently in the API (T1 to T3) but all share thin
+        # Poisson data.  A-League is already suppressed via OVER_GOALS_SUPPRESSED_LEAGUES;
+        # this gate closes the gap for state leagues at any tier.
+        # Aug-2026: St George Willawong vs Brisbane Strikers (T1) 0–1 @ 1.51.
+        # Glicko (glicko_r_diff=–575) is the primary defence; this is depth.
+        if (
+            signal.market == "Home Over 0.5"
+            and (fixture.country or "").lower() == "australia"
+        ):
+            logger.debug(
+                "auto_track: skipping %s HO0.5 — Australia state league",
+                fixture.home_team,
+            )
+            continue
+
         # Home Over 0.5 — Glicko gate: block when home team is a heavy underdog.
         # When glicko_r_diff < -150 the home team is structurally weaker; 0-goal
         # shutouts are common regardless of Bayesian/Poisson agreement.
@@ -258,6 +292,26 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             logger.debug(
                 "auto_track: skipping %s HO0.5 — home underdog (glicko_r_diff=%.0f)",
+                fixture.home_team, signal.glicko_r_diff,
+            )
+            continue
+
+        # Home Over 0.5 — tighter Glicko gate for UEFA club competitions.
+        # Small-nation home sides (Faroe Islands, Gibraltar, etc.) in UECL/UEL/UCL
+        # qualifiers are structurally outclassed; even a moderate negative diff
+        # (-100 to -150) predicts a 0-goal shutout reliably in these contexts.
+        # The standard -150 gate above catches extreme mismatches; this closes
+        # the -100 to -149 gap specifically when the competition is a UEFA club event.
+        # Aug-2026: HB Torshavn (Faroe Islands) 0-3 vs Motherwell (UECL, diff≈-300).
+        _UEFA_COMP_KEYWORDS = {"champions league", "europa league", "conference league"}
+        if (
+            signal.market == "Home Over 0.5"
+            and signal.glicko_r_diff is not None
+            and signal.glicko_r_diff < -100
+            and any(kw in league_lower for kw in _UEFA_COMP_KEYWORDS)
+        ):
+            logger.debug(
+                "auto_track: skipping %s HO0.5 — UEFA comp + home underdog (glicko_r_diff=%.0f)",
                 fixture.home_team, signal.glicko_r_diff,
             )
             continue
