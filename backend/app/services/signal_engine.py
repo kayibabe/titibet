@@ -898,6 +898,13 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 if _league_matches_suppression(league_lower, UNDER_GOALS_SUPPRESSED_LEAGUES):
                     continue
 
+            # Under 3.5 is restricted to Tier 1–2 leagues only.
+            # Tier 3 leagues (Nicaragua, Armenia, etc.) have thin historical data;
+            # ZINB lambda estimates are unreliable and 5-goal outcomes are common.
+            # Aug-2026: Walter Ferretti 4-1, Urartu 2-2 both at high model confidence.
+            if market == "Under 3.5" and (fixture.league_tier or 3) >= 3:
+                continue
+
             # League over-goals suppression for remaining active over markets.
             if market in {"Over 1.5", "Over 2.5", "Home Over 0.5"}:
                 league_lower = (fixture.league or "").lower()

@@ -798,6 +798,9 @@ UNDER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
     "primera b",      # Chilean Segunda División — backtest: 20% hit rate on Home Under 1.5 (1/5)
     "usl league one", # US lower division — high-scoring, volatile scoring patterns
     "usl championship",
+    # Aug-2026: AB vs Skála 3-2 (5 goals) — Faroe Islands top flight classified Tier 2 via
+    # "meistaradeildin" substring but thin-sample volatility makes U3.5 unreliable.
+    "meistaradeildin",
 })
 
 # Keywords that indicate youth / reserve fixtures.
