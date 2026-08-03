@@ -35,7 +35,6 @@ from app.core.config import (
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
     WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
     DISABLED_LEAGUES, DISABLED_MARKETS, OVER_GOALS_SUPPRESSED_LEAGUES,
-    UNDER_GOALS_SUPPRESSED_LEAGUES,
     OVER25_SUPPRESSED_TIERS, MARKET_MIN_ODDS, HALVED_STAKE_LEAGUES,
     COPA_HO05_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
     is_womens_fixture,
@@ -232,40 +231,6 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
             and AWAY_GOALS_SUPPRESSED_LEAGUES
             and any(kw in league_lower for kw in AWAY_GOALS_SUPPRESSED_LEAGUES)
         ):
-            continue
-
-        # Under-goals league suppression (defense-in-depth mirror of signal_engine gate).
-        # Catches old signals already in DB for leagues added to UNDER_GOALS_SUPPRESSED_LEAGUES
-        # after the signal was computed (e.g. meistaradeildin added Aug-2026).
-        if signal.market in {"Under 2.5", "Under 3.5"}:
-            if any(kw in league_lower for kw in UNDER_GOALS_SUPPRESSED_LEAGUES):
-                continue
-
-        # Under 3.5 — Tier 1–2 only.
-        # Tier 3 leagues have thin ZINB data; 5-goal outcomes are common.
-        # Aug-2026: Matagalpa 4-1, Urartu 2-2 — both confident model calls, both wrong.
-        if signal.market == "Under 3.5" and (fixture.league_tier or 3) >= 3:
-            continue
-
-        # Home Over 0.5 — Glicko gate: block when home team is a heavy underdog.
-        # When glicko_r_diff < -150 the home team is structurally weaker; 0-goal
-        # shutouts are common regardless of Bayesian/Poisson agreement.
-        # Aug-2026: Baník (diff=-180) 0-4, Willawong (diff=-575) 0-1 — both shutouts.
-        if (
-            signal.market == "Home Over 0.5"
-            and signal.glicko_r_diff is not None
-            and signal.glicko_r_diff < -150
-        ):
-            logger.debug(
-                "auto_track: skipping %s HO0.5 — home underdog (glicko_r_diff=%.0f)",
-                fixture.home_team, signal.glicko_r_diff,
-            )
-            continue
-
-        # Null probability guard: skip if both engines have no probability estimate.
-        # A signal with bayesian_prob=None and poisson_prob=None has no model backing —
-        # it was generated from structural rules alone. No edge can be inferred.
-        if signal.bayesian_prob is None and signal.poisson_prob is None:
             continue
 
         # Skip women's league over-goals picks — models calibrated on men's

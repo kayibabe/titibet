@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user, get_current_user_optional
 from app.core.database import get_db
-from app.models import Fixture, MarketSnapshot, TrackedBet, IngestionRun, Signal
+from app.models import Fixture, MarketSnapshot, TrackedBet, IngestionRun
 from app.models.user import User
 from app.schemas.bet import (
     TrackPickRequest,
@@ -264,32 +264,6 @@ async def track_pick(
                 await db.commit()
                 await db.refresh(existing)
             return _bet_out_from_models(existing)
-
-        # Glicko gate for manual Home Over 0.5 picks.
-        # When the home team's Glicko rating is significantly below the away team
-        # (glicko_r_diff < -150), the home team is a heavy underdog and shutouts
-        # are common — 0-4, 0-1 in Aug-2026 analysis. Block to prevent manual
-        # overrides from circumventing the same gate applied to system picks.
-        if (
-            payload.market_type == "Home Over 0.5"
-            and payload.fixture_id
-            and payload.source_rule_key not in ("system_auto", "system_dual")
-        ):
-            sig = await db.scalar(
-                select(Signal).where(
-                    Signal.fixture_id == payload.fixture_id,
-                    Signal.market == "Home Over 0.5",
-                )
-            )
-            if sig is not None and sig.glicko_r_diff is not None and sig.glicko_r_diff < -150:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        f"Home Over 0.5 blocked: home team is a heavy underdog "
-                        f"(Glicko diff {sig.glicko_r_diff:.0f} < −150). "
-                        "Pick a different market or remove from tracker."
-                    ),
-                )
 
         bet = TrackedBet(
             user_id=uid,
