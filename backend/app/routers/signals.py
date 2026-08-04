@@ -13,7 +13,7 @@ from sqlalchemy import func
 from app.core.config import (
     get_settings, DISABLED_MARKETS, DISABLED_LEAGUES, BOTH_MEDIUM_DISABLED_LEAGUES,
     OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
-    MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING,
+    MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING, is_grade_c_ceiling_exception,
     WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
     COPA_HO05_SUPPRESSED_LEAGUES, PROVISIONAL_LEAGUE_MIN_BETS,
     is_womens_fixture, OVER25_SUPPRESSED_TIERS,
@@ -410,6 +410,7 @@ async def list_signals(
     # Serving-time odds ceiling for Both+High signals — suppresses picks where
     # the market is most sceptical and our models fight hardest but hit least.
     # DUAL_HIGH_ODDS_CEILING is keyed by market; signals not in the dict are unaffected.
+    # Grade C exception: quality >= 0.30 at odds >= 2.50 passes through (5W/0L backfill).
     if DUAL_HIGH_ODDS_CEILING:
         rows = [
             (sig, fix) for sig, fix in rows
@@ -418,6 +419,9 @@ async def list_signals(
                 and sig.dual_agreement == "Both"
                 and sig.market in DUAL_HIGH_ODDS_CEILING
                 and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
+                and not is_grade_c_ceiling_exception(
+                    sig.bayesian_best_odd or 0.0, sig.dual_quality_score
+                )
             )
         ]
 
@@ -744,6 +748,9 @@ async def stat_driven_picks(
             if not (
                 sig.market in DUAL_HIGH_ODDS_CEILING
                 and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
+                and not is_grade_c_ceiling_exception(
+                    sig.bayesian_best_odd or 0.0, sig.dual_quality_score
+                )
             )
         ]
 

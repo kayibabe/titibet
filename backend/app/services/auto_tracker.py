@@ -32,7 +32,7 @@ from app.models import Signal, Fixture, TrackedBet
 from app.models.learning_proposal import LearningProposal
 from app.models.user import User as _User  # noqa: F401 — registers users table in SA metadata
 from app.core.config import (
-    DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
+    DUAL_HIGH_ODDS_CEILING, is_grade_c_ceiling_exception, WOMEN_LEAGUE_KEYWORDS,
     WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
     HO05_ALL_TIERS_SUPPRESSED_COUNTRIES, U35_DATA_POOR_COUNTRIES,
     UEFA_CLUB_COMP_KEYWORDS,
@@ -217,6 +217,7 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
             and signal.dual_confidence == "High"
             and signal.dual_agreement == "Both"
             and odds >= ceiling
+            and not is_grade_c_ceiling_exception(odds, signal.dual_quality_score)
         ):
             continue
 

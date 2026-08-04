@@ -159,7 +159,7 @@ async def lifespan(app: FastAPI):
             from sqlalchemy import text as _text
             from app.core.config import (
                 DISABLED_MARKETS, DISABLED_LEAGUES, MARKET_MIN_ODDS,
-                DUAL_HIGH_ODDS_CEILING, POISSON_ONLY_MAX_ODDS,
+                DUAL_HIGH_ODDS_CEILING, is_grade_c_ceiling_exception, POISSON_ONLY_MAX_ODDS,
                 OVER_GOALS_SUPPRESSED_LEAGUES, HO05_DATA_POOR_COUNTRIES,
                 COPA_HO05_SUPPRESSED_LEAGUES, is_womens_fixture,
             )
@@ -176,7 +176,7 @@ async def lifespan(app: FastAPI):
                         SELECT tb.id, tb.market_type, tb.odds, tb.dual_confidence,
                                tb.dual_agreement, tb.league,
                                f.country, f.league_tier, f.home_team, f.away_team,
-                               s.contradiction
+                               s.contradiction, s.dual_quality_score
                         FROM tracked_bets tb
                         LEFT JOIN fixtures f ON f.id = tb.fixture_id
                         LEFT JOIN signals  s ON s.fixture_id = tb.fixture_id
@@ -194,6 +194,7 @@ async def lifespan(app: FastAPI):
                         country= (r.country or "").lower().strip()
                         tier   = r.league_tier or 3
                         contra = r.contradiction or 0
+                        qual   = r.dual_quality_score
                         home_t = r.home_team or ""
                         away_t = r.away_team or ""
 
@@ -207,7 +208,7 @@ async def lifespan(app: FastAPI):
                         elif agree == "Both" and conf == "Medium" and (odds < 1.50 or odds >= 1.95): blocked = True
                         elif agree == "Both" and conf == "Medium" and league in BOTH_MED_DISABLED: blocked = True
                         elif mkt == "Over 1.5" and agree == "Bayesian Only": blocked = True
-                        elif conf == "High" and agree == "Both" and mkt in DUAL_HIGH_ODDS_CEILING and odds >= DUAL_HIGH_ODDS_CEILING[mkt]: blocked = True
+                        elif conf == "High" and agree == "Both" and mkt in DUAL_HIGH_ODDS_CEILING and odds >= DUAL_HIGH_ODDS_CEILING[mkt] and not is_grade_c_ceiling_exception(odds, qual): blocked = True
                         elif agree == "Poisson Only" and mkt in POISSON_ONLY_MAX_ODDS and odds >= POISSON_ONLY_MAX_ODDS[mkt]: blocked = True
                         elif mkt == "Home Over 0.5" and conf == "High" and agree == "Both" and tier >= 3 and country in HO05_DATA_POOR_COUNTRIES: blocked = True
                         elif mkt == "Home Over 0.5" and any(kw in league for kw in COPA_HO05_SUPPRESSED_LEAGUES): blocked = True

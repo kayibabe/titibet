@@ -36,6 +36,7 @@ from app.core.config import (
     DISABLED_LEAGUES,
     OVER_GOALS_SUPPRESSED_LEAGUES,
     DUAL_HIGH_ODDS_CEILING,
+    is_grade_c_ceiling_exception,
 )
 from app.models import Signal, Fixture
 from app.models.bet import TrackedBet
@@ -415,6 +416,9 @@ async def _query_all_rows(db: AsyncSession, run_date: date) -> list[tuple[Signal
                 and sig.dual_agreement == "Both"
                 and sig.market in DUAL_HIGH_ODDS_CEILING
                 and (sig.bayesian_best_odd or 0.0) >= DUAL_HIGH_ODDS_CEILING[sig.market]
+                and not is_grade_c_ceiling_exception(
+                    sig.bayesian_best_odd or 0.0, sig.dual_quality_score
+                )
             )
         ]
 

@@ -611,6 +611,26 @@ DUAL_HIGH_ODDS_CEILING: dict[str, float] = {
     "Away Over 0.5": 2.10,
 }
 
+# Grade C exception to DUAL_HIGH_ODDS_CEILING for HO0.5 Both+High signals.
+# At odds >= 2.50 with quality >= 0.30 the model has meaningful confidence despite
+# long odds. Breakdown analysis: 5W/0L at Tier 1/2 (Bournemouth/City, Wolves/Fulham,
+# Getafe/Osasuna, Genoa/Milan, Cremonese/Como); 2.20-2.49 sub-band confirmed bad
+# (33.3% WR) so the floor is 2.50, not 2.20.
+# Grade D (quality < 0.30) stays behind the 1.95 ceiling — 57.1% WR at 2.20+ is
+# marginal and is contaminated by Ethiopia/World Cup losses that current gates miss.
+DUAL_HIGH_CEILING_EXCEPTION_MIN_ODDS: float = 2.50
+DUAL_HIGH_CEILING_EXCEPTION_MIN_QUALITY: float = 0.30
+
+
+def is_grade_c_ceiling_exception(odds: float, quality: float | None) -> bool:
+    """True when a Both+High signal qualifies for the Grade C ceiling exception.
+    Must be checked AFTER confirming the signal already exceeds DUAL_HIGH_ODDS_CEILING.
+    """
+    return (
+        odds >= DUAL_HIGH_CEILING_EXCEPTION_MIN_ODDS
+        and (quality or 0.0) >= DUAL_HIGH_CEILING_EXCEPTION_MIN_QUALITY
+    )
+
 # Acca candidate gate: exclude Over 2.5 legs where confidence is High,
 # league tier is unknown (None), and bookmaker odds exceed this ceiling.
 # 2026-07-05: initial value 3.46 (from card 1); lowered to 3.10 after full
