@@ -693,7 +693,7 @@ ZINB_UNDER25_MIN_ODDS: float = 1.45
 # ZINB Under 3.5: retroactive WR 87.4% (n=174, λ≤3.0). No global MARKET_MIN_ODDS entry
 # exists for this market, so without a floor it could track at 1.05 (negative EV).
 # Break-even = 1/0.874 = 1.145. Floor at 1.20 gives ~4% edge minimum.
-ZINB_UNDER35_MIN_ODDS: float = 1.30
+ZINB_UNDER35_MIN_ODDS: float = 1.35  # raised 1.30→1.35 Aug-2026: at 1.30 break-even=76.9%; live losses at 1.19 (Armenia) and 1.30 (Faroe Islands) show calibration gap at sub-1.35 odds
 
 
 # =============================================================================
@@ -798,6 +798,9 @@ UNDER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
     "primera b",      # Chilean Segunda División — backtest: 20% hit rate on Home Under 1.5 (1/5)
     "usl league one", # US lower division — high-scoring, volatile scoring patterns
     "usl championship",
+    # Aug-2026: AB vs Skala 3-2 (5 goals). Faroe Islands top flight is high-scoring;
+    # ZINB λ is calibrated on European data and underestimates Faroese goal rates.
+    "meistaradeildin",
 })
 
 # Keywords that indicate youth / reserve fixtures.
@@ -860,6 +863,42 @@ HO05_DATA_POOR_COUNTRIES: frozenset[str] = frozenset({
     # Both scored 0 home goals despite high-confidence Both-agreement signals.
     "kuwait",
     "belarus",
+})
+
+# Countries where Under 3.5 signals are suppressed at ANY tier.
+# ZINB lambda calibration is unreliable in data-sparse nations — thin historical
+# records cause the model to underestimate goal frequencies even in Tier 1/2 leagues.
+# Aug-2026 losses: Armenia 2-2 @ 1.19 (T1), Nicaragua 4-1 @ 1.36 (T3),
+# Faroe Islands (Meistaradeildin) 3-2 @ 1.30 (T2). All Grade A signals, all wrong.
+U35_DATA_POOR_COUNTRIES: frozenset[str] = frozenset({
+    "armenia",
+    "nicaragua",
+    "faroe-islands",
+    "andorra",
+    "san marino",
+    "liechtenstein",
+    "mongolia",
+    "guam",
+})
+
+# Countries where Home Over 0.5 is suppressed at ALL tiers (not just Tier 3).
+# These are markets where the data is too thin or structurally unreliable for
+# any tier. Distinct from HO05_DATA_POOR_COUNTRIES which only fires at Tier 3.
+HO05_ALL_TIERS_SUPPRESSED_COUNTRIES: frozenset[str] = frozenset({
+    # Queensland PL and other Australian state leagues are stored as T1 by the API
+    # but are data-poor. Glicko is the primary defence; this is structural depth.
+    # Aug-2026: St George Willawong vs Brisbane Strikers 0-1 @ 1.51 (T1).
+    "australia",
+})
+
+# UEFA club competition keywords — used for tighter Glicko ceiling (-100 vs -150).
+# Small-nation clubs in European qualifiers are structurally outclassed in the
+# -100 to -149 Glicko band that the general -150 gate misses.
+# Aug-2026: HB Torshavn (Faroe Islands) 0-3 vs Motherwell (UECL).
+UEFA_CLUB_COMP_KEYWORDS: frozenset[str] = frozenset({
+    "champions league",
+    "europa league",
+    "conference league",
 })
 
 # Cup / international competition name substrings where Home Over 0.5 signals are suppressed.

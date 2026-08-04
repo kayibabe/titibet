@@ -34,7 +34,10 @@ from app.models.user import User as _User  # noqa: F401 — registers users tabl
 from app.core.config import (
     DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS,
     WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
+    HO05_ALL_TIERS_SUPPRESSED_COUNTRIES, U35_DATA_POOR_COUNTRIES,
+    UEFA_CLUB_COMP_KEYWORDS,
     DISABLED_LEAGUES, DISABLED_MARKETS, OVER_GOALS_SUPPRESSED_LEAGUES,
+    UNDER_GOALS_SUPPRESSED_LEAGUES,
     OVER25_SUPPRESSED_TIERS, MARKET_MIN_ODDS, HALVED_STAKE_LEAGUES,
     COPA_HO05_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
     is_womens_fixture,
@@ -189,6 +192,9 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
                 continue
         if signal.market == "Over 2.5" and fixture.league_tier in OVER25_SUPPRESSED_TIERS:
             continue
+        if signal.market in {"Under 2.5", "Under 3.5"}:
+            if any(k in league_lower for k in UNDER_GOALS_SUPPRESSED_LEAGUES):
+                continue
 
         odds = signal.bayesian_best_odd
         if not odds or odds <= 1.01:
@@ -250,6 +256,46 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
             and signal.dual_agreement == "Both"
             and (fixture.league_tier or 3) >= 3
             and (fixture.country or "").lower() in HO05_DATA_POOR_COUNTRIES
+        ):
+            continue
+
+        # Home Over 0.5 suppressed for these countries at ALL tiers (not just Tier 3).
+        # State leagues in Australia are mis-classified as T1 by the API; Glicko is
+        # the primary gate but this adds structural depth. Aug-2026: 0-1 @ 1.51 (T1).
+        if (
+            signal.market == "Home Over 0.5"
+            and (fixture.country or "").lower() in HO05_ALL_TIERS_SUPPRESSED_COUNTRIES
+        ):
+            continue
+
+        # Under 3.5 suppressed for data-poor countries at any tier.
+        # ZINB λ calibration is unreliable where historical match data is thin —
+        # even Tier 1/2 leagues in these nations show anomalous goal rates.
+        # Aug-2026: Armenia 2-2 @ 1.19 (T1), Nicaragua 4-1 @ 1.36 (T3),
+        # Faroe Islands 3-2 @ 1.30 (T2).
+        if (
+            signal.market == "Under 3.5"
+            and (fixture.country or "").lower() in U35_DATA_POOR_COUNTRIES
+        ):
+            continue
+
+        # Glicko gate: skip HO0.5 where the home team is a heavy underdog.
+        # glicko_r_diff < -150 means the home side is outrated by >150 points —
+        # home goals are structurally improbable regardless of lambda.
+        # Aug-2026: Banik Ostrava vs Slavia Praha (diff=-180) 0-4.
+        _glicko = signal.glicko_r_diff
+        if signal.market == "Home Over 0.5" and _glicko is not None and _glicko < -150:
+            continue
+
+        # Tighter Glicko gate for UEFA club competitions: -100 vs the general -150.
+        # Small-nation clubs in CL/EL/UECL qualifiers are structurally outclassed
+        # in the -100 to -149 band the general gate misses.
+        # Aug-2026: HB Torshavn (Faroe Islands) 0-3 vs Motherwell (UECL).
+        if (
+            signal.market == "Home Over 0.5"
+            and _glicko is not None
+            and _glicko < -100
+            and any(kw in league_lower for kw in UEFA_CLUB_COMP_KEYWORDS)
         ):
             continue
 
