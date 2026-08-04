@@ -43,7 +43,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const [dateTo, setDateTo]     = useState('')
   const [activePreset, setActivePreset] = useState('All')
   const [statusFilter, setStatusFilter] = useState('')
-  const [sourceFilter, setSourceFilter] = useState('')
+  const [sourceFilter, setSourceFilter] = useState('system')
   const [syncing, setSyncing]           = useState(false)
   const [settling, setSettling]         = useState(false)
   const [settleResult, setSettleResult] = useState(null)

@@ -727,6 +727,7 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
   const [dateFrom,     setDateFrom]   = useState('')
   const [dateTo,       setDateTo]     = useState(todayStr)
   const [activePreset, setActivePreset] = useState('All')
+  const [scopeFilter,  setScopeFilter] = useState('system')
   const [refreshKey,   setRefreshKey]   = useState(0)
   const [data,         setData]         = useState(null)
   const [systemSummary,   setSystemSummary]   = useState(null)
@@ -751,8 +752,9 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
     setError(null)
 
     const dateFilters = { date_from: dateFrom || undefined, date_to: dateTo || undefined }
+    const mainScope = scopeFilter !== 'all' ? scopeFilter : undefined
     Promise.all([
-      fetchAnalytics(dateFilters),
+      fetchAnalytics({ ...dateFilters, scope: mainScope }),
       fetchAnalyticsIntelligence().catch(() => null),
       fetchAnalytics({ ...dateFilters, scope: 'system' }).catch(() => null),
       fetchAnalytics({ ...dateFilters, scope: 'personal' }).catch(() => null),
@@ -782,7 +784,7 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
       .catch(e => setError(e.message))
       .finally(() => { setLoading(false); setRefreshing(false) })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo, refreshKey])
+  }, [dateFrom, dateTo, scopeFilter, refreshKey])
 
   const noData     = !loading && data && (data.summary?.total_bets ?? 0) === 0
   const clvMissing = data && (data.summary?.clv_coverage_pct ?? 0) === 0 && (data.summary?.settled_bets ?? 0) > 0
@@ -825,6 +827,29 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
             <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
             Refresh
           </button>
+        </div>
+
+        {/* Scope filter — controls which bets feed the Markets/Signal breakdown tabs */}
+        <div className="flex items-center gap-2 pt-0.5">
+          <span className="text-[10px] font-semibold text-[var(--text)] opacity-60 uppercase tracking-wide">Scope:</span>
+          {[
+            { value: 'system',   label: 'System picks' },
+            { value: 'personal', label: 'My bets' },
+            { value: 'all',      label: 'All' },
+          ].map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => setScopeFilter(value)}
+              className={'px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ' + (
+                scopeFilter === value
+                  ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-bg,rgba(99,102,241,0.1))]'
+                  : 'border-[var(--border)] text-[var(--text)] opacity-70 hover:opacity-100 hover:bg-[var(--bg)]'
+              )}
+            >
+              {label}
+            </button>
+          ))}
+          <span className="text-[10px] text-[var(--text)] opacity-40 ml-1">— filters Markets &amp; Signal breakdown tabs</span>
         </div>
 
         {dateFrom && dateTo && (
