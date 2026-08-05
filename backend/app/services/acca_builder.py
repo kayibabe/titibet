@@ -24,22 +24,29 @@ from app.core.config import (
 from app.services.signal_engine import _get_underperforming_leagues
 
 # 2026-07-11 ACCA tightening: raised all probability floors after -33.5% ROI audit.
-# Each compounded leg error hurts more in a multi-leg ticket than in a single;
-# the floors must be higher here than in singles to compensate for that variance.
-_MIN_PROB = 0.68            # was 0.62 — global floor for all ACCA legs
+# 2026-08-05 ACCA tightening: raised _MIN_PROB and _ACCA_WIN_PROB_FLOOR to improve
+# hit rate. The won Aug-3 ticket had probs 0.79-0.82 and 53.4% expected win rate;
+# the Aug-5 ticket had probs 0.77 and only 45.3% expected win rate. The old 0.30
+# floor allowed 3-leg tickets at 67% per leg — a 30% win rate — which is too loose.
+# New floor of 0.48 requires either 3 legs averaging ≥79% (0.79³=49%) or 2 legs
+# averaging ≥72% (0.72²=52%). On weak-signal days no acca is built — better than
+# a structurally poor ticket.
+_MIN_PROB = 0.72            # was 0.68 — global floor for all ACCA legs
 # HO0.5 legs require higher conviction than other markets in ACCA context.
 # The market's track record of 0-0 losses (especially Tier 2/3) means we need
 # the model to be meaningfully more confident before compounding the leg.
-_HO05_ACCA_MIN_PROB = 0.75  # was 0.70 — stricter gate since HO0.5 is most problematic
+_HO05_ACCA_MIN_PROB = 0.76  # was 0.75 — lifted by 1pp to stay above new _MIN_PROB
 _ALLOWED_CONFIDENCE = {"High", "Medium"}  # Both+Medium has 77.3% WR on clean data
 # For Both+High ACCA legs both engines must individually clear this floor.
 # Raised 0.73 → 0.76 so weak Both+High signals that borderline-qualify for singles
 # are excluded from ACCA legs where the compounding risk is higher.
-_ACCA_DUAL_HIGH_MIN_PROB = 0.76  # was 0.73
+_ACCA_DUAL_HIGH_MIN_PROB = 0.78  # was 0.76 — lifted by 2pp in line with tighter gates
 
 # Expected ticket win probability floor. A ticket whose leg probabilities multiply
-# to below this value is not built — 30% ≈ a 3-leg ticket at 67% per leg.
-_ACCA_WIN_PROB_FLOOR = 0.30
+# to below this value is not built.
+# 0.48 ≈ 3-leg ticket at 79% per leg, or 2-leg ticket at 69% per leg.
+# Old value of 0.30 was too permissive — allowed 30% expected win rate (3 legs @67%).
+_ACCA_WIN_PROB_FLOOR = 0.48
 
 # Maximum odds allowed for any individual ACCA leg.
 # High-odds Under legs (>1.60) indicate bookmaker uncertainty about a potential

@@ -531,7 +531,12 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
     return inserted
 
 
-_ACCA_TARGET_TIERS = [3.0, 3.5, 4.0]  # 3.0 primary → 2-leg tickets from 1.70–1.99 band (~1.78×1.78=3.17)
+# Target tiers lowered to 2.0/2.5/3.0 after raising probability floors (Aug-2026).
+# Tighter legs (≥0.72 prob) have lower fair_odds, so a 2-leg ticket maxes at ~1.39²=1.93
+# and a 3-leg at ~1.39³=2.69. The 2.0 primary tier allows the algorithm to find a clean
+# 2-leg combination; 2.5/3.0 fallback captures days with 3 high-confidence legs.
+# Priority is hit rate: a 2-leg ticket at 52% win rate beats a 3-leg at 37%.
+_ACCA_TARGET_TIERS = [2.0, 2.5, 3.0]
 _ACCA_MIN_CANDIDATES = 2
 
 
