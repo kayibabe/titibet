@@ -148,12 +148,12 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
     existing_keys |= {(r.fixture_id, r.market_type) for r in null_date_rows}
 
     # Daily single-bet cap: count system single bets already tracked today.
-    # ACCAs (source_rule_key="system_acca") are excluded — they're separate.
+    # ACCAs and shadow bets are excluded — they don't consume cap slots.
     existing_single_count = await db.scalar(
         select(func.count()).select_from(TrackedBet).where(
             TrackedBet.event_date == run_date,
             TrackedBet.user_id.is_(None),
-            TrackedBet.source_rule_key != "system_acca",
+            TrackedBet.source_rule_key.notin_(["system_acca", "shadow_over25_weak"]),
         )
     ) or 0
     if existing_single_count >= MAX_DAILY_SINGLE_BETS:
@@ -429,13 +429,44 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         if signal.market == "Over 2.5" and signal.poisson_rule_key == "zinb_over25":
             _lh = signal.zinb_lambda_h or 0.0
             _la = signal.zinb_lambda_a or 0.0
+            _zinb_total = _lh + _la
             _zinb_o25_strong = (
-                _lh + _la >= 3.8
+                _zinb_total >= 3.8
                 and _lh >= 1.3 and _la >= 1.3
                 and max(_lh, _la) >= 1.7
                 and abs(_lh - _la) <= 1.8
             )
             if not _zinb_o25_strong:
+                # Shadow-track the 3.5–3.8 weak band: same quality gates pass here
+                # but we lack strong evidence — record without counting toward the
+                # daily cap or real analytics until sufficient live sample exists.
+                _zinb_o25_weak = (
+                    _zinb_total >= 3.5
+                    and _lh >= 1.2 and _la >= 1.2
+                    and abs(_lh - _la) <= 2.0
+                )
+                if _zinb_o25_weak and key not in existing_keys:
+                    _shadow_match = f"{fixture.home_team} vs {fixture.away_team}"
+                    db.add(TrackedBet(
+                        user_id=None,
+                        fixture_id=signal.fixture_id,
+                        bookmaker=bookmaker,
+                        event_date=fixture.event_date,
+                        match_name=_shadow_match,
+                        league=fixture.league,
+                        market_type=signal.market,
+                        selection_name=signal.market,
+                        odds=odds,
+                        stake=FLAT_STAKE,
+                        recommended_stake_pct=signal.dual_recommended_stake_pct,
+                        source_rule_key="shadow_over25_weak",
+                        source_rule_label="Shadow Over 2.5 (3.5–3.8 band)",
+                        signal_grade=_grade(signal.dual_quality_score),
+                        dual_confidence=signal.dual_confidence,
+                        dual_agreement=signal.dual_agreement,
+                        result_status="Pending",
+                    ))
+                    existing_keys.add(key)
                 continue
 
         agreement = signal.dual_agreement or ""

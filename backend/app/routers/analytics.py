@@ -819,3 +819,55 @@ async def value_band_streak(
         "wr_pct":    round(won_total / total * 100, 1) if total else 0.0,
         "last_loss": last_loss,
     }
+
+
+@router.get("/shadow-over25")
+async def shadow_over25(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Shadow-band Over 2.5 performance: ZINB weak band (total λ 3.5–3.8).
+    Read-only; not gated by auth — no real money involved, useful for quick QA.
+    Returns settled W/L counts, win rate, and implied ROI at average odds.
+    """
+    q = (
+        select(TrackedBet)
+        .where(
+            TrackedBet.user_id.is_(None),
+            TrackedBet.source_rule_key == "shadow_over25_weak",
+        )
+        .order_by(TrackedBet.event_date.asc())
+    )
+    rows = list((await db.execute(q)).scalars().all())
+    settled = [b for b in rows if b.result_status in ("Won", "Lost")]
+    pending = [b for b in rows if b.result_status == "Pending"]
+    wins = [b for b in settled if b.result_status == "Won"]
+    losses = [b for b in settled if b.result_status == "Lost"]
+    stake_settled = sum(b.stake for b in settled)
+    pl = sum(b.profit_loss for b in settled if b.profit_loss is not None)
+    roi = (pl / stake_settled * 100) if stake_settled else 0.0
+    avg_odds = (sum(b.odds for b in settled) / len(settled)) if settled else 0.0
+    return {
+        "band": "ZINB Over 2.5 — weak (λ 3.5–3.8)",
+        "settled": len(settled),
+        "pending": len(pending),
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": round(len(wins) / len(settled) * 100, 1) if settled else 0.0,
+        "avg_odds": round(avg_odds, 3),
+        "roi_pct": round(roi, 1),
+        "promote_threshold": "≥20 settled bets AND win_rate ≥ 65%",
+        "bets": [
+            {
+                "id": b.id,
+                "event_date": str(b.event_date),
+                "match_name": b.match_name,
+                "league": b.league,
+                "odds": b.odds,
+                "result_status": b.result_status,
+                "profit_loss": b.profit_loss,
+                "dual_confidence": b.dual_confidence,
+            }
+            for b in rows
+        ],
+    }

@@ -419,7 +419,10 @@ async def list_bets(
         ))
     else:
         sub_queries.append(_apply_filters(
-            base.where(TrackedBet.user_id.is_(None))
+            base.where(
+                TrackedBet.user_id.is_(None),
+                TrackedBet.source_rule_key.in_(_SYSTEM_PICK_KEYS),
+            )
         ))
 
     all_rows = []
