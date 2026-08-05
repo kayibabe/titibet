@@ -957,6 +957,17 @@ COPA_HO05_SUPPRESSED_LEAGUES: frozenset[str] = frozenset({
     "olympic",
 })
 
+# Domestic cup leagues where Under 3.5 signals are suppressed for auto-tracking.
+# Cup ties involve squad rotation, attacking incentives (must-win knockout), and
+# weaker defensive organisation — the Poisson λ (calibrated on league data) under-
+# estimates expected goals in these fixtures.
+# Aug-2026: Maccabi Haifa 4-2 Ironi Tiberias (Toto Cup, 6 goals) → Under 3.5 Lost.
+# Matched by substring against lower(trim(league)).
+CUP_UNDER35_SUPPRESSED_LEAGUES: frozenset[str] = frozenset({
+    "toto cup",   # Israeli domestic cups — squad rotation, high-scoring knockouts
+    "pokalen",    # Danish / Norwegian cups — DBU Pokalen etc.
+})
+
 # League tiers where Over 2.5 signals are suppressed system-wide.
 # Tier 3 Over 2.5 shows 57.1% WR and -100% ROI across 14 live bets (Jul 2026).
 # Tier 1 and Tier 2 remain unaffected — Tier 2 Over 2.5 is 5W/0L at +71% ROI.

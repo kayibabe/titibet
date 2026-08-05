@@ -40,6 +40,7 @@ from app.core.config import (
     UNDER_GOALS_SUPPRESSED_LEAGUES,
     OVER25_SUPPRESSED_TIERS, MARKET_MIN_ODDS, HALVED_STAKE_LEAGUES,
     COPA_HO05_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES,
+    CUP_UNDER35_SUPPRESSED_LEAGUES,
     is_womens_fixture,
 )
 from app.services.acca_builder import (
@@ -297,6 +298,32 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
             and _glicko is not None
             and _glicko < -100
             and any(kw in league_lower for kw in UEFA_CLUB_COMP_KEYWORDS)
+        ):
+            continue
+
+        # Under 3.5 quality gate for UEFA qualifying mismatches.
+        # Early-round UCL/UEL qualifiers pit elite clubs against small-nation sides;
+        # the favourites score freely and push totals over 3.5. The tell is elevated
+        # Under 3.5 odds (>= 1.45): normal competitive fixtures price Under 3.5 at
+        # 1.20-1.35; >= 1.45 signals bookmaker uncertainty about a blowout.
+        # Require Grade A quality (>= 0.55) at these odds before auto-tracking.
+        # Aug-2026: Dinamo Zagreb 5-0 Kauno Žalgiris (UCL, Grade B, @1.57) Lost.
+        if (
+            signal.market in {"Under 3.5", "Under 2.5"}
+            and any(kw in league_lower for kw in UEFA_CLUB_COMP_KEYWORDS)
+            and odds >= 1.45
+            and (signal.dual_quality_score or 0.0) < 0.55
+        ):
+            continue
+
+        # Cup Under 3.5 gate: suppress Under 3.5 in high-variance domestic cup leagues.
+        # Cup ties involve squad rotation, attacking incentives (must-win knockout),
+        # and weaker defensive organisation — Poisson λ underestimates expected goals.
+        # Aug-2026: Maccabi Haifa 4-2 Ironi Tiberias (Toto Cup, 6 goals) Lost.
+        if (
+            signal.market in {"Under 3.5", "Under 2.5"}
+            and CUP_UNDER35_SUPPRESSED_LEAGUES
+            and any(kw in league_lower for kw in CUP_UNDER35_SUPPRESSED_LEAGUES)
         ):
             continue
 

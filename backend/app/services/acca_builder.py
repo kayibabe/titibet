@@ -41,6 +41,13 @@ _ACCA_DUAL_HIGH_MIN_PROB = 0.76  # was 0.73
 # to below this value is not built — 30% ≈ a 3-leg ticket at 67% per leg.
 _ACCA_WIN_PROB_FLOOR = 0.30
 
+# Maximum odds allowed for any individual ACCA leg.
+# High-odds Under legs (>1.60) indicate bookmaker uncertainty about a potential
+# blowout — exactly the variance that kills parcels. A 3-leg ticket at 1.60 max
+# still clears the 3.0/3.5/4.0 target tiers (1.60^3 = 4.10).
+# Aug-2026: Myanmar 7-2 Laos @1.93 and Sydkysten 3-1 Ishøj @1.74 sank the ACCA.
+_ACCA_MAX_LEG_ODDS = 1.60
+
 
 def _primary_prob(sig: Signal) -> float:
     bayes   = sig.bayesian_prob  or 0.0
@@ -232,6 +239,13 @@ async def build_acca_candidates(
             _HO05_ACCA_MIN_PROB if sig.market == "Home Over 0.5" else _MIN_PROB
         )
     ]
+
+    # Leg odds cap: exclude legs priced above _ACCA_MAX_LEG_ODDS.
+    # High odds on Under markets signal bookmaker uncertainty about a blowout —
+    # the exact variance that kills multi-leg tickets. 3 legs at 1.60 still
+    # achieves the 4.10 combined odds needed to hit the 4.0 target tier.
+    # Aug-2026: Myanmar @1.93 and Sydkysten @1.74 sank the ticket.
+    rows = [(sig, fix) for sig, fix in rows if (sig.bayesian_best_odd or 0.0) <= _ACCA_MAX_LEG_ODDS]
 
     # Both+High ACCA gate: both engines must individually clear the same floor
     # applied by auto_tracker for singles. A Both+High signal at 0.65 primary_prob
