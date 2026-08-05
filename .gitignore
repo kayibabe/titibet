@@ -53,12 +53,14 @@ titibet_prod.db
 # API-Football file cache (ephemeral, never commit)
 backend/.cache/
 
+# Scratch / session files
+commitmsg.txt
+ai websites.txt
+
 # Temporary fix / debug scripts
 backend/fix_*.py
 backend/settle_now.py
 backend/query_check.py
-commitmsg.txt
-ai websites.txt
 
 # One-off maintenance and backfill scripts
 backend/backfill_*.py
@@ -76,6 +78,22 @@ backend/compute_*.py
 backend/promote_*.py
 backend/smoke_test.py
 backend/compare_gates.py
+backend/cleanup_*.py
 backend/*_report.json
 backend/scripts/
 backend/tools/
+
+# Root-level dev utility and analysis scripts
+backtest_analysis.py
+backtest_*.py
+check_*.py
+flip_validation.py
+run_sync.py
+settle_via_api.py
+upload_db.py
+export_data.py
+analysis_*.py
+comprehensive_analysis.py
+ho05_*.py
+scripts/
+tools/
