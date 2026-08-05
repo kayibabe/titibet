@@ -48,11 +48,18 @@ _ACCA_DUAL_HIGH_MIN_PROB = 0.78  # was 0.76 — lifted by 2pp in line with tight
 # Old value of 0.30 was too permissive — allowed 30% expected win rate (3 legs @67%).
 _ACCA_WIN_PROB_FLOOR = 0.48
 
-# Maximum odds allowed for any individual ACCA leg.
-# High-odds Under legs (>1.60) indicate bookmaker uncertainty about a potential
-# blowout — exactly the variance that kills parcels. A 3-leg ticket at 1.60 max
-# still clears the 3.0/3.5/4.0 target tiers (1.60^3 = 4.10).
+# Odds band for any individual ACCA leg: [_ACCA_MIN_LEG_ODDS, _ACCA_MAX_LEG_ODDS].
+#
+# Ceiling (1.60): high-odds Under legs indicate bookmaker uncertainty about a
+# blowout — the exact variance that kills multi-leg tickets.
 # Aug-2026: Myanmar 7-2 Laos @1.93 and Sydkysten 3-1 Ishøj @1.74 sank the ACCA.
+#
+# Floor (1.28): legs priced below 1.28 (implied prob >78%) are dead-weight.
+# They contribute only ~0.28 to the combined multiplier but still carry full loss
+# risk — when they fail the whole ticket is gone for minimal odds uplift.
+# At prob ≥0.78 the bookmaker has already priced out the edge; including these
+# legs is paying loss risk without receiving corresponding reward.
+_ACCA_MIN_LEG_ODDS = 1.28
 _ACCA_MAX_LEG_ODDS = 1.60
 
 
@@ -247,12 +254,15 @@ async def build_acca_candidates(
         )
     ]
 
-    # Leg odds cap: exclude legs priced above _ACCA_MAX_LEG_ODDS.
-    # High odds on Under markets signal bookmaker uncertainty about a blowout —
-    # the exact variance that kills multi-leg tickets. 3 legs at 1.60 still
-    # achieves the 4.10 combined odds needed to hit the 4.0 target tier.
-    # Aug-2026: Myanmar @1.93 and Sydkysten @1.74 sank the ticket.
-    rows = [(sig, fix) for sig, fix in rows if (sig.bayesian_best_odd or 0.0) <= _ACCA_MAX_LEG_ODDS]
+    # Leg odds band: [_ACCA_MIN_LEG_ODDS, _ACCA_MAX_LEG_ODDS].
+    # Upper cap — high odds signal bookmaker uncertainty about a blowout.
+    # Lower floor — legs below 1.28 contribute barely 0.28× to combined odds
+    # but still carry full loss risk; the edge has been priced out by the market.
+    # Aug-2026: Myanmar @1.93 and Sydkysten @1.74 sank the ticket (upper gate).
+    rows = [
+        (sig, fix) for sig, fix in rows
+        if _ACCA_MIN_LEG_ODDS <= (sig.bayesian_best_odd or 0.0) <= _ACCA_MAX_LEG_ODDS
+    ]
 
     # Both+High ACCA gate: both engines must individually clear the same floor
     # applied by auto_tracker for singles. A Both+High signal at 0.65 primary_prob
