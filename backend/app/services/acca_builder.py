@@ -269,6 +269,18 @@ async def build_acca_candidates(
         and (fix.league_tier or 3) >= 3
     )]
 
+    # HO0.5 quality gate for the 1.50–1.64 odds band.
+    # This band has 71.4% WR vs 92.9% for the 1.65–2.09 value band — the weakest
+    # zone in the system. At these odds the model is highly confident but per-leg
+    # errors still compound; require Grade A quality (>= 0.55) before including
+    # as an ACCA leg. Mirrors the auto_tracker low-odds HO0.5 gate applied at <1.70.
+    # Aug-2026: Bate Borisov @1.56 (0-1), Al Hikma @1.58 (0-1) — pre-gate losses.
+    rows = [(sig, fix) for sig, fix in rows if not (
+        sig.market == "Home Over 0.5"
+        and 1.50 <= (sig.bayesian_best_odd or 0.0) < 1.65
+        and (sig.dual_quality_score or 0.0) < 0.55
+    )]
+
     # Over 2.5 Tier 3 ACCA gate: exclude Over 2.5 legs from Tier 3 leagues.
     # Loss audit (Jul 2026): Norway 1. Division (Tier 3) Over 2.5 @1.57 failed.
     # Tier 3 competitions have thin market coverage and volatile scoring patterns —
