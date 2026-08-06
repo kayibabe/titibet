@@ -637,7 +637,7 @@ async def normalize_stakes(
                 TrackedBet.user_id == current_user.id,
                 and_(
                     TrackedBet.user_id.is_(None),
-                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual"]),
+                    TrackedBet.source_rule_key.in_(["system_auto", "system_dual", "system_acca", "acca_advisory"]),
                 ),
             )
         )
