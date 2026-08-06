@@ -56,6 +56,8 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
   const [dedupResult, setDedupResult]     = useState(null)
   const [normalizing, setNormalizing]     = useState(false)
   const [normalizeResult, setNormalizeResult] = useState(null)
+  const [stakeDialogOpen, setStakeDialogOpen] = useState(false)
+  const [stakeInput, setStakeInput]           = useState('')
   const [actionError, setActionError]     = useState(null)
   const { bets, loading, error, loadBets, invalidate } = useTracker()
   const [slowLoad, setSlowLoad] = useState(false)
@@ -173,11 +175,12 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     await loadBets(betFilters)
   }
 
-  async function handleNormalizeStakes() {
+  async function handleNormalizeStakes(amount) {
     setNormalizing(true)
     setNormalizeResult(null)
     try {
-      const res = await normalizeStakes(50_000)
+      const res = await normalizeStakes(amount)
+      res._stake = amount
       setNormalizeResult(res)
       setTimeout(() => setNormalizeResult(null), 6000)
       invalidate()
@@ -267,13 +270,13 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
                 <div className="fixed inset-0 z-10" onClick={() => setMoreOpen(false)} />
                 <div className="absolute right-0 mt-1 z-20 w-52 rounded-lg border border-[var(--border)] bg-[var(--bg)] shadow-xl p-1">
                   <button
-                    onClick={() => { setMoreOpen(false); handleNormalizeStakes() }}
+                    onClick={() => { setMoreOpen(false); setStakeInput(''); setStakeDialogOpen(true) }}
                     disabled={normalizing}
                     className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors text-left"
-                    title="Set all bets to K50,000 flat stake and recompute P/L"
+                    title="Set all bets to a custom flat stake and recompute P/L"
                   >
                     <Layers size={14} className={`text-emerald-400 ${normalizing ? 'animate-pulse' : ''}`} />
-                    {normalizing ? 'Updating stakes…' : 'Set All Stakes → K50k'}
+                    {normalizing ? 'Updating stakes…' : 'Set All Stakes to…'}
                   </button>
                   <button
                     onClick={() => { setMoreOpen(false); handleDedup() }}
@@ -314,7 +317,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
           )
         }
         if (normalizeResult != null) return (
-          <p className="text-xs font-medium text-emerald-400 px-1">✓ {normalizeResult.updated} bet{normalizeResult.updated !== 1 ? 's' : ''} updated to K50,000</p>
+          <p className="text-xs font-medium text-emerald-400 px-1">✓ {normalizeResult.updated} bet{normalizeResult.updated !== 1 ? 's' : ''} updated to K{Number(normalizeResult._stake).toLocaleString()}</p>
         )
         if (dedupResult != null) return (
           <p className="text-xs font-medium text-emerald-400 px-1">✓ {dedupResult.removed} duplicate{dedupResult.removed !== 1 ? 's' : ''} removed</p>
@@ -512,6 +515,55 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
         </div>
       ) : (
         !loading && <BetTable bets={filteredBets} summary={analyticsSummary} isPro={isPro} onUpgrade={onUpgrade} onRefresh={() => { invalidate(); loadBets(betFilters) }} />
+      )}
+
+      {/* Set stake dialog */}
+      {stakeDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setStakeDialogOpen(false)}>
+          <div
+            className="bg-[var(--bg)] border border-[var(--border)] rounded-xl shadow-2xl p-6 w-72"
+            onClick={e => e.stopPropagation()}
+          >
+            <p className="text-sm font-medium text-[var(--text-h)] mb-1">Set all stakes to</p>
+            <p className="text-xs text-[var(--text-muted)] mb-4">Enter an amount in Kwacha. All bets will be updated and P/L recomputed.</p>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              placeholder="e.g. 5000"
+              value={stakeInput}
+              onChange={e => setStakeInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && stakeInput && Number(stakeInput) > 0) {
+                  setStakeDialogOpen(false)
+                  handleNormalizeStakes(Number(stakeInput))
+                }
+                if (e.key === 'Escape') setStakeDialogOpen(false)
+              }}
+              autoFocus
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--code-bg)] text-[var(--text-h)] text-sm mb-4 focus:outline-none focus:border-emerald-500"
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setStakeDialogOpen(false)}
+                className="px-4 py-1.5 rounded-lg text-sm border border-[var(--border)] text-[var(--text)] hover:bg-[var(--code-bg)] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (!stakeInput || Number(stakeInput) <= 0) return
+                  setStakeDialogOpen(false)
+                  handleNormalizeStakes(Number(stakeInput))
+                }}
+                disabled={!stakeInput || Number(stakeInput) <= 0}
+                className="px-4 py-1.5 rounded-lg text-sm bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Import CSV modal */}
