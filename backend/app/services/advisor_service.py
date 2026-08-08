@@ -934,6 +934,10 @@ async def auto_track_acca_legs(
 
     Returns count of new ticket rows inserted.
     """
+    # ACCA auto-tracking disabled: analytics show 33.3% hit rate / -6.1% ROI.
+    logger.info("auto_track_acca_legs %s: disabled — skipping", target_date)
+    return 0
+
     import hashlib as _hl
     import json as _json
     from app.models.bet import TrackedBet

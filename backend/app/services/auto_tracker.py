@@ -188,6 +188,11 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         league_lower = (fixture.league or "").lower().strip()
         if league_lower in DISABLED_LEAGUES or "friendlies" in league_lower:
             continue
+
+        # Tier 3 suppression: analytics show -5.1% ROI across 19 Tier 3 bets.
+        # Lower-league data is unreliable and edge is consistently negative.
+        if (fixture.league_tier or 3) >= 3:
+            continue
         if signal.market in {"Home Over 0.5", "Away Over 0.5", "Over 1.5", "Over 2.5"}:
             if any(k in league_lower for k in OVER_GOALS_SUPPRESSED_LEAGUES):
                 continue
@@ -555,6 +560,10 @@ async def auto_track_acca_signals(
 
     Returns count of new TrackedBet rows inserted (0 or 1 combined row).
     """
+    # ACCA auto-tracking disabled: analytics show 33.3% hit rate / -6.1% ROI.
+    logger.info("Auto-ACCA %s: disabled — skipping", run_date)
+    return 0
+
     # Defer to the advisor path if it has already run OR is scheduled to run.
     # Check 1: system_acca rows already exist (evening_extras job already ran).
     advisor_acca_count = await db.scalar(
