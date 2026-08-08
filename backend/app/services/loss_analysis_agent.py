@@ -102,6 +102,10 @@ MARKET_ODDS_CEILING: dict[str, float] = {
     "Over 1.5":       2.20,
     "Over 2.5":       2.40,
     "BTTS Yes":       2.40,
+    # Under markets: high odds = bookmaker expects goals, structural risk.
+    # Ceilings mirror config.py MARKET_MIN_ODDS thresholds used in auto_tracker.
+    "Under 2.5":      2.10,
+    "Under 3.5":      1.85,
 }
 
 # End-of-season months. July added 2026-07-05: all Scandinavian (Veikkausliiga,
@@ -110,6 +114,19 @@ MARKET_ODDS_CEILING: dict[str, float] = {
 # carried this tag via LLM but the rules engine was missing month 7, causing
 # understated avoidability scores and no rules-based threshold proposals.
 END_OF_SEASON_MONTHS = {5, 6, 7}
+
+
+# ── Structural flag set (referenced by rules engine and post-merge sanitiser) ─
+
+_STRUCTURAL_FLAGS = frozenset({
+    CAT_HIGH_ODDS_RISK, CAT_TIER3_EXPOSURE, CAT_MARKET_MISPRICING,
+    CAT_MODEL_OVERCONFIDENCE, CAT_DATA_GAP,
+})
+
+# Markets that require the away/home team to actually score — only these
+# make the team-blank tags meaningful.
+_AWAY_SCORE_MARKETS = frozenset({"Away Over 0.5", "Away Over 1.5"})
+_HOME_SCORE_MARKETS = frozenset({"Home Over 0.5", "Home Over 1.5"})
 
 
 # ── Rules-based pre-classifier (no LLM, always runs) ─────────────────────────
@@ -130,6 +147,10 @@ def _rules_based_categories(
     away_score = fixture.away_score if fixture else None
     event_month = bet.event_date.month if bet.event_date else None
 
+    # Data gap: fixture row missing or final scores unavailable
+    if fixture is None or (home_score is None and away_score is None):
+        cats.append(CAT_DATA_GAP)
+
     # Odds ceiling breach
     ceiling = MARKET_ODDS_CEILING.get(market)
     if ceiling and odds > ceiling:
@@ -140,11 +161,12 @@ def _rules_based_categories(
     if tier == 3:
         cats.append(CAT_TIER3_EXPOSURE)
 
-    # Score-based categories
+    # Score-based categories (only when scores are present)
     if home_score is not None and away_score is not None:
         if home_score == 0 and away_score == 0:
             cats.append(CAT_ZERO_ZERO)
             cats.append(CAT_DEFENSIVE_GAME)
+        # Market-scoped: only tag team-blank when the bet required that team to score
         if market in ("Away Over 0.5", "Away Over 1.5") and away_score == 0:
             cats.append(CAT_AWAY_TEAM_BLANK)
         if market in ("Home Over 0.5", "Home Over 1.5") and home_score == 0:
@@ -159,14 +181,36 @@ def _rules_based_categories(
         cats.append(CAT_MODEL_OVERCONFIDENCE)
 
     # Avoidability: if no structural red flags, likely genuine variance
-    structural_flags = {
-        CAT_HIGH_ODDS_RISK, CAT_TIER3_EXPOSURE, CAT_MARKET_MISPRICING,
-        CAT_MODEL_OVERCONFIDENCE,
-    }
-    if not any(c in structural_flags for c in cats):
+    if not any(c in _STRUCTURAL_FLAGS for c in cats):
         cats.append(CAT_GENUINE_VARIANCE)
 
     return list(dict.fromkeys(cats))   # deduplicate, preserve order
+
+
+def _sanitise_categories(cats: list[str], market: str) -> list[str]:
+    """
+    Post-merge cleanup applied after rules + LLM categories are combined.
+
+    1. Remove genuine_variance when structural flags are present — the two
+       are contradictory (LLM can add structural flags after the rules engine
+       has already appended genuine_variance as a fallback).
+
+    2. Remove market-scoped tags that the LLM hallucinates for the wrong
+       market type — e.g. away_team_blank on an Under 3.5 bet means nothing.
+    """
+    result = list(cats)
+
+    # Drop genuine_variance if any structural flag survived the merge
+    if CAT_GENUINE_VARIANCE in result and any(c in _STRUCTURAL_FLAGS for c in result):
+        result.remove(CAT_GENUINE_VARIANCE)
+
+    # Drop team-blank tags that are semantically invalid for the market
+    if CAT_AWAY_TEAM_BLANK in result and market not in _AWAY_SCORE_MARKETS:
+        result.remove(CAT_AWAY_TEAM_BLANK)
+    if CAT_HOME_TEAM_BLANK in result and market not in _HOME_SCORE_MARKETS:
+        result.remove(CAT_HOME_TEAM_BLANK)
+
+    return result
 
 
 def _avoidability_score(categories: list[str]) -> float:
@@ -670,12 +714,13 @@ async def run_loss_analysis_pipeline(
             if groq_available:
                 llm_result = await _analyse_single_loss(bet, fixture, rules_cats) or {}
 
-            # Merge categories from rules + LLM
+            # Merge categories from rules + LLM, then sanitise
             extra_cats = [
                 c for c in llm_result.get("extra_categories", [])
                 if c in ALL_CATEGORIES
             ]
             all_cats = list(dict.fromkeys(rules_cats + extra_cats))
+            all_cats = _sanitise_categories(all_cats, bet.market_type or "")
             avoidability = _avoidability_score(all_cats)
 
             analysis = LossAnalysis(
