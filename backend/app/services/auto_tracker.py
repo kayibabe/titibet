@@ -210,6 +210,11 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
             else:
                 continue
 
+        # Dead-zone odds gate: 1.50–1.64 band has -9.3% ROI across 8 bets.
+        # <1.35, 1.35–1.49, and 1.65–2.09 are all profitable; strip the dead zone.
+        if 1.50 <= odds < 1.65:
+            continue
+
         # Skip signals below the minimum odds floor — parity with router serving gate.
         min_odds_floor = MARKET_MIN_ODDS.get(signal.market)
         if min_odds_floor is not None and odds < min_odds_floor:
