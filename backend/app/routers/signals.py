@@ -346,8 +346,12 @@ async def list_signals(
     if target_date == date.today():
         query = query.where(func.upper(func.trim(Fixture.status)).notin_(list(_FINAL_STATUSES_TUPLE)))
 
-    # confidence / agreement params are accepted for API backwards-compatibility
-    # but no longer applied — all signals are returned regardless of tier.
+    if confidence:
+        confidence_values = [c.strip() for c in confidence.split(",") if c.strip()]
+        if confidence_values:
+            query = query.where(Signal.dual_confidence.in_(confidence_values))
+    if agreement:
+        query = query.where(Signal.dual_agreement == agreement)
     if market:
         query = query.where(Signal.market == market)
     if min_quality > 0:
