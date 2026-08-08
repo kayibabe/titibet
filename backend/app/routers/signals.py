@@ -139,11 +139,9 @@ def _system_rank(
     high_probability_flag = 1 if primary_prob >= 0.70 else 0
     dual_model_probability_flag = 1 if bayes_prob >= 0.65 and poisson_prob >= 0.65 else 0
     bookmaker_support_rank = 2 if books >= 3 else 1 if books == 2 else 0
-    # Data (pre-Jul 2, HO0.5): Tier 3 = 87.7% WR / +35.5% ROI vs Tier 1 = 79.2% / +6.9%.
-    # Poisson Only + Medium in Tier 3 hit 93.1% WR — the strongest segment in the system.
-    # Bookmaker pricing on team-total markets in Tier 3 is less efficient, producing genuine
-    # edge that the Poisson model captures. Tier 3 is boosted; Tier 1 is no longer preferred.
-    tier_rank = 1 if (fixture and (fixture.league_tier or 3) >= 3) else 0
+    # Tier 3 suppressed at serving time — analytics post-Jul-2 show negative ROI.
+    # Field kept for backward compatibility; always 0 now.
+    tier_rank = 0
 
     # CLV market rank: boost markets where the model consistently beats closing line.
     clv_market_rank = (clv_ranks or {}).get(sig.market or "", 0)
@@ -405,6 +403,12 @@ async def list_signals(
                 )
             )
 
+    # Tier 3 suppression: analytics show negative ROI across Tier 3 bets post-Jul-2.
+    # NULL league_tier rows pass through (unknown tier — don't suppress unknowns).
+    query = query.where(
+        Fixture.league_tier.is_(None) | (Fixture.league_tier < 3)
+    )
+
     rows = (await db.execute(query)).all()
 
     # Serving-time odds ceiling for Both+High signals — suppresses picks where
@@ -450,13 +454,11 @@ async def list_signals(
     #      makes Under markets more reliable, not less.
     # B-3: Drop contradicted signals — both engines point in opposite directions.
     #      Ranking them lower is insufficient; there is no reliable directional edge.
-    # B-4: Both+Medium allowed in the 1.50–1.94 odds band.
-    #      < 1.50: 53.8% WR across 26 bets — consistent loser, stays blocked.
-    #      1.50–1.64: 73.7% WR core band — always allowed.
-    #      1.65–1.94: 69.2% WR on 13-bet sample — unblocked Jul-2026 audit; ceiling
-    #        set at 1.95 pending more data (≥ 1.95 excluded until sample grows).
-    #      ROI figures from this period are inflated by pre-Jul-2 contaminated odds;
-    #      gate decisions based on win rate only.
+    # B-4: Both+Medium allowed in the 1.65–1.94 odds band.
+    #      < 1.50: consistent loser, blocked.
+    #      1.50–1.64: dead zone; caught by B-7 below regardless of agreement.
+    #      1.65–1.94: unblocked Jul-2026 audit; ceiling set at 1.95 pending more data.
+    #      ≥ 1.95: excluded until sample grows.
     # B-5: Drop Both+Medium signals from BOTH_MEDIUM_DISABLED_LEAGUES — leagues with
     #      confirmed 0-0 patterns that both engines systematically mis-model.
     #      Poisson Only signals from these leagues are unaffected.
@@ -493,6 +495,14 @@ async def list_signals(
             and sig.zinb_lambda_h is not None
             and sig.zinb_lambda_h < 0.85
         )
+    ]
+
+    # B-7: Dead-zone odds gate — 1.50–1.64 band shows negative ROI.
+    # <1.50, 1.35–1.49, and 1.65–2.09 bands are all profitable;
+    # 1.50–1.64 is structurally unreliable across all agreement types.
+    rows = [
+        (sig, fix) for sig, fix in rows
+        if not (1.50 <= (sig.bayesian_best_odd or 0.0) < 1.65)
     ]
 
     # Data-poor Both+High Home Over 0.5 gate.
