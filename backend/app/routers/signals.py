@@ -468,10 +468,11 @@ async def list_signals(
     #      makes Under markets more reliable, not less.
     # B-3: Drop contradicted signals — both engines point in opposite directions.
     #      Ranking them lower is insufficient; there is no reliable directional edge.
-    # B-4: Both+Medium allowed in the 1.65–1.94 odds band.
-    #      < 1.50: consistent loser, blocked.
-    #      1.50–1.64: dead zone; caught by B-7 below regardless of agreement.
-    #      1.65–1.94: unblocked Jul-2026 audit; ceiling set at 1.95 pending more data.
+    # B-4: Both+Medium allowed odds bands (market-specific):
+    #      Under 3.5: 1.30–1.94 — audit Aug-2026 confirmed 83.3% WR / +12% ROI on 36
+    #        bets at 1.30–1.49; short-odds Under 3.5 is valid when both engines agree.
+    #      All other markets: 1.65–1.94 — Jul-2026 unblocked; ceiling at 1.95 pending data.
+    #      Dead zone (1.50–1.64): caught by B-7 for all markets regardless.
     #      ≥ 1.95: excluded until sample grows.
     # B-5: Drop Both+Medium signals from BOTH_MEDIUM_DISABLED_LEAGUES — leagues with
     #      confirmed 0-0 patterns that both engines systematically mis-model.
@@ -493,7 +494,10 @@ async def list_signals(
         and not (                                                        # B-4
             sig.dual_agreement == "Both"
             and sig.dual_confidence == "Medium"
-            and not (1.50 <= (sig.bayesian_best_odd or 0.0) < 1.95)
+            and not (
+                (sig.market == "Under 3.5" and 1.30 <= (sig.bayesian_best_odd or 0.0) < 1.95)
+                or (sig.market != "Under 3.5" and 1.50 <= (sig.bayesian_best_odd or 0.0) < 1.95)
+            )
         )
         and not (                                                        # B-5
             sig.dual_agreement == "Both"
