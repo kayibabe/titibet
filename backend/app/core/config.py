@@ -442,6 +442,12 @@ DISABLED_LEAGUES: frozenset = frozenset({
     # Superettan (Sweden second div): -39,500 P&L, 60% WR on 5 bets.
     # Edge exists but smaller than model estimates; paused pending ≥20-bet re-audit.
     "superettan",
+    # ── Disabled 2026-08-09 ──────────────────────────────────────────────────
+    # Calcutta Premier Division (India): regional amateur league, data-poor,
+    # produced a 50,000u loss (bet#957, 4-0, Under 3.5 @1.52) — thin market
+    # coverage and India already Tier 2 by country; sub-regional leagues are
+    # structurally unreliable.
+    "calcutta premier division",
     # ── Disabled 2026-07-15 (audit: confirmed loss-making or no track record) ──
     # Serie C (Brazilian 3rd division): no settled-bet track record; Tier 3 with
     # thin bookmaker coverage and high structural variability. Amazonas 0-1 loss

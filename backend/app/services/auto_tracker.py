@@ -50,6 +50,9 @@ from app.services.acca_builder import (
 logger = logging.getLogger("titibet.auto_tracker")
 
 FLAT_STAKE = 50_000.0
+# Hard per-bet stake cap regardless of Kelly multiplier.
+# Prevents full FLAT_STAKE exposure when no active kelly_fraction_adj proposal exists.
+MAX_STAKE = 10_000.0
 
 # Maximum system single bets (user_id=None, non-ACCA) per day.
 # Defence-in-depth: even if a gate fails or a heavy fixture day generates many
@@ -504,11 +507,11 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         # Halve stake for leagues confirmed to have smaller edge than modelled.
         if league_lower in HALVED_STAKE_LEAGUES:
             kelly_mult *= 0.5
-        stake = round(FLAT_STAKE * kelly_mult)
+        stake = min(round(FLAT_STAKE * kelly_mult), MAX_STAKE)
         if stake != FLAT_STAKE:
             logger.debug(
-                "auto_track: stake for %s %s confidence = %.0f (%.2f× of %.0f)",
-                signal.market, confidence, stake, kelly_mult, FLAT_STAKE,
+                "auto_track: stake for %s %s confidence = %.0f (%.2f× of %.0f, cap=%.0f)",
+                signal.market, confidence, stake, kelly_mult, FLAT_STAKE, MAX_STAKE,
             )
 
         bet = TrackedBet(
