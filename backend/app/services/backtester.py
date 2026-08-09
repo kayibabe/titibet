@@ -48,7 +48,9 @@ from app.services.form_service import get_team_form_lambdas, _fetch_team_goals
 settings = get_settings()
 
 # Shared state updated by the running backtest (read by the status endpoint).
-backtest_progress: dict = {"total": 0, "processed": 0, "qualified": 0}
+backtest_progress: dict = {"total": 0, "processed": 0, "qualified": 0,
+                            "skipped_league": 0, "no_snapshots": 0,
+                            "no_markets": 0, "gate_fail": 0}
 # Set to True to request cancellation of the running backtest.
 backtest_cancel_requested: bool = False
 
@@ -131,9 +133,9 @@ async def run_backtest(
     # expunged after use, keeping memory flat across large date ranges.
     id_result = await db.execute(base_query.with_only_columns(Fixture.id))
     fixture_ids: list[int] = [row[0] for row in id_result.fetchall()]
-    backtest_progress["total"] = len(fixture_ids)
-    backtest_progress["processed"] = 0
-    backtest_progress["qualified"] = 0
+    backtest_progress.update({"total": len(fixture_ids), "processed": 0, "qualified": 0,
+                               "skipped_league": 0, "no_snapshots": 0,
+                               "no_markets": 0, "gate_fail": 0})
 
     allowed_confidence = None
     if confidence_filter:
@@ -212,12 +214,14 @@ async def run_backtest(
             _bt_league_lower in all_suppressed_leagues
             or "friendlies" in _bt_league_lower
         ):
+            backtest_progress["skipped_league"] += 1
             try: db.expunge(fixture)
             except Exception: pass
             continue
 
         _league_lower_bt = (fixture.league or "").lower()
         if any(kw in _league_lower_bt for kw in YOUTH_LEAGUE_KEYWORDS):
+            backtest_progress["skipped_league"] += 1
             try: db.expunge(fixture)
             except Exception: pass
             continue
@@ -227,6 +231,7 @@ async def run_backtest(
         )
         snapshots_raw: list[MarketSnapshot] = list(snap_result.scalars().all())
         if not snapshots_raw:
+            backtest_progress["no_snapshots"] += 1
             try: db.expunge(fixture)
             except Exception: pass
             continue
@@ -301,6 +306,8 @@ async def run_backtest(
             poi_by_market = {r.market: r for r in poi_result.results if r.rule_pass}
 
         all_markets = set(bay_by_market.keys()) | set(poi_by_market.keys())
+        if not all_markets:
+            backtest_progress["no_markets"] += 1
         fixture_league = (fixture.league or "").strip()
 
         fixture_date = fixture.event_date or date_from or date.today()
@@ -424,6 +431,7 @@ async def run_backtest(
                 and (_poi_bt_max is None or _poi_bt_odd < _poi_bt_max)
             )
             if not is_dual_bt and not is_poisson_bt:
+                backtest_progress["gate_fail"] += 1
                 continue
 
             # ── New gates (mirroring signal_engine) ──────────────────────────
