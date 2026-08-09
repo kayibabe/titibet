@@ -490,7 +490,6 @@ function AgreementBreakdown({ rows, onApplySignalFilter }) {
     'Bayesian Only': { bar: 'bg-blue-500',    text: 'text-blue-400' },
     'Poisson Only':  { bar: 'bg-violet-500',  text: 'text-violet-400' },
     'Contradiction': { bar: 'bg-amber-500',   text: 'text-amber-400' },
-    'Unknown':       { bar: 'bg-gray-500',    text: 'text-gray-400' },
   }
 
   const maxBets = Math.max(...rows.map(r => r.bets), 1)

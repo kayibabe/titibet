@@ -215,13 +215,15 @@ def build_analytics(bets: list) -> dict:
     # ── By signal confidence ──────────────────────────────────────────────────
     # Reveals how well each confidence tier (High/Medium/Low) actually performs.
     # This is the core feedback signal for the self-learning system.
-    CONF_ORDER = {"High": 0, "Medium": 1, "Low": 2, "Unknown": 3}
+    CONF_ORDER = {"High": 0, "Medium": 1, "Low": 2}
     by_conf: dict[str, dict] = defaultdict(
         lambda: {"bets": 0, "wins": 0, "losses": 0, "settled": 0,
                  "profit_loss": 0.0, "stake": 0.0, "odds_sum": 0.0}
     )
     for b in bets:
         c = b.dual_confidence or "Unknown"
+        if c == "Unknown":
+            continue
         by_conf[c]["bets"] += 1
         by_conf[c]["stake"] += b.stake
         by_conf[c]["odds_sum"] += b.odds
@@ -255,13 +257,15 @@ def build_analytics(bets: list) -> dict:
     # Shows which agreement types (Both/Bayesian Only/Poisson Only/Contradiction)
     # actually hit vs. how many bets carry each label.  Feeds the analytics page
     # Agreement Breakdown panel and the self-learning pipeline's min_prob_by_agreement rule.
-    AGREE_ORDER = {"Both": 0, "Bayesian Only": 1, "Poisson Only": 2, "Contradiction": 3, "Unknown": 4}
+    AGREE_ORDER = {"Both": 0, "Bayesian Only": 1, "Poisson Only": 2, "Contradiction": 3}
     by_agree: dict[str, dict] = defaultdict(
         lambda: {"bets": 0, "wins": 0, "losses": 0, "settled": 0,
                  "profit_loss": 0.0, "stake": 0.0, "odds_sum": 0.0}
     )
     for b in bets:
         ag = getattr(b, "dual_agreement", None) or "Unknown"
+        if ag == "Unknown":
+            continue
         by_agree[ag]["bets"] += 1
         by_agree[ag]["stake"] += b.stake
         by_agree[ag]["odds_sum"] += b.odds

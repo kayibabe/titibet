@@ -700,12 +700,11 @@ async def odds_band_breakdown(
 ):
     """
     Win-rate and ROI broken down by bookmaker odds band across all settled bets.
+    Only bands within the active system rules are shown: dead zone (1.50–1.64)
+    and ceiling (2.10+) are excluded — no system bets are placed there.
 
     Highlights the 'Value Band' (1.65–2.09) where Poisson Only signals show
     near-perfect win rates — the system audit confirmed 91–98% WR on 86 bets.
-
-    Also returns a dedicated 'value_band_poisson_only' breakdown isolating the
-    Poisson Only subset of the 1.65–2.09 band, which is the highest-edge segment.
     """
     q = (
         _base_query(current_user)
@@ -722,9 +721,7 @@ async def odds_band_breakdown(
     BANDS: list[tuple[str, object]] = [
         ("< 1.35",    lambda o: o < 1.35),
         ("1.35–1.49", lambda o: 1.35 <= o < 1.50),
-        ("1.50–1.64", lambda o: 1.50 <= o < 1.65),
         ("1.65–2.09", lambda o: 1.65 <= o < 2.10),
-        ("2.10+",     lambda o: o >= 2.10),
     ]
 
     def _mk():

@@ -10,6 +10,7 @@ Qualifying signals (everything served to subscribers):
   - Any signal with is_candidate=False and dual_agreement != "Contradiction"
   - Suppression guards applied (DISABLED_LEAGUES, OVER_GOALS_SUPPRESSED_LEAGUES,
     women's league filters, HO05_DATA_POOR_COUNTRIES, DUAL_HIGH_ODDS_CEILING)
+  - Odds ceiling: 1.50–1.64 dead zone excluded; hard cap at 2.10 (25% WR, -29.5% ROI)
 
 ACCA auto-tracking (auto_track_acca_signals):
   - Builds a signal-model ACCA from all qualifying candidates each sync cycle.
@@ -220,6 +221,10 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         # Dead-zone odds gate: 1.50–1.64 band has -9.3% ROI across 8 bets.
         # <1.35, 1.35–1.49, and 1.65–2.09 are all profitable; strip the dead zone.
         if 1.50 <= odds < 1.65:
+            continue
+
+        # Hard odds ceiling: 2.10+ band has 25% WR and -29.5% ROI.
+        if odds >= 2.10:
             continue
 
         # Skip signals below the minimum odds floor — parity with router serving gate.
