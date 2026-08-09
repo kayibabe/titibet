@@ -862,10 +862,14 @@ OVER_GOALS_SUPPRESSED_LEAGUES: frozenset = frozenset({
 # Markets suppressed in women's leagues.
 # Women's football has structurally lower scoring rates and weaker home advantage
 # than men's. Both engines are calibrated on men's data and systematically
-# overestimate home scoring in women's fixtures.
+# overestimate home scoring in women's fixtures. Under-goals markets are also
+# unreliable: UWCL qualifiers can produce blowouts that bust Under 3.5 lines,
+# and the Poisson λ computed from men's data is unreliable in both directions.
+# Aug-2026: St. Pölten W vs Young Boys W (UWCL) Lost Under 3.5 @ 1.43.
 # Matched by checking fixture.league against WOMEN_LEAGUE_KEYWORDS at serving time.
 WOMEN_OVER_SUPPRESSED_MARKETS: frozenset[str] = frozenset({
     "Home Over 0.5", "Away Over 0.5", "Over 1.5", "Over 2.5",
+    "Under 3.5", "Under 2.5",
 })
 
 # Countries where Both (High or Medium) Home Over 0.5 signals are blocked at Tier 3.
