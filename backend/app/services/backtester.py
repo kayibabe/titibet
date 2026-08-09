@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, exists as sa_exists
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import (
@@ -43,9 +43,14 @@ from app.services.signal_engine import (
     _team_total_context_penalty,
     _is_end_of_northern_season, _OVER_GOALS_MARKETS,
 )
-from app.services.form_service import get_team_form_lambdas
+from app.services.form_service import get_team_form_lambdas, _fetch_team_goals
 
 settings = get_settings()
+
+# Shared state updated by the running backtest (read by the status endpoint).
+backtest_progress: dict = {"total": 0, "processed": 0, "qualified": 0}
+# Set to True to request cancellation of the running backtest.
+backtest_cancel_requested: bool = False
 
 
 async def run_backtest(
@@ -90,8 +95,14 @@ async def run_backtest(
     # 6-month backtests past the 60-second Fly.io proxy timeout.
     base_query = base_query.where(Fixture.status.in_(["FT", "AET", "PEN"]))
     base_query = base_query.where(Fixture.home_score.isnot(None))
+    # Use EXISTS instead of IN (SELECT DISTINCT ...) — SQLite uses the fixture_id
+    # index for a fast per-row lookup rather than materialising the full subquery.
     base_query = base_query.where(
-        Fixture.id.in_(select(MarketSnapshot.fixture_id).distinct())
+        sa_exists(
+            select(MarketSnapshot.fixture_id).where(
+                MarketSnapshot.fixture_id == Fixture.id
+            )
+        )
     )
 
     # Load only IDs so the identity map doesn't balloon with full fixture rows
@@ -99,6 +110,9 @@ async def run_backtest(
     # expunged after use, keeping memory flat across large date ranges.
     id_result = await db.execute(base_query.with_only_columns(Fixture.id))
     fixture_ids: list[int] = [row[0] for row in id_result.fetchall()]
+    backtest_progress["total"] = len(fixture_ids)
+    backtest_progress["processed"] = 0
+    backtest_progress["qualified"] = 0
 
     allowed_confidence = None
     if confidence_filter:
@@ -140,15 +154,23 @@ async def run_backtest(
     _bankroll = 100.0
     _curve: list[dict] = []
 
-    # Form lambda cache: avoids redundant DB lookups when the same team pair
-    # appears across multiple fixtures in the same backtest window.
-    _form_cache: dict[tuple[str, str, date], dict] = {}
+    # Per-team goals cache: keyed by (team_name, before_date) so the same
+    # team appearing against different opponents on the same date reuses the
+    # same DB lookup. This cuts form-query volume ~50% vs a per-fixture-pair cache.
+    _goals_cache: dict[tuple[str, date], list] = {}
 
     _uncommitted = 0
     _COMMIT_EVERY = 50
+    _fixtures_processed = 0
     _disconnect_check_counter = 0
+    global backtest_cancel_requested
+    backtest_cancel_requested = False
 
     for fid in fixture_ids:
+        if backtest_cancel_requested:
+            break
+        _fixtures_processed += 1
+        backtest_progress["processed"] = _fixtures_processed
         # Stop processing if the HTTP client disconnected — prevents orphaned
         # background tasks from holding write locks after the caller gave up.
         _disconnect_check_counter += 1
@@ -218,20 +240,27 @@ async def run_backtest(
 
         # Use the same form-lambda blending as the live signal engine so that
         # backtest ROI figures are representative of what the system actually bets.
-        # Results are cached by (home, away, date) — the same team pair on the
-        # same day appears at most once per fixture but may repeat across a run.
+        # Per-team cache keyed by (team, before_date): a team appearing against
+        # different opponents on the same date reuses the same goal history lookup.
         form_lambdas = None
         if engine in ("poisson", "dual"):
             _fd = fixture.event_date or date_from or date.today()
-            _fkey = (fixture.home_team, fixture.away_team, _fd)
-            if _fkey not in _form_cache:
-                _form_cache[_fkey] = await get_team_form_lambdas(
-                    db=db,
-                    home_team=fixture.home_team,
-                    away_team=fixture.away_team,
-                    before_date=_fd,
-                )
-            form_lambdas = _form_cache[_fkey] or None
+            _n = int(POISSON_RULES["rolling_form_games"])
+            _min_g = int(POISSON_RULES["form_min_games"])
+            _hkey = (fixture.home_team, _fd)
+            _akey = (fixture.away_team, _fd)
+            if _hkey not in _goals_cache:
+                _goals_cache[_hkey] = await _fetch_team_goals(db, fixture.home_team, _fd, _n)
+            if _akey not in _goals_cache:
+                _goals_cache[_akey] = await _fetch_team_goals(db, fixture.away_team, _fd, _n)
+            _hg = _goals_cache[_hkey]
+            _ag = _goals_cache[_akey]
+            if len(_hg) >= _min_g and len(_ag) >= _min_g:
+                from app.services.form_service import _exp_weighted_avg
+                _lh = max(_exp_weighted_avg(_hg), 0.10)
+                _la = max(_exp_weighted_avg(_ag), 0.10)
+                form_lambdas = {"lambda_h": _lh, "lambda_a": _la, "lambda_total": _lh + _la,
+                                "games_h": len(_hg), "games_a": len(_ag)}
 
         poi_result = poi_engine.analyse_fixture(
             fixture_id=fixture.id, odds=poi_odds, signal_odds=poi_signal_odds,
@@ -416,6 +445,7 @@ async def run_backtest(
             ks = settings.max_kelly_pct * b.derived_prob * 100 if b and b.derived_prob else 0.0
 
             profit = flat_stake * (settle_odd - 1.0) if won else -flat_stake
+            backtest_progress["qualified"] += 1
 
             db.add(BacktestResult(
                 fixture_id=fixture.id,

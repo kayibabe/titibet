@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, AsyncSessionLocal
 from app.models import BacktestResult
+import app.services.backtester as _bt_svc
 from app.services.backtester import run_backtest, _summarise
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
@@ -71,7 +72,16 @@ async def run(
 
 @router.get("/status")
 async def job_status():
-    return _job
+    return {**_job, "progress": _bt_svc.backtest_progress}
+
+
+@router.post("/cancel")
+async def cancel():
+    global _job
+    if not _job["running"]:
+        return {"status": "not_running"}
+    _bt_svc.backtest_cancel_requested = True
+    return {"status": "cancel_requested", "message": "Cancellation flag set; loop will stop at next fixture."}
 
 
 @router.get("/results")
