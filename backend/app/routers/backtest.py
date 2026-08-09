@@ -1,17 +1,21 @@
 from __future__ import annotations
 
-from datetime import date
+import asyncio
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, AsyncSessionLocal
 from app.models import BacktestResult
 from app.services.backtester import run_backtest, _summarise
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
+
+# Tracks the currently-running (or most recently completed) backtest job.
+_job: dict = {"running": False, "started_at": None, "finished_at": None, "params": {}, "error": None}
 
 
 @router.post("/run")
@@ -20,6 +24,11 @@ async def run(
     body: dict = {},
     db: AsyncSession = Depends(get_db),
 ):
+    global _job
+
+    if _job["running"]:
+        return {"status": "already_running", "started_at": _job["started_at"]}
+
     market = body.get("market")
     league_id = body.get("league_id")
     league_name = body.get("league_name")
@@ -32,13 +41,37 @@ async def run(
     df = date.fromisoformat(date_from_str) if date_from_str else None
     dt = date.fromisoformat(date_to_str) if date_to_str else None
 
-    summary = await run_backtest(
-        db=db, market=market, league_id=league_id, league_name=league_name,
-        min_edge=min_edge, date_from=df, date_to=dt,
-        engine=engine, confidence_filter=confidence_filter,
-        is_disconnected=request.is_disconnected,
-    )
-    return summary
+    _job = {
+        "running": True,
+        "started_at": datetime.utcnow().isoformat(),
+        "finished_at": None,
+        "params": body,
+        "error": None,
+    }
+
+    async def _bg():
+        global _job
+        try:
+            async with AsyncSessionLocal() as bg_db:
+                await run_backtest(
+                    db=bg_db, market=market, league_id=league_id, league_name=league_name,
+                    min_edge=min_edge, date_from=df, date_to=dt,
+                    engine=engine, confidence_filter=confidence_filter,
+                    is_disconnected=None,
+                )
+        except Exception as exc:
+            _job["error"] = str(exc)
+        finally:
+            _job["running"] = False
+            _job["finished_at"] = datetime.utcnow().isoformat()
+
+    asyncio.create_task(_bg())
+    return {"status": "started", "message": "Backtest running in background. Poll /api/backtest/status, then /api/backtest/summary when done."}
+
+
+@router.get("/status")
+async def job_status():
+    return _job
 
 
 @router.get("/results")
