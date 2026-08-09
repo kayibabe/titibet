@@ -971,10 +971,16 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
                 <SystemPerformanceDashboard
                   summary={systemSummary}
                   byMarket={data.byMarket}
-                  trend={data.trend}
                 />
               )}
 
+              {isPro ? (
+                <Section icon={BarChart2} title="P&L Trend" subtitle="cumulative profit over time" pro>
+                  <TrendChart data={data.trend} />
+                </Section>
+              ) : (
+                <Section icon={BarChart2} title="P&L Trend" subtitle="cumulative profit over time" pro locked onUpgrade={onUpgrade}>{null}</Section>
+              )}
             </div>
           )}
 
