@@ -39,7 +39,7 @@ from app.services.signal_engine import (
     _build_match_winner, _build_double_chance, _build_poisson_odds,
     _build_home_totals, _build_away_totals,
     _build_win_to_nil_home, _build_win_to_nil_away, _build_exact_goals,
-    MARKET_TO_POISSON_KEY, _get_underperforming_leagues, _latest_snapshots,
+    MARKET_TO_POISSON_KEY, _get_underperforming_leagues,
     _team_total_context_penalty,
     _is_end_of_northern_season, _OVER_GOALS_MARKETS,
 )
@@ -51,6 +51,27 @@ settings = get_settings()
 backtest_progress: dict = {"total": 0, "processed": 0, "qualified": 0}
 # Set to True to request cancellation of the running backtest.
 backtest_cancel_requested: bool = False
+
+
+def _earliest_snapshots(snapshots: list) -> list:
+    """Return one snapshot per (bookmaker, market_type, selection_name) — the
+    earliest captured row. This mirrors the ingestion-time odds the live signal
+    engine used when it first evaluated the fixture, making backtest results
+    consistent with the bets actually placed (vs. _latest_snapshots which
+    returns CLV-capture odds from 1-2 h before kickoff)."""
+    from datetime import datetime as _dt
+    earliest: dict = {}
+    for snap in snapshots:
+        key = (snap.bookmaker, snap.market_type, snap.selection_name)
+        current = earliest.get(key)
+        if current is None:
+            earliest[key] = snap
+            continue
+        cur_ts = current.pulled_at or _dt.max
+        snap_ts = snap.pulled_at or _dt.max
+        if snap_ts < cur_ts or (snap_ts == cur_ts and (snap.id or 0) < (current.id or 0)):
+            earliest[key] = snap
+    return list(earliest.values())
 
 
 async def run_backtest(
@@ -209,7 +230,7 @@ async def run_backtest(
             try: db.expunge(fixture)
             except Exception: pass
             continue
-        snapshots = _latest_snapshots(snapshots_raw)
+        snapshots = _earliest_snapshots(snapshots_raw)
 
         cs_by_bookie = _build_cs_by_bookie(snapshots)
         goals_ou = _build_goals_ou(snapshots)
