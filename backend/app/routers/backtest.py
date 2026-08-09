@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,7 @@ router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 
 @router.post("/run")
 async def run(
+    request: Request,
     body: dict = {},
     db: AsyncSession = Depends(get_db),
 ):
@@ -35,6 +36,7 @@ async def run(
         db=db, market=market, league_id=league_id, league_name=league_name,
         min_edge=min_edge, date_from=df, date_to=dt,
         engine=engine, confidence_filter=confidence_filter,
+        is_disconnected=request.is_disconnected,
     )
     return summary
 

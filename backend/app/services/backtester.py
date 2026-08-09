@@ -60,6 +60,7 @@ async def run_backtest(
     confidence_filter: Optional[str] = None,
     settle_at_exec: bool = True,
     apply_new_gates: bool = True,
+    is_disconnected=None,    # Optional[Callable[[], Awaitable[bool]]]
 ) -> dict:
     """
     Run backtest. Clears existing results for the same scope, then writes new BacktestResult rows.
@@ -145,8 +146,16 @@ async def run_backtest(
 
     _uncommitted = 0
     _COMMIT_EVERY = 50
+    _disconnect_check_counter = 0
 
     for fid in fixture_ids:
+        # Stop processing if the HTTP client disconnected — prevents orphaned
+        # background tasks from holding write locks after the caller gave up.
+        _disconnect_check_counter += 1
+        if _disconnect_check_counter % 10 == 0 and is_disconnected is not None:
+            if await is_disconnected():
+                break
+
         _fx_r = await db.execute(select(Fixture).where(Fixture.id == fid))
         fixture = _fx_r.scalar_one_or_none()
         if fixture is None:
