@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_optional, get_current_user
@@ -33,6 +33,18 @@ from app.services.match_info import get_match_info
 from app.services.clv import _BET_TO_SELECTION, _MARKET_TYPE_SCOPE
 
 FREE_SIGNAL_LIMIT = 5
+
+_FINAL_STATUSES = ("FT", "AET", "PEN")
+_FINAL_STATUSES_LIST = list(_FINAL_STATUSES)
+
+_CONFIDENCE_RANKS: dict[str, int] = {"High": 3, "Medium": 2, "Low": 1}
+_AGREEMENT_RANKS: dict[str, int] = {"Both": 3, "Bayesian Only": 2, "Poisson Only": 1, "Contradiction": 0}
+
+# Computed once at import time — WOMEN_OVER_SUPPRESSED_MARKETS is a module-level constant.
+_WOMEN_UNIVERSAL_MARKETS: frozenset = WOMEN_OVER_SUPPRESSED_MARKETS | frozenset({
+    "1X (Home or Draw)", "X2 (Draw or Away)", "12 (Home or Away)",
+    "Over 0.5 1H", "Home Win to Nil", "Away Win to Nil",
+})
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
 settings = get_settings()
@@ -120,17 +132,8 @@ def _system_rank(
     books = sig.bayesian_bookmaker_count or 0
     quality = sig.dual_quality_score or 0.0
 
-    confidence_rank = {
-        "High": 3,
-        "Medium": 2,
-        "Low": 1,
-    }.get(sig.dual_confidence or "", 0)
-    agreement_rank = {
-        "Both": 3,
-        "Bayesian Only": 2,
-        "Poisson Only": 1,
-        "Contradiction": 0,
-    }.get(sig.dual_agreement or "", 0)
+    confidence_rank = _CONFIDENCE_RANKS.get(sig.dual_confidence or "", 0)
+    agreement_rank = _AGREEMENT_RANKS.get(sig.dual_agreement or "", 0)
 
     # Poisson + Medium takes top priority over everything else, including
     # confidence/agreement combos that would otherwise outrank it.
@@ -232,23 +235,23 @@ def _best_per_fixture(
 ) -> list[tuple[Signal, Fixture]]:
     # Key: (fixture_id, market_slot) — keeps the best Over signal AND the best
     # Under signal per fixture, rather than collapsing all markets to one pick.
-    best: dict[tuple[int, str], tuple[Signal, Fixture]] = {}
+    # Cache the metric alongside each entry to avoid computing it twice per contested slot.
+    best: dict[tuple[int, str], tuple[Signal, Fixture, tuple]] = {}
     for sig, fix in rows:
         slot = _market_slot(sig.market)
         key = (sig.fixture_id, slot)
         current = best.get(key)
-        if current is None:
-            best[key] = (sig, fix)
-            continue
-        current_sig, _ = current
         candidate_metric = _sort_metric(sig, sort_by, fix, clv_ranks)
-        current_metric = _sort_metric(current_sig, sort_by, current[1], clv_ranks)
+        if current is None:
+            best[key] = (sig, fix, candidate_metric)
+            continue
+        current_sig, _, current_metric = current
         if candidate_metric > current_metric or (
             candidate_metric == current_metric and
             (sig.dual_quality_score or 0.0) > (current_sig.dual_quality_score or 0.0)
         ):
-            best[key] = (sig, fix)
-    return list(best.values())
+            best[key] = (sig, fix, candidate_metric)
+    return [(sig, fix) for sig, fix, _ in best.values()]
 
 
 def _to_signal_out(
@@ -342,9 +345,8 @@ async def list_signals(
     # For today's date: suppress signals for fixtures that have already finished.
     # Showing a completed-game signal could lead a subscriber to attempt a bet on a
     # game that is over. Historical date queries are left unfiltered so signal review works.
-    _FINAL_STATUSES_TUPLE = ("FT", "AET", "PEN")
     if target_date == date.today():
-        query = query.where(func.upper(func.trim(Fixture.status)).notin_(list(_FINAL_STATUSES_TUPLE)))
+        query = query.where(func.upper(func.trim(Fixture.status)).notin_(_FINAL_STATUSES_LIST))
 
     if confidence:
         confidence_values = [c.strip() for c in confidence.split(",") if c.strip()]
@@ -357,9 +359,17 @@ async def list_signals(
     if min_quality > 0:
         query = query.where(Signal.dual_quality_score >= min_quality)
 
-    # Serving-time suppression — catches signals that were generated before
-    # suppression rules were configured, or when the backend was restarted.
+    # Fetch all tracked_bets aggregates up-front in one sequential pass before the
+    # main signal query. Keeps them together so the session is not doing round-trips
+    # scattered across the handler after result-set processing has begun.
     bad_leagues = await _get_underperforming_leagues(db, min_roi_pct=-20.0)
+    clv_ranks: dict[str, int] = {}
+    if sort_by == "system":
+        try:
+            clv_ranks = await _compute_clv_market_ranks(db)
+        except Exception:
+            pass
+    provisional_leagues = await _get_provisional_leagues(db)
     # Merge dynamic ROI-suppressed leagues with the hard-coded blocklist
     all_suppressed_leagues = bad_leagues | DISABLED_LEAGUES
     if all_suppressed_leagues:
@@ -472,10 +482,6 @@ async def list_signals(
     #      well below the 65.4% break-even at 1.53 odds. These are heavy home underdogs
     #      (cup ties, promoted sides) where Poisson passes on league-average priors but
     #      ZINB correctly flags the structural weakness in the home attack.
-    _WOMEN_UNIVERSAL_MARKETS: frozenset = WOMEN_OVER_SUPPRESSED_MARKETS | frozenset({
-        "1X (Home or Draw)", "X2 (Draw or Away)", "12 (Home or Away)",
-        "Over 0.5 1H", "Home Win to Nil", "Away Win to Nil",
-    })
     rows = [
         (sig, fix) for sig, fix in rows
         if sig.dual_confidence != "Low"                                  # B-1
@@ -549,15 +555,6 @@ async def list_signals(
             )
         ]
 
-    # CLV market ranks: one DB query, used for all signals in this response.
-    # Only computed for the default "system" sort where the ranking matters most.
-    clv_ranks: dict[str, int] = {}
-    if sort_by == "system":
-        try:
-            clv_ranks = await _compute_clv_market_ranks(db)
-        except Exception:
-            pass
-
     if best_per_fixture:
         rows = _best_per_fixture(rows, sort_by, clv_ranks)
 
@@ -574,7 +571,6 @@ async def list_signals(
     # ── Provisional league cap (applied first, before Tier 3 cap) ──────────────
     # Leagues with fewer than PROVISIONAL_LEAGUE_MIN_BETS settled bets are
     # capped at 1 signal per day so data-sparse new leagues can't flood the pool.
-    provisional_leagues = await _get_provisional_leagues(db)
     if provisional_leagues:
         prov_counts: dict[str, int] = {}
         prov_capped: list = []
@@ -665,6 +661,7 @@ async def list_signals(
             .where(
                 Fixture.kickoff_at >= _lookback,
                 func.upper(Fixture.status).in_(["FT", "AET", "PEN"]),
+                or_(Fixture.home_team.in_(_all_teams), Fixture.away_team.in_(_all_teams)),
             )
         )
         _recent_rows = (await db.execute(_recent_q)).all()

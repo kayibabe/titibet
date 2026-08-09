@@ -1,4 +1,6 @@
 ﻿import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+
+const _LIVE_SET = new Set(['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT'])
 import { RefreshCw, Download, Calendar, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Radio, Search, Heart, Bot, Clock } from 'lucide-react'
 import { useSignals } from '../store/useSignals'
 import { computeSignals, fetchSignals } from '../api/signals'
@@ -347,7 +349,7 @@ const params = {
   }
 
   useEffect(() => { load(params) }, [date, confidence, agreement, market, sortBy, bestPerFixture]) // eslint-disable-line
-const reload = () => load(params)
+  const reload = useCallback(() => load(params), [date, confidence, agreement, market, sortBy, bestPerFixture, load]) // eslint-disable-line
 
   const isToday    = date === today
   const isTomorrow = date === maxDate
@@ -433,7 +435,6 @@ const reload = () => load(params)
     }
   }, [loading, error, displayedSignals.length, activeFilterCount]) // eslint-disable-line
 
-  const _LIVE_SET = new Set(['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT'])
   const hasLiveMatches = signals.some(s => _LIVE_SET.has((s.status || '').trim().toUpperCase()))
 
   async function handleSync() {
@@ -457,16 +458,14 @@ const reload = () => load(params)
     finally { setComputing(false) }
   }
 
-  // Auto-refresh every 5 min when LIVE matches are on screen (today only)
-  const silentReload = useCallback(async () => {
-    try { await reload() } catch { /* silent */ }
-  }, [reload]) // eslint-disable-line
-
+  // Auto-refresh every 5 min when LIVE matches are on screen (today only).
+  // Uses `reload` directly — `reload` is stable (useCallback) so the interval
+  // is only re-registered when the actual query params change.
   useEffect(() => {
     if (!isToday || !hasLiveMatches) return
-    const id = setInterval(silentReload, 5 * 60 * 1000)
+    const id = setInterval(() => { reload().catch(() => {}) }, 5 * 60 * 1000)
     return () => clearInterval(id)
-  }, [isToday, hasLiveMatches, silentReload])
+  }, [isToday, hasLiveMatches, reload])
 
   function trackingSourceFamily() {
     if (sortBy === 'system') return 'Signals Board'

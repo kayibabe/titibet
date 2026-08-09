@@ -21,6 +21,8 @@ from app.engines.poisson import PoissonResult
 
 settings = get_settings()
 
+_UNIT_STAKE_MAP: dict[str, float] = {"High": 3.0, "Medium": 2.0, "Low": 1.0}
+
 
 @dataclass
 class DualSignal:
@@ -39,7 +41,7 @@ class DualSignal:
 
 
 def _unit_stake(confidence: str) -> float:
-    return {"High": 3, "Medium": 2, "Low": 1}.get(confidence, 0) * settings.unit_pct
+    return _UNIT_STAKE_MAP.get(confidence, 0.0) * settings.unit_pct
 
 
 def _recommended_stake(kelly_pct: float, confidence: str, agreement: str) -> float:

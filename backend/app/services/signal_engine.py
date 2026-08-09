@@ -126,20 +126,6 @@ def _compute_opening_odds_scoped(snapshots: list[MarketSnapshot]) -> dict[tuple[
     return {key: value[1] for key, value in earliest.items()}
 
 
-def _compute_opening_odds(snapshots: list[MarketSnapshot]) -> dict[tuple[str, str], float]:
-    """
-    Return the odds from the earliest snapshot for each (bookmaker, selection_name) pair.
-    Used to compute drift: current_best_odd vs opening_best_odd for that bookmaker/market combo.
-    """
-    earliest: dict[tuple[str, str], tuple] = {}  # key → (pulled_at, odds)
-    for s in snapshots:
-        if s.pulled_at is None or s.odds is None:
-            continue
-        key = (s.bookmaker, s.selection_name)
-        if key not in earliest or s.pulled_at < earliest[key][0]:
-            earliest[key] = (s.pulled_at, s.odds)
-    return {k: v[1] for k, v in earliest.items()}
-
 
 def _build_cs_by_bookie(snapshots: list[MarketSnapshot]) -> dict[str, list[dict]]:
     """Group CS snapshots by bookmaker -> [{value: "1:0", odd: 6.50}, ...]"""
@@ -544,8 +530,8 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
     # committed immediately before the fixture loop starts.  This keeps the loop
     # itself entirely read-only, so other writers (user track-picks, settlement,
     # auto-tracker) never hit SQLite's busy_timeout waiting for this session.
+    fixture_ids_today: list[int] = [f.id for f in fixtures]
     if fixtures:
-        fixture_ids_today = [f.id for f in fixtures]
         await db.execute(delete(Signal).where(Signal.fixture_id.in_(fixture_ids_today)))
         await db.commit()
 
@@ -555,6 +541,17 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         # scheduled cache-warm job) regenerates it from the fresh signals.
         from app.services.advisor_service import invalidate_advisory_cache
         await invalidate_advisory_cache(db, run_date)
+
+    # Pre-load ALL market snapshots for all fixtures in ONE query.
+    # Eliminates the N+1 pattern where each fixture triggered a separate
+    # SELECT (50 fixtures = 50 round-trips; now 1 query total).
+    _snapshots_by_fixture: dict[int, list[MarketSnapshot]] = {}
+    if fixture_ids_today:
+        _all_snaps = await db.execute(
+            select(MarketSnapshot).where(MarketSnapshot.fixture_id.in_(fixture_ids_today))
+        )
+        for _s in _all_snaps.scalars().all():
+            _snapshots_by_fixture.setdefault(_s.fixture_id, []).append(_s)
 
     # Collect all new Signal objects across all fixtures before writing to DB.
     # This allows portfolio-level stake normalization (improvement #1) to run
@@ -582,10 +579,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         if any(kw in _league_lower for kw in YOUTH_LEAGUE_KEYWORDS):
             continue
 
-        snap_result = await db.execute(
-            select(MarketSnapshot).where(MarketSnapshot.fixture_id == fixture.id)
-        )
-        snapshots_raw: list[MarketSnapshot] = list(snap_result.scalars().all())
+        snapshots_raw: list[MarketSnapshot] = _snapshots_by_fixture.get(fixture.id, [])
         if not snapshots_raw:
             continue
         snapshots = _latest_snapshots(snapshots_raw)

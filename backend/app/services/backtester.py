@@ -441,6 +441,11 @@ async def run_backtest(
                     if _bt_tier >= 3 and final_confidence in ("High", "Medium"):
                         final_confidence = _CONFIDENCE_DOWNGRADE.get(final_confidence, final_confidence)
                         is_dual_bt = final_confidence == "High" and ds.agreement == "Both"
+                        is_poisson_bt = (
+                            mkt == "Home Over 0.5"
+                            and ds.agreement == "Poisson Only"
+                            and p is not None and p.rule_strong
+                        )
                         if not is_dual_bt and not is_poisson_bt:
                             continue
 
