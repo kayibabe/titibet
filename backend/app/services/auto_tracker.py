@@ -349,6 +349,30 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         ):
             continue
 
+        # Under 3.5 lambda ceiling: skip high-expected-goals games.
+        # λ ≥ 2.85 means only 0.65 goals of margin below the 3.5 line — a coin-flip
+        # at typical market odds. λ = 3.0 is also the Poisson model's fallback when
+        # form data is unavailable, making those signals doubly unreliable.
+        # Aug-2026: λ 3.0–3.2 bucket = 66.7% WR net-negative; 3.2+ = 50% WR.
+        if (
+            signal.market in {"Under 3.5", "Under 2.5"}
+            and signal.poisson_lambda_total is not None
+            and signal.poisson_lambda_total >= 2.85
+        ):
+            continue
+
+        # Under 3.5 Glicko mismatch gate: dominant away team opens up the game.
+        # glicko_r_diff < -250 means the away side is 250+ Elo points stronger;
+        # they tend to press high, dominate possession, and push total goals over
+        # the line — the structural opposite of what Under 3.5 needs.
+        # Aug-2026: York United (glicko −432) and Flint Town (−352) both lost.
+        if (
+            signal.market in {"Under 3.5", "Under 2.5"}
+            and _glicko is not None
+            and _glicko < -250
+        ):
+            continue
+
         # BOS gate: stable/defensive fixture (bos_passed=True) contradicts any
         # Over-goals pick — the model flags low scoring but we'd be betting on goals.
         # Exemption: ZINB-backed Over markets use team-level goal model thresholds
