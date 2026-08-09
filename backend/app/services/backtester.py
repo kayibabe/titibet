@@ -73,28 +73,32 @@ async def run_backtest(
     The haircut comes from config (exec_odds_haircut / EXEC_HAIRCUT_BY_MARKET);
     with a 0% haircut exec settlement is identical to proxy settlement.
     """
-    query = select(Fixture)
+    base_query = select(Fixture)
     if date_from:
-        query = query.where(Fixture.event_date >= date_from)
+        base_query = base_query.where(Fixture.event_date >= date_from)
     if date_to:
-        query = query.where(Fixture.event_date <= date_to)
+        base_query = base_query.where(Fixture.event_date <= date_to)
     if league_id:
-        query = query.where(Fixture.league_id == league_id)
+        base_query = base_query.where(Fixture.league_id == league_id)
     if league_name:
-        query = query.where(Fixture.league.ilike(f"%{league_name}%"))
+        base_query = base_query.where(Fixture.league.ilike(f"%{league_name}%"))
 
     # Only include finished fixtures that have at least one market snapshot.
     # Fixtures backfilled without odds (no market_snapshots rows) are useless
     # for signal replay and were causing O(N) empty snapshot queries that pushed
     # 6-month backtests past the 60-second Fly.io proxy timeout.
-    query = query.where(Fixture.status.in_(["FT", "AET", "PEN"]))
-    query = query.where(Fixture.home_score.isnot(None))
-    query = query.where(
+    base_query = base_query.where(Fixture.status.in_(["FT", "AET", "PEN"]))
+    base_query = base_query.where(Fixture.home_score.isnot(None))
+    base_query = base_query.where(
         Fixture.id.in_(select(MarketSnapshot.fixture_id).distinct())
     )
 
-    fixture_result = await db.execute(query)
-    fixtures: list[Fixture] = list(fixture_result.scalars().all())
+    # Load only IDs so the identity map doesn't balloon with full fixture rows
+    # before we even start processing. Each fixture is fetched individually and
+    # expunged after use, keeping memory flat across large date ranges.
+    id_result = await db.execute(base_query.with_only_columns(Fixture.id))
+    fixture_ids: list[int] = [row[0] for row in id_result.fetchall()]
+
     allowed_confidence = None
     if confidence_filter:
         allowed_confidence = {
@@ -123,20 +127,47 @@ async def run_backtest(
     await db.execute(del_q)
     await db.commit()
 
-    results: list[BacktestResult] = []
+    # Summary accumulators — replaces in-memory results list so we can
+    # batch-commit and expunge ORM objects without lazy-load issues.
+    _total = 0
+    _wins = 0
+    _total_profit = 0.0
+    _odds_list: list[float] = []
+    _by_market: dict[str, dict] = {}
+    _by_confidence: dict[str, dict] = {}
+    _by_agreement: dict[str, dict] = {}
+    _bankroll = 100.0
+    _curve: list[dict] = []
 
-    for fixture in fixtures:
+    # Form lambda cache: avoids redundant DB lookups when the same team pair
+    # appears across multiple fixtures in the same backtest window.
+    _form_cache: dict[tuple[str, str, date], dict] = {}
+
+    _uncommitted = 0
+    _COMMIT_EVERY = 50
+
+    for fid in fixture_ids:
+        _fx_r = await db.execute(select(Fixture).where(Fixture.id == fid))
+        fixture = _fx_r.scalar_one_or_none()
+        if fixture is None:
+            continue
         if fixture.home_score is None or fixture.away_score is None:
+            try: db.expunge(fixture)
+            except Exception: pass
             continue
         _bt_league_lower = (fixture.league or "").lower().strip()
         if all_suppressed_leagues and (
             _bt_league_lower in all_suppressed_leagues
             or "friendlies" in _bt_league_lower
         ):
+            try: db.expunge(fixture)
+            except Exception: pass
             continue
 
         _league_lower_bt = (fixture.league or "").lower()
         if any(kw in _league_lower_bt for kw in YOUTH_LEAGUE_KEYWORDS):
+            try: db.expunge(fixture)
+            except Exception: pass
             continue
 
         snap_result = await db.execute(
@@ -144,6 +175,8 @@ async def run_backtest(
         )
         snapshots_raw: list[MarketSnapshot] = list(snap_result.scalars().all())
         if not snapshots_raw:
+            try: db.expunge(fixture)
+            except Exception: pass
             continue
         snapshots = _latest_snapshots(snapshots_raw)
 
@@ -176,14 +209,20 @@ async def run_backtest(
 
         # Use the same form-lambda blending as the live signal engine so that
         # backtest ROI figures are representative of what the system actually bets.
+        # Results are cached by (home, away, date) — the same team pair on the
+        # same day appears at most once per fixture but may repeat across a run.
         form_lambdas = None
         if engine in ("poisson", "dual"):
-            form_lambdas = await get_team_form_lambdas(
-                db=db,
-                home_team=fixture.home_team,
-                away_team=fixture.away_team,
-                before_date=fixture.event_date or date_from or date.today(),
-            )
+            _fd = fixture.event_date or date_from or date.today()
+            _fkey = (fixture.home_team, fixture.away_team, _fd)
+            if _fkey not in _form_cache:
+                _form_cache[_fkey] = await get_team_form_lambdas(
+                    db=db,
+                    home_team=fixture.home_team,
+                    away_team=fixture.away_team,
+                    before_date=_fd,
+                )
+            form_lambdas = _form_cache[_fkey] or None
 
         poi_result = poi_engine.analyse_fixture(
             fixture_id=fixture.id, odds=poi_odds, signal_odds=poi_signal_odds,
@@ -369,7 +408,7 @@ async def run_backtest(
 
             profit = flat_stake * (settle_odd - 1.0) if won else -flat_stake
 
-            result = BacktestResult(
+            db.add(BacktestResult(
                 fixture_id=fixture.id,
                 fixture_date=fixture.event_date,
                 league_id=fixture.league_id,
@@ -392,14 +431,90 @@ async def run_backtest(
                 profit_loss=round(profit, 2),
                 flat_stake=flat_stake,
                 kelly_stake=round(ks, 2) if ks else None,
-            )
-            results.append(result)
-            db.add(result)
+            ))
+            _uncommitted += 1
 
-    await db.commit()
+            # Accumulate summary stats inline so we don't keep BacktestResult
+            # objects in a list — lets us commit + release them freely.
+            _total += 1
+            if won:
+                _wins += 1
+            _total_profit += profit
+            if settle_odd > 1:
+                _odds_list.append(settle_odd)
+            _bankroll += profit
+            _curve.append({
+                "date": fixture_date.isoformat() if fixture_date else None,
+                "bankroll": round(_bankroll, 2),
+                "won": won,
+            })
+            for _bucket, _bkey in [
+                (_by_market, mkt),
+                (_by_confidence, final_confidence or "Unknown"),
+                (_by_agreement, ds.agreement or "Unknown"),
+            ]:
+                if _bkey not in _bucket:
+                    _bucket[_bkey] = {"total": 0, "wins": 0, "profit": 0.0, "odds": []}
+                _bucket[_bkey]["total"] += 1
+                _bucket[_bkey]["wins"] += (1 if won else 0)
+                _bucket[_bkey]["profit"] += profit
+                if settle_odd > 1:
+                    _bucket[_bkey]["odds"].append(settle_odd)
 
-    # Compute summary
-    return _summarise(results)
+        # Batch commit + evict: flush BacktestResult rows to DB and release
+        # the fixture + its snapshot ORM objects from the identity map so the
+        # GC can reclaim them. Without this, SQLAlchemy holds every loaded
+        # object until the session closes, causing unbounded memory growth.
+        if _uncommitted >= _COMMIT_EVERY:
+            await db.commit()
+            _uncommitted = 0
+        for _snap in snapshots_raw:
+            try: db.expunge(_snap)
+            except Exception: pass
+        try: db.expunge(fixture)
+        except Exception: pass
+
+    if _uncommitted:
+        await db.commit()
+
+    # Build summary from inline accumulators
+    _total_stake = _total * BACKTEST_FLAT_STAKE
+    _roi = (_total_profit / _total_stake * 100) if _total_stake else 0.0
+    _hit_rate = (_wins / _total * 100) if _total else 0.0
+    _avg_odds = (sum(_odds_list) / len(_odds_list)) if _odds_list else None
+
+    def _bt_bucket_stats(buckets: dict, key_name: str) -> list[dict]:
+        stats = []
+        for k, d in sorted(buckets.items()):
+            t = d["total"]
+            w = d["wins"]
+            p = d["profit"]
+            s = t * BACKTEST_FLAT_STAKE
+            ol = d["odds"]
+            stats.append({
+                key_name: k, "total": t, "count": t, "wins": w, "losses": t - w,
+                "hit_rate": round(w / t * 100, 1) if t else 0.0,
+                "roi": round(p / s * 100, 1) if s else 0.0,
+                "profit": round(p, 2),
+                "avg_odds": round(sum(ol) / len(ol), 2) if ol else None,
+            })
+        return stats
+
+    return {
+        "total": _total,
+        "total_bets": _total,
+        "wins": _wins,
+        "losses": _total - _wins,
+        "hit_rate": round(_hit_rate, 1),
+        "roi": round(_roi, 1),
+        "total_profit": round(_total_profit, 2),
+        "total_stake": round(_total_stake, 2),
+        "avg_odds": round(_avg_odds, 2) if _avg_odds is not None else None,
+        "by_market": _bt_bucket_stats(_by_market, "market"),
+        "by_confidence": _bt_bucket_stats(_by_confidence, "confidence"),
+        "by_agreement": _bt_bucket_stats(_by_agreement, "agreement"),
+        "bankroll_curve": _curve,
+    }
 
 
 # ── Correct Score backtest ────────────────────────────────────────────────────
