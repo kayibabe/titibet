@@ -63,7 +63,11 @@ MAX_STAKE = 10_000.0
 # signals passing simultaneously is low. Headroom for heavy multi-league days
 # (PL + Bundesliga + La Liga + Serie A opening weekend) where 6-8 clean
 # Both-agreement signals are plausible.
-MAX_DAILY_SINGLE_BETS: int = 8
+# Raised 8→12 Aug-2026: funnel analysis showed 26 quality <1.35 Under 3.5 signals
+# (q=0.56-0.70, Tier 1/2) being cut by the cap on heavy fixture days. Additional
+# gates (dead zone, Tier 3, Both-only, quality floor, MAX_STAKE cap) make 12-bet
+# days low-risk; overflow on quiet days is still bounded by signal count.
+MAX_DAILY_SINGLE_BETS: int = 12
 
 
 async def _load_kelly_multipliers(db: AsyncSession) -> dict[str, float]:
@@ -353,15 +357,18 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
                 continue
 
         # Low-odds Home Over 0.5 quality gate.
-        # At odds < 1.70 (implied prob > 59%) the model is highly confident, but
+        # At odds < 1.65 (implied prob > 61%) the model is highly confident, but
         # Jul-2026 showed shutout losses at exactly these odds: Bate Borisov 1.56
         # (0-1), Al Hikma 1.58 (0-1), Orgryte 1.53 (0-0). Low odds do not
         # guarantee home scoring — they just mean both engines are confidently wrong.
         # Require stricter quality floor (≥0.55, one band above the standard B gate)
         # AND broad bookmaker support (≥3 books) before auto-tracking at these odds.
+        # Boundary tightened 1.70→1.65 Aug-2026: funnel analysis showed 1.65-1.69 HO0.5
+        # signals (q=0.48-0.50) being over-blocked; the elevated gate is only warranted
+        # in the dead-zone-adjacent 1.50-1.64 range, not at 1.65+.
         if (
             signal.market == "Home Over 0.5"
-            and (signal.bayesian_best_odd or 0.0) < 1.70
+            and (signal.bayesian_best_odd or 0.0) < 1.65
             and (
                 not signal.dual_quality_score
                 or signal.dual_quality_score < 0.55
