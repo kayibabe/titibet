@@ -885,19 +885,12 @@ async def push_tomorrow_digest(db: AsyncSession, run_date: date | None = None) -
     run_date = run_date or (date.today() + timedelta(days=1))
 
     tracked = await _query_tracked_singles(db, run_date)
-    acca = await _query_tracked_acca(db, run_date)
-
-    if not tracked and acca is None:
-        logger.info("Tomorrow digest: no tracked picks or acca for %s — nothing to send", run_date)
-        return 0
 
     if not tracked:
-        logger.info("Tomorrow digest: no system singles for %s — sending acca-only digest", run_date)
+        logger.info("Tomorrow digest: no tracked picks for %s — nothing to send", run_date)
+        return 0
 
     chronological = sorted(tracked, key=lambda r: _ko_aware(r[1].kickoff_at) or datetime.max.replace(tzinfo=timezone.utc))
-
-    if acca is None:
-        logger.info("Tomorrow digest: no system_acca ticket for %s — sending singles only", run_date)
 
     reveal_fixture_ids = _pick_reveal_fixture_ids(chronological, FREE_REVEAL_COUNT)
 
@@ -908,7 +901,7 @@ async def push_tomorrow_digest(db: AsyncSession, run_date: date | None = None) -
             continue
 
         text_msg = build_tomorrow_message(
-            chronological, run_date, acca,
+            chronological, run_date, None,
             channel_type=channel_type,
             reveal_fixture_ids=reveal_fixture_ids if channel_type == "free" else None,
         )
@@ -923,8 +916,8 @@ async def push_tomorrow_digest(db: AsyncSession, run_date: date | None = None) -
 
     if sent:
         logger.info(
-            "Tomorrow digest sent to %d channel(s) — %d single(s), acca=%s",
-            sent, len(tracked), "yes" if acca and acca.get("legs") else "no",
+            "Tomorrow digest sent to %d channel(s) — %d single(s)",
+            sent, len(tracked),
         )
     return sent
 
@@ -1321,20 +1314,13 @@ async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_RE
     now = datetime.now(tz=timezone.utc)
 
     tracked = await _query_tracked_singles(db, today)
-    acca = await _query_tracked_acca(db, today)
-
-    if not tracked and acca is None:
-        logger.info("Morning digest: no tracked picks or acca for %s — skipping", today)
-        return 0
 
     if not tracked:
-        logger.info("Morning digest: no system singles for %s — sending acca-only digest", today)
+        logger.info("Morning digest: no tracked picks for %s — skipping", today)
+        return 0
 
     by_rank = sorted(tracked, key=lambda r: _system_rank(r[0], r[1]), reverse=True)
     reveal_fixture_ids = _pick_reveal_fixture_ids(by_rank, free_reveal_count)
-
-    if acca is None:
-        logger.info("Morning digest: no system_acca ticket for %s — sending singles only", today)
 
     # Was last night's evening digest already sent for today's date?
     # (Evening digest logs push_type="tomorrow" for the next-day date, which is today.)
@@ -1354,9 +1340,9 @@ async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_RE
 
         if channel_type == "free":
             text = build_signal_digest(by_rank, channel_type="free", now=now,
-                                       reveal_fixture_ids=reveal_fixture_ids, acca=acca)
+                                       reveal_fixture_ids=reveal_fixture_ids, acca=None)
         else:
-            text = build_signal_digest(by_rank, channel_type=channel_type, now=now, acca=acca)
+            text = build_signal_digest(by_rank, channel_type=channel_type, now=now, acca=None)
 
         if evening_sent:
             # Confirmation mode: replace header to signal this is a refreshed confirmation,

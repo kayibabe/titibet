@@ -32,7 +32,7 @@ from app.models import TrackedBet, Fixture, Signal
 from app.models.odds import MarketSnapshot
 from app.services import ingestion
 from app.services.signal_engine import compute_signals_for_date
-from app.services.auto_tracker import auto_track_date, auto_track_acca_signals
+from app.services.auto_tracker import auto_track_date
 from app.services.shadow_tracker import shadow_track_date, settle_shadow_observations
 from app.services.settlement import settle_bets_for_date, FINAL_STATUSES
 from app.services.loss_analysis_agent import run_loss_analysis_pipeline
@@ -352,107 +352,14 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                         logger.exception("League watch guard failed — continuing normally")
 
                 # ── Morning extras (first daily sync only) ────────────────────
-                # Advisory cache + ACCA tracking + morning Telegram digest.
-                # Runs after signals are confirmed computed — no timing gap needed.
+                # Advisory cache refresh + morning Telegram digest.
                 if morning_extras:
                     try:
-                        from sqlalchemy import select, func as sqlfunc
-                        from app.models.bet import TrackedBet as _TB
-                        from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
+                        from app.services.advisor_service import get_advisor_insights
                         result = await get_advisor_insights(db, run_date, current_user=None, force=True)
                         logger.info("Advisory cache: %d matches analysed for %s", result.get("matches_analysed", 0), run_date)
-                        # Check if evening_extras already pre-tracked ACCA tickets for today.
-                        existing_acca = (await db.execute(
-                            select(sqlfunc.count()).where(
-                                _TB.source_rule_key == "system_acca",
-                                _TB.event_date == run_date,
-                                _TB.user_id.is_(None),
-                            )
-                        )).scalar() or 0
-                        if existing_acca:
-                            logger.info("Morning extras: ACCA already pre-tracked for %s (%d ticket(s)) — skipping", run_date, existing_acca)
-                        else:
-                            tickets = result.get("accumulators") or []
-                            if not tickets:
-                                acca = result.get("accumulator", {})
-                                if acca.get("legs") and not acca.get("error"):
-                                    tickets = [acca]
-                            if tickets:
-                                n_tracked = await auto_track_acca_legs(db, tickets, run_date)
-                                if n_tracked:
-                                    logger.info("Advisory cache: auto-tracked %d acca ticket(s) for %s", n_tracked, run_date)
-
-                        # ── Stale-odds guard ──────────────────────────────────────
-                        # Re-check each pending system_acca ticket's legs against the
-                        # latest MarketSnapshot odds.  Any ticket with a leg that moved
-                        # >10% is deleted so auto_track_acca_legs re-inserts it at the
-                        # current combined price.
-                        import json as _sjson
-                        from app.models.odds import MarketSnapshot as _MS
-                        from sqlalchemy import select as _sel2
-                        acca_ticket_rows = (await db.execute(
-                            _sel2(_TB).where(
-                                _TB.source_rule_key == "system_acca",
-                                _TB.event_date == run_date,
-                                _TB.result_status == "Pending",
-                                _TB.user_id.is_(None),
-                            )
-                        )).scalars().all()
-                        voided_count = 0
-                        for _ticket in acca_ticket_rows:
-                            try:
-                                _legs = _sjson.loads(_ticket.notes or "{}").get("legs", [])
-                            except Exception:
-                                continue
-                            stale = False
-                            for _leg in _legs:
-                                _fid = _leg.get("fixture_id")
-                                _mkt = _leg.get("market")
-                                _tracked_odd = float(_leg.get("odd") or 0)
-                                if not _fid or not _mkt or _tracked_odd <= 0:
-                                    continue
-                                _snap = (await db.execute(
-                                    _sel2(_MS).where(
-                                        _MS.fixture_id == _fid,
-                                        _MS.market_type == _mkt,
-                                    ).order_by(_MS.pulled_at.desc()).limit(1)
-                                )).scalars().first()
-                                if _snap and _snap.odds and abs(_snap.odds - _tracked_odd) / _tracked_odd > 0.10:
-                                    stale = True
-                                    break
-                            if stale:
-                                await db.delete(_ticket)
-                                voided_count += 1
-                        if voided_count:
-                            await db.commit()
-                            logger.info(
-                                "Stale-odds guard: voided %d ACCA ticket(s) with >10%% odds movement "
-                                "for %s — re-tracking",
-                                voided_count, run_date,
-                            )
-                            retrack_tickets = result.get("accumulators") or []
-                            if not retrack_tickets:
-                                _rt_acca = result.get("accumulator", {})
-                                if _rt_acca.get("legs") and not _rt_acca.get("error"):
-                                    retrack_tickets = [_rt_acca]
-                            if retrack_tickets:
-                                n_retracked = await auto_track_acca_legs(db, retrack_tickets, run_date)
-                                logger.info(
-                                    "Stale-odds guard: re-tracked %d ACCA ticket(s) for %s",
-                                    n_retracked, run_date,
-                                )
                     except Exception:
-                        logger.exception("Advisory cache/ACCA failed — continuing normally")
-                    # Signal-model ACCA fallback: builds a ticket from signal candidates
-                    # when the advisor produced no accumulators. The deference guard inside
-                    # auto_track_acca_signals skips silently when acca_advisory_system rows
-                    # already exist for this date — so no duplicates are possible.
-                    try:
-                        n_signal_acca = await auto_track_acca_signals(db, run_date)
-                        if n_signal_acca:
-                            logger.info("Signal-model ACCA fallback: %d rows for %s", n_signal_acca, run_date)
-                    except Exception:
-                        logger.exception("Signal-model ACCA fallback failed — continuing normally")
+                        logger.exception("Advisory cache failed — continuing normally")
                     try:
                         n_sent = await push_morning_digest(db)
                         if n_sent:
@@ -475,25 +382,11 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                     except Exception:
                         logger.exception("Tomorrow pre-sync failed — skipping tomorrow advisory")
                     try:
-                        from app.services.advisor_service import get_advisor_insights, auto_track_acca_legs
+                        from app.services.advisor_service import get_advisor_insights
                         t_result = await get_advisor_insights(db, tomorrow, current_user=None, force=True)
                         logger.info("Tomorrow advisory cache: %d matches for %s", t_result.get("matches_analysed", 0), tomorrow)
-                        # Track tomorrow's ACCA legs now (16:00 UTC / 18:00 CAT) so that
-                        # games starting after midnight UTC (02:00+ CAT) are captured before
-                        # the morning sync runs — those games would have already kicked off
-                        # by 04:00 UTC.  The kickoff guard in auto_track_acca_legs filters
-                        # any leg that starts within 30 min of write time.
-                        t_tickets = t_result.get("accumulators") or []
-                        if not t_tickets:
-                            t_acca = t_result.get("accumulator", {})
-                            if t_acca.get("legs") and not t_acca.get("error"):
-                                t_tickets = [t_acca]
-                        if t_tickets:
-                            n_t_tracked = await auto_track_acca_legs(db, t_tickets, tomorrow)
-                            if n_t_tracked:
-                                logger.info("Evening extras: auto-tracked %d acca leg(s) for tomorrow %s", n_t_tracked, tomorrow)
                     except Exception:
-                        logger.exception("Tomorrow advisory cache/ACCA failed — continuing normally")
+                        logger.exception("Tomorrow advisory cache failed — continuing normally")
                     try:
                         n_sent = await push_tomorrow_digest(db, tomorrow)
                         if n_sent:
