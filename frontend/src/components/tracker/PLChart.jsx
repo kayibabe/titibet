@@ -1,214 +1,232 @@
-import { useMemo, useRef, useEffect } from 'react'
+import { useMemo } from 'react'
 import {
-  AreaChart, Area, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, ReferenceLine,
+  ComposedChart, Bar, Cell, Line,
+  XAxis, YAxis, Tooltip, ReferenceLine,
+  ResponsiveContainer,
 } from 'recharts'
 import { fmtK } from '../../utils/format'
+import useTier from '../../hooks/useTier'
 
 const round2 = v => Math.round(v * 100) / 100
-const DOT_SPACING = 32   // px per data point when scrolling
 
 function buildData(bets) {
-  const settled = bets
-    .filter(b => b.result_status !== 'Pending' && b.profit_loss != null && b.event_date)
-    .sort((a, b) => (a.event_date < b.event_date ? -1 : a.event_date > b.event_date ? 1 : (a.id ?? 0) - (b.id ?? 0)))
+  const settled = bets.filter(
+    b => b.result_status !== 'Pending' && b.profit_loss != null && b.event_date
+  )
 
-  let running = 0
-  return settled.map((b, i) => {
-    running += b.profit_loss
-    const d = new Date(`${b.event_date}T00:00:00`)
+  // Aggregate per date
+  const byDate = {}
+  for (const b of settled) {
+    if (!byDate[b.event_date]) byDate[b.event_date] = { pl: 0, clvSum: 0, clvCount: 0 }
+    byDate[b.event_date].pl += b.profit_loss
+    if (b.clv_pct != null) {
+      byDate[b.event_date].clvSum += b.clv_pct
+      byDate[b.event_date].clvCount += 1
+    }
+  }
+
+  const dates = Object.keys(byDate).sort()
+  let cumul = 0
+  return dates.map(date => {
+    const { pl, clvSum, clvCount } = byDate[date]
+    cumul += pl
+    const d = new Date(`${date}T00:00:00`)
     return {
-      idx: i + 1,
-      label: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
-      cumPL: round2(running),
-      periodPL: round2(b.profit_loss),
-      result: b.result_status,
-      match: b.match_name || b.league || '',
-      market: b.market_type || '',
-      odds: b.odds,
+      label: d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' }).replace('/', '-'),
+      dailyPL: round2(pl),
+      cumPL: round2(cumul),
+      avgCLV: clvCount > 0 ? round2(clvSum / clvCount) : null,
     }
   })
 }
 
-function dotColor(result) {
-  if (result === 'Won')  return { fill: '#4ade80', stroke: '#166534' }
-  if (result === 'Void') return { fill: '#94a3b8', stroke: '#475569' }
-  return { fill: '#f87171', stroke: '#7f1d1d' }
-}
-
-function CustomDot({ cx, cy, payload }) {
-  if (cx == null || cy == null) return null
-  const { fill, stroke } = dotColor(payload.result)
-  return <circle cx={cx} cy={cy} r={5} fill={fill} stroke={stroke} strokeWidth={1} />
-}
-
-function CustomActiveDot({ cx, cy, payload }) {
-  if (cx == null || cy == null) return null
-  const { fill } = dotColor(payload.result)
-  return <circle cx={cx} cy={cy} r={7} fill={fill} stroke="var(--bg)" strokeWidth={2} />
-}
-
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null
-  const p = payload[0]?.payload
-  if (!p) return null
-  const isVoid = p.result === 'Void'
-  const pos = p.periodPL >= 0
-  const resultColor = isVoid ? 'text-slate-400' : pos ? 'text-green-400' : 'text-red-400'
+  const daily = payload.find(p => p.dataKey === 'dailyPL')?.value
+  const cumul  = payload.find(p => p.dataKey === 'cumPL')?.value
+  const clv    = payload.find(p => p.dataKey === 'avgCLV')?.value
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 shadow-lg text-xs space-y-0.5 max-w-[180px]">
-      <p className="font-semibold text-[var(--text-h)] truncate">{p.match || label}</p>
-      {p.market && <p className="text-[var(--text)] opacity-60">{p.market}</p>}
-      <p className="text-[var(--text)] opacity-60">Odds: {p.odds ?? '—'}</p>
-      <p>
-        Result:{' '}
-        <span className={`font-semibold ${resultColor}`}>
-          {p.result} ({p.periodPL >= 0 ? '+' : ''}{fmtK(p.periodPL)})
-        </span>
-      </p>
-      <p>
-        Cumulative:{' '}
-        <span className={`font-bold font-mono ${p.cumPL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-          {p.cumPL >= 0 ? '+' : ''}{fmtK(p.cumPL)}
-        </span>
-      </p>
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs space-y-0.5 shadow-lg">
+      <p className="font-semibold text-[var(--text-h)] mb-1">{label}</p>
+      {daily != null && (
+        <p className="text-[var(--text)]">
+          Daily P&amp;L:{' '}
+          <span className={`font-semibold font-mono ${daily >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {daily >= 0 ? '+' : ''}{fmtK(daily)}
+          </span>
+        </p>
+      )}
+      {cumul != null && (
+        <p className="text-[var(--text)]">
+          Cumulative:{' '}
+          <span className={`font-semibold font-mono ${cumul >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {cumul >= 0 ? '+' : ''}{fmtK(cumul)}
+          </span>
+        </p>
+      )}
+      {clv != null && (
+        <p className="text-[var(--text)]">
+          Avg CLV:{' '}
+          <span className={`font-semibold font-mono ${clv >= 0 ? 'text-violet-400' : 'text-red-400'}`}>
+            {clv >= 0 ? '+' : ''}{clv.toFixed(1)}%
+          </span>
+        </p>
+      )}
     </div>
   )
 }
 
-const CHART_HEIGHT = 200
-const Y_AXIS_WIDTH  = 56
-const MARGIN        = { top: 8, right: 16, bottom: 0, left: 0 }
+function CustomLegend() {
+  return (
+    <div className="flex items-center justify-center gap-5 mt-2 text-[10px] text-[var(--text)] opacity-60">
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-400 opacity-80" />
+        Daily P&amp;L
+      </span>
+      <span className="flex items-center gap-1.5">
+        <svg width="18" height="6" style={{ display: 'inline' }}>
+          <line x1="0" y1="3" x2="18" y2="3" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+        Cumulative
+      </span>
+      <span className="flex items-center gap-1.5">
+        <svg width="18" height="6" style={{ display: 'inline' }}>
+          <line x1="0" y1="3" x2="18" y2="3" stroke="#a78bfa" strokeWidth="1.5" strokeDasharray="4 2" strokeLinecap="round" />
+        </svg>
+        Avg CLV
+      </span>
+    </div>
+  )
+}
 
 export default function PLChart({ bets }) {
-  const scrollRef = useRef(null)
+  const { isPro } = useTier()
   const data = useMemo(() => buildData(bets), [bets])
-
-  // Scroll to the rightmost (most recent) end on mount and whenever data changes
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollLeft = scrollRef.current.scrollWidth
-    }
-  }, [data])
 
   if (data.length < 2) return null
 
   const finalPL    = data[data.length - 1].cumPL
   const isPositive = finalPL >= 0
-  const lineColor  = isPositive ? '#4ade80' : '#f87171'
-  const gradId     = isPositive ? 'plGradientGreen' : 'plGradientRed'
+  const hasCLV     = data.some(d => d.avgCLV != null)
 
-  // Chart canvas is wide enough so every dot has DOT_SPACING px of room
-  const chartWidth = Math.max(data.length * DOT_SPACING, 600)
-
-  // Show a label roughly every 7 dots (dense enough to orient, sparse enough to read)
-  const labelEvery = Math.max(1, Math.floor(data.length / Math.floor(chartWidth / 60)))
+  const clvMin = hasCLV ? Math.min(...data.map(d => d.avgCLV ?? 0)) - 1 : -6
+  const clvMax = hasCLV ? Math.max(...data.map(d => d.avgCLV ?? 0)) + 1 : 4
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--code-bg)] px-4 pt-3 pb-2">
 
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <div>
-          <span className="text-xs font-semibold text-[var(--text-h)]">Cumulative P&amp;L</span>
-          <span className={`ml-2 text-sm font-bold font-mono ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+        <div className="flex items-baseline gap-2">
+          <span className="text-xs font-semibold text-[var(--text-h)]">P&amp;L Trend</span>
+          <span className="text-[10px] text-[var(--text)] opacity-50">cumulative profit over time</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`font-bold font-mono text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
             {finalPL >= 0 ? '+' : ''}{fmtK(finalPL)}
           </span>
-        </div>
-        <div className="flex items-center gap-3 text-[10px] text-[var(--text)] opacity-60">
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-400" /> Won
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-400" /> Lost
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-400" /> Void
-          </span>
-          <span className="opacity-40 italic hidden sm:inline">← scroll →</span>
+          {isPro && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-violet-500/60 text-violet-400">
+              PRO
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Y-axis (pinned, does not scroll) + scrollable chart body */}
-      <div className="flex">
+      {/* Chart */}
+      <ResponsiveContainer width="100%" height={200}>
+        <ComposedChart data={data} margin={{ top: 8, right: isPro && hasCLV ? 40 : 12, bottom: 0, left: 0 }}>
+          <XAxis
+            dataKey="label"
+            tick={{ fontSize: 9, fill: 'var(--text)', opacity: 0.5 }}
+            tickLine={false}
+            axisLine={false}
+            interval="preserveStartEnd"
+          />
 
-        {/* Pinned Y-axis */}
-        <div style={{ width: Y_AXIS_WIDTH, flexShrink: 0, height: CHART_HEIGHT }}>
-          <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-            <AreaChart data={data} margin={MARGIN}>
-              <YAxis
-                tickFormatter={fmtK}
-                tick={{ fontSize: 9, fill: 'var(--text)', opacity: 0.5 }}
-                tickLine={false}
-                axisLine={false}
-                width={Y_AXIS_WIDTH}
+          {/* Left y-axis: absolute P&L */}
+          <YAxis
+            yAxisId="pl"
+            orientation="left"
+            tickFormatter={fmtK}
+            tick={{ fontSize: 9, fill: 'var(--text)', opacity: 0.5 }}
+            tickLine={false}
+            axisLine={false}
+            width={52}
+          />
+
+          {/* Right y-axis: CLV % (only when there's data) */}
+          {isPro && hasCLV && (
+            <YAxis
+              yAxisId="clv"
+              orientation="right"
+              domain={[clvMin, clvMax]}
+              tickFormatter={v => `${v >= 0 ? '+' : ''}${v.toFixed(0)}%`}
+              tick={{ fontSize: 9, fill: '#a78bfa', opacity: 0.6 }}
+              tickLine={false}
+              axisLine={false}
+              width={36}
+            />
+          )}
+
+          <ReferenceLine yAxisId="pl" y={0} stroke="var(--border)" strokeDasharray="3 3" />
+
+          <Tooltip content={<ChartTooltip />} cursor={{ stroke: 'var(--border)', strokeWidth: 1 }} />
+
+          {/* Daily bars — coloured per-bar via Cell */}
+          <Bar
+            yAxisId="pl"
+            dataKey="dailyPL"
+            name="Daily P&L"
+            maxBarSize={24}
+            radius={[3, 3, 0, 0]}
+            isAnimationActive={data.length < 120}
+          >
+            {data.map((d, i) => (
+              <Cell
+                key={i}
+                fill={d.dailyPL >= 0 ? 'rgba(74,222,128,0.75)' : 'rgba(248,113,113,0.75)'}
               />
-              {/* Invisible area just to render the Y-axis at the right scale */}
-              <Area type="monotone" dataKey="cumPL" stroke="none" fill="none" dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
+            ))}
+          </Bar>
 
-        {/* Scrollable chart body */}
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-x-auto"
-          style={{
-            scrollbarWidth: 'thin',
-            scrollbarColor: 'var(--border) transparent',
-          }}
-        >
-          <div style={{ width: chartWidth, height: CHART_HEIGHT }}>
-            <AreaChart
-              width={chartWidth}
-              height={CHART_HEIGHT}
-              data={data}
-              margin={{ top: MARGIN.top, right: MARGIN.right, bottom: MARGIN.bottom, left: 0 }}
-            >
-              <defs>
-                <linearGradient id="plGradientGreen" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#4ade80" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#4ade80" stopOpacity={0.02} />
-                </linearGradient>
-                <linearGradient id="plGradientRed" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#f87171" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#f87171" stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
+          {/* Cumulative line */}
+          <Line
+            yAxisId="pl"
+            type="monotone"
+            dataKey="cumPL"
+            name="Cumulative"
+            stroke="#4ade80"
+            strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 4, fill: '#4ade80', stroke: 'var(--bg)', strokeWidth: 2 }}
+            isAnimationActive={data.length < 120}
+          />
 
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 9, fill: 'var(--text)', opacity: 0.5 }}
-                tickLine={false}
-                axisLine={false}
-                interval={labelEvery - 1}
-              />
-              <YAxis hide />
-              <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
-              <Tooltip
-                content={<ChartTooltip />}
-                cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
-              />
-              <Area
-                type="monotone"
-                dataKey="cumPL"
-                stroke={lineColor}
-                strokeWidth={2.5}
-                fill={`url(#${gradId})`}
-                dot={<CustomDot />}
-                activeDot={<CustomActiveDot />}
-                isAnimationActive={data.length < 200}
-              />
-            </AreaChart>
-          </div>
-        </div>
+          {/* CLV dashed line (pro only) */}
+          {isPro && hasCLV && (
+            <Line
+              yAxisId="clv"
+              type="monotone"
+              dataKey="avgCLV"
+              name="Avg CLV"
+              stroke="#a78bfa"
+              strokeWidth={1.5}
+              strokeDasharray="5 3"
+              dot={false}
+              activeDot={{ r: 3, fill: '#a78bfa', stroke: 'var(--bg)', strokeWidth: 2 }}
+              connectNulls
+              isAnimationActive={data.length < 120}
+            />
+          )}
+        </ComposedChart>
+      </ResponsiveContainer>
 
-      </div>
+      <CustomLegend />
 
-      {/* Scroll hint bar */}
       <div className="mt-1 flex justify-end">
         <span className="text-[9px] text-[var(--text)] opacity-30 select-none">
-          {data.length} bets · scroll to explore
+          {data.length} days
         </span>
       </div>
     </div>

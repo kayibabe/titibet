@@ -8,6 +8,7 @@ import LossAnalysisDashboard from '../components/analytics/LossAnalysisDashboard
 import BriefingPanel from '../components/analytics/BriefingPanel'
 import ModelIntelligenceDashboard from '../components/analytics/ModelIntelligenceDashboard'
 import ParameterHub from '../components/analytics/ParameterHub'
+import SystemPerformanceDashboard from '../components/analytics/SystemPerformanceDashboard'
 import KPIRow from '../components/analytics/KPIRow'
 import TrendChart from '../components/analytics/TrendChart'
 import ByMarketTable from '../components/analytics/ByMarketTable'
@@ -965,6 +966,14 @@ export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNaviga
                   )}
                 </div>
               </Section>
+
+              {systemSummary && (systemSummary.settled_bets ?? 0) > 0 && (
+                <SystemPerformanceDashboard
+                  summary={systemSummary}
+                  byMarket={data.byMarket}
+                  trend={data.trend}
+                />
+              )}
 
               {isPro ? (
                 <Section icon={BarChart2} title="P&L Trend" subtitle="cumulative profit over time" pro>
