@@ -417,20 +417,13 @@ async def run_backtest(
             if final_confidence == "None":
                 continue
 
-            # Mirror live signal_engine tier gates.
-            # Tier 1: Dual Signal — Both agreement + High confidence.
-            # Tier 2: Poisson Signal — Poisson-only + rule_strong + odds < POISSON_ONLY_MAX_ODDS.
-            _poi_bt_odd = float(poi_signal_odds.get(p_key or "") or 0.0)
-            _poi_bt_max = POISSON_ONLY_MAX_ODDS.get(mkt)
-            is_dual_bt   = final_confidence == "High" and ds.agreement == "Both"
-            is_poisson_bt = (
-                mkt == "Home Over 0.5"
-                and ds.agreement == "Poisson Only"
-                and p is not None and getattr(p, "rule_strong", False)
-                and _poi_bt_odd > 1.0
-                and (_poi_bt_max is None or _poi_bt_odd < _poi_bt_max)
-            )
-            if not is_dual_bt and not is_poisson_bt:
+            # Mirror the auto_tracker quality gate — the actual live bet criterion.
+            # Both+High signals: floor 0.20 (lower because high agreement + confidence).
+            # All other agreement/confidence combinations: floor 0.45.
+            _qs = ds.quality_score or 0.0
+            is_dual_bt = final_confidence == "High" and ds.agreement == "Both"
+            _min_qs = 0.20 if is_dual_bt else 0.45
+            if _qs < _min_qs:
                 backtest_progress["gate_fail"] += 1
                 continue
 
