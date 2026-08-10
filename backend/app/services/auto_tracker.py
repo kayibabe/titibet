@@ -232,6 +232,20 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
         if min_odds_floor is not None and odds < min_odds_floor:
             continue
 
+        # Under 3.5 elevated-odds quality gate.
+        # At odds ≥ 1.65 the market implies a ≥35% chance of 4+ goals — Grade B
+        # confidence (0.45-0.59) is insufficient to bet against that signal.
+        # Lambda gate (≥2.85) catches most of these upstream; this closes the gap
+        # for signals where lambda is just below the ceiling but the market is pricing
+        # high variance (e.g. λ=2.80, odd=1.70: model barely qualifies, market doubts).
+        # Aug-2026: 1 bet at 1.90 odds Grade B lost 100%; no Grade A losses at ≥1.65.
+        if (
+            signal.market == "Under 3.5"
+            and odds >= 1.65
+            and (signal.dual_quality_score or 0.0) < 0.60
+        ):
+            continue
+
         # Skip Both+High picks whose odds exceed the serving-time ceiling —
         # consistent with what the router shows subscribers.
         ceiling = DUAL_HIGH_ODDS_CEILING.get(signal.market)

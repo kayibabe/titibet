@@ -377,6 +377,18 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                             n_sig = await compute_signals_for_date(db, tomorrow)
                             await db.commit()
                             logger.info("Tomorrow pre-sync: %s — %d fixtures, %d signals", tomorrow, t_run.fixtures_pulled, n_sig)
+                            # Auto-track tomorrow's signals at peak odds — bookmakers
+                            # post final lines by close of business so peak-odds signals
+                            # have better bookmaker_support_rank and drift_rank than the
+                            # 04:00-UTC morning pull (when many markets aren't posted yet).
+                            # Idempotent: the 04:00 next-day run re-checks and fills any
+                            # remaining gaps without duplicating existing bets.
+                            try:
+                                n_t_tracked = await auto_track_date(db, tomorrow)
+                                if n_t_tracked:
+                                    logger.info("Auto-tracker (peak-odds): %d bet(s) pre-locked for %s", n_t_tracked, tomorrow)
+                            except Exception:
+                                logger.exception("Auto-tracker (peak-odds) failed for %s — continuing", tomorrow)
                         else:
                             logger.warning("Tomorrow pre-sync: %s status=%s", tomorrow, t_run.status)
                     except Exception:
