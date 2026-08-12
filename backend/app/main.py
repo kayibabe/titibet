@@ -295,19 +295,22 @@ async def lifespan(app: FastAPI):
                             "WHERE f.event_date = :d AND s.is_candidate = 0"
                         ), {"d": _ds})).scalar() or 0
 
-                        if snap_n > 0 and sig_n > 0:
-                            # Signals already in DB — skip expensive recompute, just auto-track
-                            logger.info("BACKFILL %s: %d signals exist — skipping recompute, auto-tracking", _ds, sig_n)
+                        if sig_n > 0:
+                            # Signals already in DB — auto-track directly (snapshots may be
+                            # gone after the 30-day cleanup, but signals are sufficient).
+                            logger.info("BACKFILL %s: %d signals exist — auto-tracking", _ds, sig_n)
                             n_track = await _atd(_db, _cur)
+                            await _db.commit()
                             logger.info("BACKFILL %s: %d bets tracked", _ds, n_track)
                         elif snap_n > 0:
-                            # Snapshots present but no signals — recompute
+                            # Snapshots present but no signals — recompute then track
                             n_sig = await _aio.wait_for(_csfd(_db, _cur), timeout=120)
                             await _db.commit()
                             n_track = await _atd(_db, _cur)
+                            await _db.commit()
                             logger.info("BACKFILL %s: computed %d signals, %d bets tracked", _ds, n_sig, n_track)
                         else:
-                            # No snapshots — ingest from API
+                            # No signals or snapshots — ingest from API, compute, then track
                             run = await _aio.wait_for(_sync(_db, _cur, force=True), timeout=120)
                             logger.info("BACKFILL %s: ingest=%s fixtures=%s", _ds, run.status, getattr(run, "fixtures_pulled", "?"))
                             if run.status != "success":
@@ -317,6 +320,7 @@ async def lifespan(app: FastAPI):
                             n_sig = await _aio.wait_for(_csfd(_db, _cur), timeout=120)
                             await _db.commit()
                             n_track = await _atd(_db, _cur)
+                            await _db.commit()
                             logger.info("BACKFILL %s: ingest+compute %d signals, %d bets tracked", _ds, n_sig, n_track)
                     except _aio.TimeoutError:
                         logger.error("BACKFILL %s: timed out", _ds)
