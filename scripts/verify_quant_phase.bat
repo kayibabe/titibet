@@ -62,9 +62,9 @@ if errorlevel 1 (
 )
 
 echo.
-echo [5/5] Running ungated model-quality laboratory...
+echo [5/5] Running ungated model-quality laboratory (v2)...
 echo.
-python backend\scripts\model_quality_lab.py --from 2026-01-01 --to 2026-06-30 --output "%REPO%\model_quality_lab.json"
+python backend\scripts\model_quality_lab_v2.py --from 2026-01-01 --to 2026-06-30 --output "%REPO%\model_quality_lab.json"
 if errorlevel 1 (
     echo [ERROR] Ungated model-quality laboratory failed.
     exit /b 1
