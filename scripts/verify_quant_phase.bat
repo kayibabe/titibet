@@ -65,13 +65,17 @@ echo.
 echo [3/4] Building frontend...
 echo.
 cd /d "%REPO%\frontend" || exit /b 1
-npm run build
+REM npm.cmd is itself a batch file on Windows, so CALL is required
+REM here to return control to this verification script.
+call npm run build
 if errorlevel 1 (
     echo.
     echo [ERROR] Frontend build failed.
     exit /b 1
 )
 
+echo.
+echo Frontend build completed successfully.
 echo.
 echo [4/4] Running quantitative benchmark...
 echo.
