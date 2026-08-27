@@ -27,7 +27,7 @@ if errorlevel 1 (
 echo.
 echo ============================================================
 echo   CALIBRATION/VALUE LAB COMPLETED
- eecho ============================================================
+echo ============================================================
 echo.
 echo Report:
 echo   %REPO%\calibration_value_lab.json
