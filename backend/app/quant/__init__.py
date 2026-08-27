@@ -1,5 +1,6 @@
 """Quantitative validation and model-governance utilities for TiTiBet."""
 
+from .backtest_report import ValidationSummary, summarize_backtest
 from .ensemble import EnsemblePrediction, weighted_probability
 from .expected_value import ValueAssessment, assess_value
 from .probability import edge, expected_value, fair_odds, implied_probability, overround
@@ -15,6 +16,7 @@ __all__ = [
     "EvidenceTimestamp", "assert_no_future_evidence", "assert_training_before_test",
     "ValueAssessment", "assess_value", "edge", "expected_value", "fair_odds", "implied_probability", "overround",
     "ModelVersion",
+    "ValidationSummary", "summarize_backtest",
     "ValidationWindow", "assert_point_in_time", "require_sample_size", "validate_binary_labels",
     "WalkForwardFold", "evaluate_walk_forward", "make_expanding_folds",
 ]
