@@ -29,7 +29,7 @@ from app.engines import bayesian as bay_engine
 from app.engines import poisson as poi_engine
 from app.models import Fixture, MarketSnapshot
 from app.quant.calibration import calibration_report, wilson_interval
-from app.quant.probability import expected_value, implied_probability
+from app.quant.probability import expected_value
 from app.services.form_service import _fetch_team_goals, _exp_weighted_avg
 from app.services.signal_engine import (
     _build_away_totals,
@@ -42,11 +42,11 @@ from app.services.signal_engine import (
     _build_poisson_odds,
     _build_win_to_nil_away,
     _build_win_to_nil_home,
-    _earliest_snapshots if False else _latest_snapshots,
 )
 
-# Import the local earliest-snapshot helper without relying on private backtester state.
+
 def earliest_snapshots(snapshots: list[MarketSnapshot]) -> list[MarketSnapshot]:
+    """Select the earliest observation for each bookmaker/market/selection."""
     from datetime import datetime
     earliest: dict[tuple[str, str, str], MarketSnapshot] = {}
     for snap in snapshots:
@@ -77,18 +77,15 @@ def outcome_for(market: str, fixture: Fixture) -> int | None:
     if fixture.home_score is None or fixture.away_score is None:
         return None
     fn = MARKETS.get(market)
-    if fn is None:
-        return None
-    return int(bool(fn(fixture.home_score, fixture.away_score)))
+    return int(bool(fn(fixture.home_score, fixture.away_score))) if fn else None
 
 
 def best_price(market: str, bay, poi_signal_odds: dict) -> float | None:
     if bay is not None and getattr(bay, "exec_odd", None) and bay.exec_odd > 1:
         return float(bay.exec_odd)
     key = POISSON_PRICE_KEYS.get(market)
-    if key and poi_signal_odds.get(key, 0) > 1:
-        return float(poi_signal_odds[key])
-    return None
+    odd = poi_signal_odds.get(key) if key else None
+    return float(odd) if odd and odd > 1 else None
 
 
 async def run_lab(date_from: date | None, date_to: date | None, market: str | None) -> dict:
@@ -144,7 +141,6 @@ async def run_lab(date_from: date | None, date_to: date | None, market: str | No
                 all_markets=True,
             )
 
-            # Point-in-time form only: strictly before the fixture date.
             form_lambdas = None
             fd = fixture.event_date
             if fd is not None:
@@ -154,8 +150,8 @@ async def run_lab(date_from: date | None, date_to: date | None, market: str | No
                 if len(hg) >= min_g and len(ag) >= min_g:
                     lh = max(_exp_weighted_avg(hg), 0.10)
                     la = max(_exp_weighted_avg(ag), 0.10)
-                    form_lambdas = {"lambda_h": lh, "lambda_a": la,
-                                    "lambda_total": lh + la, "games_h": len(hg), "games_a": len(ag)}
+                    form_lambdas = {"lambda_h": lh, "lambda_a": la, "lambda_total": lh + la,
+                                    "games_h": len(hg), "games_a": len(ag)}
 
             poi_result = poi_engine.analyse_fixture(
                 fixture_id=fixture.id,
@@ -180,25 +176,14 @@ async def run_lab(date_from: date | None, date_to: date | None, market: str | No
                 pp = getattr(p, "poisson_prob", None)
                 if bp is None and pp is None:
                     continue
-
                 price = best_price(mkt, b, poi_signal_odds)
-                ensemble = None
-                if bp is not None and pp is not None:
-                    ensemble = 0.6 * float(bp) + 0.4 * float(pp)
-                else:
-                    ensemble = float(bp if bp is not None else pp)
+                ensemble = 0.6 * float(bp) + 0.4 * float(pp) if bp is not None and pp is not None else float(bp if bp is not None else pp)
 
                 for engine_name, prob in (("bayesian", bp), ("poisson", pp), ("ensemble", ensemble)):
                     if prob is None or not 0 <= float(prob) <= 1:
                         continue
                     ev = expected_value(float(prob), price) if price and price > 1 else None
-                    observations[mkt].append({
-                        "engine": engine_name,
-                        "prob": float(prob),
-                        "outcome": y,
-                        "odds": price,
-                        "ev": ev,
-                    })
+                    observations[mkt].append({"engine": engine_name, "prob": float(prob), "outcome": y, "odds": price, "ev": ev})
 
     result: dict[str, dict] = {}
     for mkt, rows in sorted(observations.items()):
@@ -213,30 +198,21 @@ async def run_lab(date_from: date | None, date_to: date | None, market: str | No
             cal = calibration_report(probs, outcomes)
             valid_prices = [r for r in rs if r["odds"] and r["odds"] > 1]
             evs = [r["ev"] for r in valid_prices if r["ev"] is not None]
-            profit = 0.0
-            stake = 0.0
-            for r in valid_prices:
-                stake += 1.0
-                profit += (r["odds"] - 1.0) if r["outcome"] else -1.0
+            profit = sum((r["odds"] - 1.0) if r["outcome"] else -1.0 for r in valid_prices)
             result[mkt][engine_name] = {
-                "n": len(rs),
-                "wins": hits,
-                "hit_rate": round(hits / len(rs), 6),
+                "n": len(rs), "wins": hits, "hit_rate": round(hits / len(rs), 6),
                 "hit_rate_ci": tuple(round(x, 6) for x in wilson_interval(hits, len(rs))),
-                "brier": round(cal.brier, 6),
-                "log_loss": round(cal.log_loss, 6),
+                "brier": round(cal.brier, 6), "log_loss": round(cal.log_loss, 6),
                 "calibration_error": round(cal.mean_absolute_calibration_error, 6),
                 "mean_probability": round(sum(probs) / len(probs), 6),
                 "mean_implied_probability": round(sum(1 / r["odds"] for r in valid_prices) / len(valid_prices), 6) if valid_prices else None,
                 "mean_ev": round(sum(evs) / len(evs), 6) if evs else None,
                 "positive_ev_rate": round(sum(ev >= 0 for ev in evs) / len(evs), 6) if evs else None,
-                "roi": round(profit / stake, 6) if stake else None,
+                "roi": round(profit / len(valid_prices), 6) if valid_prices else None,
             }
 
     return {
-        "scope": {"date_from": date_from.isoformat() if date_from else None,
-                  "date_to": date_to.isoformat() if date_to else None,
-                  "market": market},
+        "scope": {"date_from": date_from.isoformat() if date_from else None, "date_to": date_to.isoformat() if date_to else None, "market": market},
         "fixtures_seen": fixtures_seen,
         "markets": result,
         "methodology": {
@@ -245,7 +221,7 @@ async def run_lab(date_from: date | None, date_to: date | None, market: str | No
             "adaptive_suppression_applied": False,
             "point_in_time_form": True,
             "odds": "earliest stored snapshot; execution price where Bayesian execution odd exists",
-            "ensemble": "60% Bayesian + 40% Poisson when both are available; otherwise available engine probability",
+            "ensemble": "60% Bayesian + 40% Poisson when both are available; otherwise the available engine probability",
         },
     }
 
