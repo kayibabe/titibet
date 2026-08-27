@@ -1,4 +1,7 @@
+from datetime import date
+
 from backend.scripts.conditional_market_edge_lab import (
+    Observation,
     aggregate,
     agreement_label,
     band_name,
@@ -46,10 +49,9 @@ def test_research_candidate_gate():
 
 
 def test_aggregate_returns_expected_core_metrics():
-    from backend.scripts.conditional_market_edge_lab import Observation
     rows = [
         Observation(
-            fixture_date=__import__("datetime").date(2026, 1, 1),
+            fixture_date=date(2026, 1, 1),
             market="Under 2.5",
             engine="poisson",
             odds=2.0,
@@ -64,7 +66,7 @@ def test_aggregate_returns_expected_core_metrics():
             poisson_probability=0.60,
         ),
         Observation(
-            fixture_date=__import__("datetime").date(2026, 1, 2),
+            fixture_date=date(2026, 1, 2),
             market="Under 2.5",
             engine="poisson",
             odds=2.0,
