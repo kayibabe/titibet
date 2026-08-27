@@ -71,6 +71,33 @@ async def _assert_data_available() -> int:
     return count
 
 
+def _report(rows: list[BacktestResult]) -> dict:
+    report = summarize_backtest(rows)
+    return {
+        "n": report.n,
+        "wins": report.wins,
+        "hit_rate": report.hit_rate,
+        "hit_rate_ci": report.hit_rate_ci,
+        "brier": report.brier,
+        "log_loss": report.log_loss,
+        "calibration_error": report.calibration_error,
+        "mean_model_probability": report.mean_model_probability,
+        "mean_implied_probability": report.mean_implied_probability,
+        "mean_ev": report.mean_ev,
+        "positive_ev_rate": report.positive_ev_rate,
+        "roi": report.roi,
+        "significance_vs_baseline": report.significance_vs_baseline,
+    }
+
+
+def _group_by_market(rows: list[BacktestResult]) -> dict[str, dict]:
+    """Return the same diagnostics split by market so sparse aggregates are visible."""
+    grouped: dict[str, list[BacktestResult]] = {}
+    for row in rows:
+        grouped.setdefault(row.market, []).append(row)
+    return {market: _report(group) for market, group in sorted(grouped.items())}
+
+
 async def benchmark(
     *,
     date_from: date | None,
@@ -102,21 +129,9 @@ async def benchmark(
                     query = query.where(BacktestResult.fixture_date <= date_to)
 
                 rows = list((await db.execute(query)).scalars().all())
-                report = summarize_backtest(rows)
                 reports[engine] = {
-                    "n": report.n,
-                    "wins": report.wins,
-                    "hit_rate": report.hit_rate,
-                    "hit_rate_ci": report.hit_rate_ci,
-                    "brier": report.brier,
-                    "log_loss": report.log_loss,
-                    "calibration_error": report.calibration_error,
-                    "mean_model_probability": report.mean_model_probability,
-                    "mean_implied_probability": report.mean_implied_probability,
-                    "mean_ev": report.mean_ev,
-                    "positive_ev_rate": report.positive_ev_rate,
-                    "roi": report.roi,
-                    "significance_vs_baseline": report.significance_vs_baseline,
+                    "overall": _report(rows),
+                    "by_market": _group_by_market(rows),
                 }
 
     return {
