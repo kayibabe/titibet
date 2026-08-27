@@ -13,6 +13,7 @@ from app.models import BacktestResult
 import app.services.backtester as _bt_svc
 from app.services.backtester import run_backtest, _summarise
 from app.quant.backtest_report import summarize_backtest
+from app.quant.model_comparison import compare_engines
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 
@@ -153,6 +154,53 @@ async def validation(
         "positive_ev_rate": report.positive_ev_rate,
         "roi": report.roi,
         "significance_vs_baseline": report.significance_vs_baseline,
+    }
+
+
+@router.get("/compare-engines")
+async def compare_backtest_engines(
+    market: Optional[str] = Query(None),
+    min_n: int = Query(30, ge=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare persisted Bayesian/Poisson/Dual runs using common diagnostics.
+
+    This endpoint never runs a model and never changes stored results. It is an
+    experiment-reporting endpoint. Candidate engines should only be promoted
+    after a strict chronological, point-in-time experiment with unseen data.
+    """
+    q = select(BacktestResult).order_by(BacktestResult.fixture_date, BacktestResult.id)
+    if market:
+        q = q.where(BacktestResult.market == market)
+    rows = list((await db.execute(q)).scalars().all())
+    comparisons = compare_engines(rows)
+
+    output = []
+    for item in comparisons:
+        report = item.report
+        output.append({
+            "engine": item.engine,
+            "eligible_for_comparison": report.get("n", 0) >= min_n,
+            "n": report.get("n", 0),
+            "wins": report.get("wins", 0),
+            "hit_rate": report.get("hit_rate", 0.0),
+            "hit_rate_ci": report.get("hit_rate_ci", (0.0, 0.0)),
+            "brier": report.get("brier"),
+            "log_loss": report.get("log_loss"),
+            "calibration_error": report.get("calibration_error"),
+            "mean_model_probability": report.get("mean_model_probability"),
+            "mean_implied_probability": report.get("mean_implied_probability"),
+            "mean_ev": report.get("mean_ev"),
+            "positive_ev_rate": report.get("positive_ev_rate"),
+            "roi": report.get("roi", 0.0),
+            "significance_vs_baseline": report.get("significance_vs_baseline"),
+        })
+
+    return {
+        "market": market,
+        "min_n": min_n,
+        "results": output,
+        "methodology": "Persisted experiment comparison only; use strict chronological point-in-time replay before promotion.",
     }
 
 
