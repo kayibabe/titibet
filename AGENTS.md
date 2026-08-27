@@ -16,8 +16,8 @@ TiTiBet is a football betting signals platform. It ingests live fixture and odds
 | Database | SQLite via aiosqlite + SQLAlchemy 2.x async ORM |
 | Migrations | Custom `run_migrations()` in `app/core/migrations.py` (no Alembic in active use) |
 | Task queue | APScheduler (AsyncIOScheduler) — no Celery |
-| Frontend | React 18 + Vite, Tailwind CSS, lucide-react, recharts |
-| Auth | JWT (python-jose), bcrypt passwords, tier-gated features |
+| Frontend | React 19 + Vite, Tailwind CSS, lucide-react, recharts |
+| Auth | JWT (PyJWT), bcrypt passwords, tier-gated features |
 | Payments | Paystack webhook integration |
 | Data source | API-Football via `app/services/api_client.py` |
 
@@ -94,7 +94,7 @@ titibet/
         │   ├── backtest/        # BacktestControls, BankrollChart
         │   └── layout/          # AppShell, NavBar, Sidebar, BottomNav
         ├── api/                 # Thin fetch wrappers (signals.js, tracker.js, analytics.js, …)
-        ├── store/               # Zustand stores (useSignals, useTracker, useSettings)
+        ├── store/               # Custom hook stores (useSignals, useTracker, useSettings) — module-level cache + pub/sub, no Zustand
         ├── context/             # AuthContext (JWT decode + tier)
         └── hooks/               # useTier
 ```

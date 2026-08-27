@@ -13,8 +13,8 @@ Football betting signals platform. Ingests live fixture and odds data from API-F
 | Backend | FastAPI + Python 3.13, async (asyncio) |
 | Database | SQLite via aiosqlite + SQLAlchemy 2.x async ORM |
 | Task queue | APScheduler — no Celery |
-| Frontend | React 18 + Vite, Tailwind CSS, lucide-react, recharts |
-| Auth | JWT, bcrypt, tier-gated features |
+| Frontend | React 19 + Vite, Tailwind CSS, lucide-react, recharts |
+| Auth | JWT (PyJWT), bcrypt, tier-gated features |
 | Payments | Paystack webhook integration |
 | Data source | API-Football (api-sports.io) |
 | Deployment | Fly.io (Johannesburg region) |
@@ -87,7 +87,17 @@ The scheduler runs at **04:00 UTC** (morning refresh + settlement), **19:00 UTC*
 
 ## Deployment
 
-The app deploys to [Fly.io](https://fly.io) automatically on push to `main` via GitHub Actions. The Dockerfile is a two-stage build: Node 22 builds the React app, then Python 3.13 slim serves both the API and the compiled frontend.
+The app deploys to [Fly.io](https://fly.io) automatically on push to `main` via GitHub Actions. The deploy is gated on CI: backend tests (`pytest`) and the frontend build must pass first (`.github/workflows/ci.yml`, also run on every PR). The Dockerfile is a two-stage build: Node 22 builds the React app, then Python 3.13 slim serves both the API and the compiled frontend.
+
+### Running the tests
+
+```bash
+cd backend
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest
+```
+
+Tests run against an isolated in-memory SQLite database with dummy credentials — they never touch a real database or consume API-Football quota.
 
 For the first deploy:
 
@@ -117,7 +127,7 @@ frontend/src/
 ├── components/ # React components by feature area
 ├── context/    # AuthContext (JWT decode + tier)
 ├── pages/      # route-level page components
-└── store/      # Zustand state stores
+└── store/      # custom hook stores (module-level cache + pub/sub, no Zustand)
 ```
 
 ---
