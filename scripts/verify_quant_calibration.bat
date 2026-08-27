@@ -56,7 +56,7 @@ if errorlevel 1 (
 echo.
 echo ============================================================
 echo   QUANT CALIBRATION PHASE VERIFIED
- eecho ============================================================
+echo ============================================================
 echo.
 echo Git sync              : PASSED
 echo Backend tests         : PASSED
