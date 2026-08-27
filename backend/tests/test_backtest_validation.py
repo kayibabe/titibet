@@ -5,9 +5,12 @@ import pytest
 from app.quant.backtest_report import summarize_backtest
 
 
-def _row(*, result: int, prob: float | None = 0.6, odds: float = 2.0, profit: float | None = None, stake: float = 10.0):
+def _row(*, result: int, prob: float | None = 0.6, odds: float | None = 2.0, profit: float | None = None, stake: float = 10.0):
     if profit is None:
-        profit = stake * (odds - 1.0) if result else -stake
+        if odds is None:
+            profit = 0.0
+        else:
+            profit = stake * (odds - 1.0) if result else -stake
     return SimpleNamespace(
         bet_result=result,
         derived_prob=prob,
@@ -33,7 +36,7 @@ def test_summary_reports_calibration_and_value_metrics():
     assert report.mean_model_probability == pytest.approx(0.5)
     assert report.mean_implied_probability == pytest.approx(0.5)
     assert report.mean_ev == pytest.approx(0.0)
-    assert report.positive_ev_rate == pytest.approx(1.0)
+    assert report.positive_ev_rate == pytest.approx(0.5)
     assert report.roi == pytest.approx(0.0)
     assert report.significance_vs_baseline is None
 
