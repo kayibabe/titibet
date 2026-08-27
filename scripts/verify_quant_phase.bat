@@ -1,21 +1,21 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 REM ============================================================
 REM TiTiBet - Quant Phase Verification
 REM Syncs the feature branch, runs backend tests, builds frontend,
-REM then executes the strict Bayesian/Poisson/Dual benchmark.
+REM then executes the quantitative benchmark.
 REM ============================================================
 
 set "REPO=%~dp0.."
-set "SYNC=%~dp0..\..\sync_titibet_quant_framework.bat"
+set "SYNC=%REPO%\..\sync_titibet_quant_framework.bat"
 
 cd /d "%REPO%" || exit /b 1
 
 echo.
 echo ============================================================
 echo   TiTiBet Quant Phase Verification
- echo ============================================================
+echo ============================================================
 echo.
 
 echo [1/4] Syncing feature branch...
@@ -51,9 +51,9 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/4] Running strict quantitative benchmark...
+echo [4/4] Running quantitative benchmark...
 cd /d "%REPO%" || exit /b 1
-call "%REPO%\scripts\run_quant_benchmark.bat"
+python backend\scripts\benchmark_engines.py --from 2026-01-01 --to 2026-06-30
 if errorlevel 1 (
     echo [ERROR] Quantitative benchmark failed.
     exit /b 1
@@ -64,9 +64,9 @@ echo ============================================================
 echo   QUANT PHASE VERIFIED SUCCESSFULLY
 echo ============================================================
 echo.
-echo Backend tests : PASSED
+echo Backend tests  : PASSED
 echo Frontend build : PASSED
-echo Strict benchmark: COMPLETED
+echo Benchmark      : COMPLETED
 echo Report:
 echo   %REPO%\quant_engine_benchmark.json
 echo.
