@@ -10,12 +10,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
 from model_quality_lab_v2 import run_lab
-from app.quant.calibration import evaluate_calibrator, select_calibrator
+from app.quant.calibration import IdentityCalibrator, evaluate_calibrator, select_calibrator
 from app.quant.probability import edge, expected_value, fair_odds
 
 METHODS = ("identity", "platt", "beta", "isotonic")
@@ -53,12 +52,7 @@ def _run_engine_walk_forward(rows: list[dict], train_size: int, test_size: int, 
         test_probs = [r["prob"] for r in test]
         test_outcomes = [r["outcome"] for r in test]
         calibrated = chosen.calibrator.predict(test_probs)
-        raw = evaluate_calibrator(
-            # Identity is intentionally evaluated directly on the untouched probabilities.
-            __import__("app.quant.calibration", fromlist=["IdentityCalibrator"]).IdentityCalibrator(),
-            test_probs,
-            test_outcomes,
-        )
+        raw = evaluate_calibrator(IdentityCalibrator(), test_probs, test_outcomes)
         calibrated_report = evaluate_calibrator(chosen.calibrator, test_probs, test_outcomes)
         fold = {
             "start": start,
@@ -75,7 +69,7 @@ def _run_engine_walk_forward(rows: list[dict], train_size: int, test_size: int, 
         }
         folds.append(fold)
 
-        for source, calibrated_p, original in zip(test, calibrated.tolist(), test):
+        for source, calibrated_p in zip(test, calibrated.tolist()):
             odds = source.get("odds")
             if odds is None or odds <= 1:
                 continue
@@ -85,7 +79,7 @@ def _run_engine_walk_forward(rows: list[dict], train_size: int, test_size: int, 
                 "edge": edge(float(calibrated_p), float(odds)),
                 "fair_odds": fair_odds(float(calibrated_p)),
                 "odds": float(odds),
-                "outcome": int(original["outcome"]),
+                "outcome": int(source["outcome"]),
             })
         start += len(test)
 
@@ -159,7 +153,7 @@ async def run_value_lab(
             "test_size": test_size,
             "min_train": min_train,
             "calibration_methods": list(METHODS),
-            "selection_rule": "lowest training-window Brier, then log loss, with identity baseline",
+            "selection_rule": "chronological 25% holdout inside each prior training window; selected on holdout Brier, then log loss; selected method refit on full prior window",
             "value_buckets": ["0%-2%", "2%-5%", "5%-10%", "10%-15%", ">=15%", "below_0%"],
             "important": "calibrated EV is research evidence only; no production bet gate or staking rule is modified",
         },
