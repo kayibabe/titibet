@@ -12,6 +12,7 @@ from app.core.database import get_db, AsyncSessionLocal
 from app.models import BacktestResult
 import app.services.backtester as _bt_svc
 from app.services.backtester import run_backtest, _summarise
+from app.quant.backtest_report import summarize_backtest
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 
@@ -114,6 +115,45 @@ async def summary(
     rows = await db.execute(q)
     results = list(rows.scalars().all())
     return _summarise(results)
+
+
+@router.get("/validation")
+async def validation(
+    market: Optional[str] = Query(None),
+    engine: Optional[str] = Query(None),
+    confidence: Optional[str] = Query(None),
+    min_baseline_n: int = Query(30, ge=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return quantitative validation diagnostics for persisted backtest results.
+
+    This endpoint is diagnostic only. It does not modify signals or learning rules.
+    """
+    q = select(BacktestResult)
+    if market:
+        q = q.where(BacktestResult.market == market)
+    if engine:
+        q = q.where(BacktestResult.source_engine == engine)
+    if confidence:
+        q = q.where(BacktestResult.dual_confidence == confidence)
+    q = q.order_by(BacktestResult.fixture_date, BacktestResult.id)
+    rows = await db.execute(q)
+    report = summarize_backtest(rows.scalars().all(), min_baseline_n=min_baseline_n)
+    return {
+        "n": report.n,
+        "wins": report.wins,
+        "hit_rate": report.hit_rate,
+        "hit_rate_ci": report.hit_rate_ci,
+        "brier": report.brier,
+        "log_loss": report.log_loss,
+        "calibration_error": report.calibration_error,
+        "mean_model_probability": report.mean_model_probability,
+        "mean_implied_probability": report.mean_implied_probability,
+        "mean_ev": report.mean_ev,
+        "positive_ev_rate": report.positive_ev_rate,
+        "roi": report.roi,
+        "significance_vs_baseline": report.significance_vs_baseline,
+    }
 
 
 @router.get("/bankroll-curve")
