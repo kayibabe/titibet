@@ -12,12 +12,12 @@ TiTiBet is a football betting signals platform. It ingests live fixture and odds
 
 | Layer | Technology |
 |---|---|
-| Backend | FastAPI + Python 3.14, async (asyncio) |
+| Backend | FastAPI + Python 3.13, async (asyncio) |
 | Database | SQLite via aiosqlite + SQLAlchemy 2.x async ORM |
 | Migrations | Custom `run_migrations()` in `app/core/migrations.py` (no Alembic in active use) |
 | Task queue | APScheduler (AsyncIOScheduler) — no Celery |
-| Frontend | React 18 + Vite, Tailwind CSS, lucide-react, recharts |
-| Auth | JWT (python-jose), bcrypt passwords, tier-gated features |
+| Frontend | React 19 + Vite, Tailwind CSS, lucide-react, recharts |
+| Auth | JWT (PyJWT), bcrypt passwords, tier-gated features |
 | Payments | Paystack webhook integration |
 | Data source | API-Football via `app/services/api_client.py` |
 
@@ -87,7 +87,7 @@ titibet/
         │   ├── backtest/        # BacktestControls, BankrollChart
         │   └── layout/          # AppShell, NavBar, Sidebar, BottomNav
         ├── api/                 # Thin fetch wrappers (signals.js, tracker.js, analytics.js, …)
-        ├── store/               # Zustand stores (useSignals, useTracker, useSettings)
+        ├── store/               # Custom hook stores (useSignals, useTracker, useSettings) — module-level cache + pub/sub, no Zustand
         ├── context/             # AuthContext (JWT decode + tier)
         └── hooks/               # useTier
 ```
@@ -232,7 +232,8 @@ API_KEY=                    # empty = no API key guard (local dev)
 CORS_ORIGINS=http://localhost:5173
 SKIP_STARTUP_SYNC=true      # set during dev
 SYNC_TIMES=04:00,23:00
-ANTHROPIC_API_KEY=<key>     # for loss analysis pipeline
+GROQ_API_KEY=<key>          # primary LLM for loss analysis / strategy pipelines (free, console.groq.com)
+TITIBET_CLAUDE_KEY=<key>    # optional Claude fallback — deliberately NOT ANTHROPIC_API_KEY (avoids clashing with Claude Code session tokens)
 ```
 
 ---

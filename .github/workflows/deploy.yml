@@ -6,8 +6,15 @@ on:
       - main
 
 jobs:
+  # Test gate: reuses ci.yml (backend pytest + frontend build).
+  # If any test fails, the deploy job below never runs.
+  test:
+    name: Test gate
+    uses: ./.github/workflows/ci.yml
+
   deploy:
     name: Deploy
+    needs: test
     runs-on: ubuntu-latest
     concurrency:
       group: fly-deploy
