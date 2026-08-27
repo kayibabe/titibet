@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -17,12 +18,16 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+# TiTiBet's default SQLite URL is relative (./titibet.db). Anchor benchmark
+# execution to backend/ so the benchmark uses the application's local database
+# regardless of whether it is launched from the repository root or backend/.
+os.chdir(BACKEND_DIR)
 
 from sqlalchemy import select
 
 import app.services.backtester as backtester_module
 from app.core.database import AsyncSessionLocal
-from app.models import BacktestResult
+from app.models import BacktestResult, Fixture
 from app.quant.backtest_report import summarize_backtest
 from app.services.performance_intelligence import PerformanceWeights
 
@@ -53,6 +58,19 @@ class StrictReplay:
         backtester_module._get_underperforming_leagues = self._old_suppression
 
 
+async def _assert_data_available() -> int:
+    """Fail with a useful message when the local application DB has no fixtures."""
+    async with AsyncSessionLocal() as db:
+        count = int((await db.execute(select(Fixture.id).limit(1))).scalars().first() is not None)
+    if not count:
+        raise RuntimeError(
+            f"No fixture data found in {BACKEND_DIR / 'titibet.db'}. "
+            "Run TiTiBet locally with its populated database or configure DB_URL "
+            "to point this benchmark at the populated database."
+        )
+    return count
+
+
 async def benchmark(
     *,
     date_from: date | None,
@@ -60,6 +78,7 @@ async def benchmark(
     market: str | None,
     strict: bool,
 ) -> dict:
+    await _assert_data_available()
     reports: dict[str, dict] = {}
     with StrictReplay(strict):
         for engine in ("bayesian", "poisson", "dual"):
@@ -106,6 +125,7 @@ async def benchmark(
             "date_to": date_to.isoformat() if date_to else None,
             "market": market,
         },
+        "database": str(BACKEND_DIR / "titibet.db"),
         "engines": reports,
         "methodology": {
             "same_scope": True,
@@ -127,8 +147,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--legacy", action="store_true", help="Use current adaptive state instead of strict replay")
     parser.add_argument(
         "--output",
-        default="quant_engine_benchmark.json",
-        help="Output JSON path (default: quant_engine_benchmark.json)",
+        default=str(Path.cwd() / "quant_engine_benchmark.json"),
+        help="Output JSON path (default: repository root quant_engine_benchmark.json)",
     )
     return parser.parse_args()
 
@@ -142,6 +162,8 @@ async def main() -> None:
         strict=not args.legacy,
     )
     output = Path(args.output)
+    if not output.is_absolute():
+        output = Path.cwd() / output
     output.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
     print(f"\nSaved benchmark report to: {output.resolve()}")
