@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import sqrt
+from math import log, sqrt
 from typing import Iterable
 
 
@@ -80,8 +80,8 @@ def calibration_report(
     epsilon = 1e-15
     brier = sum((p - y) ** 2 for p, y in pairs) / len(pairs)
     ll = sum(
-        -(y * __import__("math").log(max(epsilon, min(1.0 - epsilon, p)))
-          + (1 - y) * __import__("math").log(max(epsilon, min(1.0 - epsilon, 1 - p)))
+        -(y * log(max(epsilon, min(1.0 - epsilon, p)))
+        + (1 - y) * log(max(epsilon, min(1.0 - epsilon, 1.0 - p))))
         for p, y in pairs
     ) / len(pairs)
     bins = calibration_bins(ps, ys, n_bins=n_bins)
