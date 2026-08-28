@@ -13,7 +13,7 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 import os
 import sys
@@ -25,7 +25,6 @@ os.chdir(BACKEND_DIR)
 from app.core.database import AsyncSessionLocal
 from app.models import Fixture, MarketSnapshot
 
-TARGET_MARKETS = ("Under 2.5", "Under 3.5", "Over 2.5", "Away Under 0.5")
 
 async def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
@@ -37,51 +36,85 @@ async def main() -> None:
     args = p.parse_args()
 
     async with AsyncSessionLocal() as db:
-        rows = (await db.execute(
-            select(Fixture.event_date, Fixture.id)
-            .where(Fixture.event_date >= args.date_from, Fixture.event_date <= args.date_to)
-            .where(Fixture.status.in_(["FT", "AET", "PEN"]))
-            .where(Fixture.home_score.is_not(None), Fixture.away_score.is_not(None))
-            .order_by(Fixture.event_date, Fixture.id)
-        )).all()
-        fixture_ids = [int(r.id) for r in rows]
-        settled_by_day = Counter(r.event_date.isoformat() for r in rows if r.event_date)
+        base_filters = (
+            Fixture.event_date >= args.date_from,
+            Fixture.event_date <= args.date_to,
+            Fixture.status.in_(["FT", "AET", "PEN"]),
+            Fixture.home_score.is_not(None),
+            Fixture.away_score.is_not(None),
+        )
 
-        snap_ids: set[int] = set()
-        snap_by_fixture: Counter[int] = Counter()
-        if fixture_ids:
-            snaps = (await db.execute(
-                select(MarketSnapshot.fixture_id)
-                .where(MarketSnapshot.fixture_id.in_(fixture_ids))
-            )).all()
-            for r in snaps:
-                if r.fixture_id is not None:
-                    snap_by_fixture[int(r.fixture_id)] += 1
-                    snap_ids.add(int(r.fixture_id))
+        settled_by_day: Counter[str] = Counter()
+        for day_value, count in (await db.execute(
+            select(Fixture.event_date, func.count(Fixture.id))
+            .where(*base_filters)
+            .group_by(Fixture.event_date)
+        )).all():
+            if day_value:
+                settled_by_day[day_value.isoformat()] = int(count)
 
-        fixture_dates = {int(r.id): r.event_date for r in rows if r.event_date}
+        # Count fixture coverage via a SQL join instead of materialising all
+        # fixture IDs into a giant SQLite IN (...) clause.
+        snapshot_by_day: Counter[str] = Counter()
+        snapshot_fixture_count_by_day: Counter[str] = Counter()
+        snapshot_rows_by_day: Counter[str] = Counter()
+        for day_value, fixture_count, snapshot_rows in (await db.execute(
+            select(
+                Fixture.event_date,
+                func.count(func.distinct(Fixture.id)),
+                func.count(MarketSnapshot.id),
+            )
+            .join(MarketSnapshot, MarketSnapshot.fixture_id == Fixture.id)
+            .where(*base_filters)
+            .group_by(Fixture.event_date)
+        )).all():
+            if day_value:
+                key = day_value.isoformat()
+                snapshot_fixture_count_by_day[key] = int(fixture_count)
+                snapshot_rows_by_day[key] = int(snapshot_rows)
+                snapshot_by_day[key] = int(fixture_count)
+
         coverage_days = []
         day = args.date_from
         while day <= args.date_to:
-            ids = [fid for fid, d in fixture_dates.items() if d == day]
+            key = day.isoformat()
             coverage_days.append({
-                "date": day.isoformat(),
-                "settled_fixtures": len(ids),
-                "fixtures_with_snapshots": sum(1 for fid in ids if fid in snap_ids),
+                "date": key,
+                "settled_fixtures": settled_by_day.get(key, 0),
+                "fixtures_with_snapshots": snapshot_by_day.get(key, 0),
+                "snapshot_rows": snapshot_rows_by_day.get(key, 0),
             })
             day += timedelta(days=1)
 
-        usable = sorted((d, fid) for fid, d in fixture_dates.items() if fid in snap_ids)
+        # Get one row per settled fixture with at least one market snapshot,
+        # ordered chronologically. This remains small even for large databases
+        # and avoids any parameter explosion on SQLite.
+        usable_rows = (await db.execute(
+            select(Fixture.event_date, Fixture.id)
+            .join(MarketSnapshot, MarketSnapshot.fixture_id == Fixture.id)
+            .where(*base_filters)
+            .group_by(Fixture.event_date, Fixture.id)
+            .order_by(Fixture.event_date, Fixture.id)
+        )).all()
+        usable = [(d, int(fid)) for d, fid in usable_rows if d is not None]
+
         split_candidates = []
-        for split_day in sorted({d for d, _ in usable}):
-            discovery_n = sum(1 for d, _ in usable if d < split_day)
-            validation_n = sum(1 for d, _ in usable if d >= split_day)
-            if discovery_n >= args.min_discovery and validation_n >= args.min_validation:
-                split_candidates.append({
-                    "validation_from": split_day.isoformat(),
-                    "discovery_fixtures_with_snapshots": discovery_n,
-                    "validation_fixtures_with_snapshots": validation_n,
-                })
+        if usable:
+            # Cumulative counts by date: O(n) rather than repeatedly scanning
+            # the complete usable fixture list for every candidate split.
+            by_date = Counter(d for d, _ in usable)
+            ordered_dates = sorted(by_date)
+            total = len(usable)
+            discovery_running = 0
+            for split_day in ordered_dates:
+                validation_n = total - discovery_running
+                if discovery_running >= args.min_discovery and validation_n >= args.min_validation:
+                    split_candidates.append({
+                        "validation_from": split_day.isoformat(),
+                        "discovery_fixtures_with_snapshots": discovery_running,
+                        "validation_fixtures_with_snapshots": validation_n,
+                    })
+                discovery_running += by_date[split_day]
 
         first_snapshot_date = usable[0][0].isoformat() if usable else None
         last_snapshot_date = usable[-1][0].isoformat() if usable else None
@@ -89,8 +122,8 @@ async def main() -> None:
             "report_type": "conditional_market_window_audit",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source_scope": {"date_from": args.date_from.isoformat(), "date_to": args.date_to.isoformat()},
-            "settled_fixtures": len(fixture_ids),
-            "fixtures_with_any_snapshots": len(snap_ids),
+            "settled_fixtures": sum(settled_by_day.values()),
+            "fixtures_with_any_snapshots": len(usable),
             "first_snapshot_fixture_date": first_snapshot_date,
             "last_snapshot_fixture_date": last_snapshot_date,
             "daily_coverage": coverage_days,
@@ -106,6 +139,7 @@ async def main() -> None:
     output.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
     print(json.dumps(result, indent=2, default=str))
     print(f"\nSaved market-window audit to: {output.resolve()}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
