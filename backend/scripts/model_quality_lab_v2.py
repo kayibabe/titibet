@@ -75,7 +75,13 @@ def best_price(market: str, bay, poisson_signal_odds: dict) -> float | None:
     return float(odd) if odd and odd > 1 else None
 
 
-async def run_lab(date_from: date | None, date_to: date | None, market: str | None) -> dict:
+async def run_lab(
+    date_from: date | None,
+    date_to: date | None,
+    market: str | None,
+    *,
+    include_observations: bool = False,
+) -> dict:
     observations: dict[str, list[dict]] = defaultdict(list)
     fixtures_seen = 0
 
@@ -157,7 +163,15 @@ async def run_lab(date_from: date | None, date_to: date | None, market: str | No
                     if prob is None or not 0 <= float(prob) <= 1:
                         continue
                     ev = expected_value(float(prob), price) if price and price > 1 else None
-                    observations[mkt].append({"engine": name, "prob": float(prob), "outcome": y, "odds": price, "ev": ev})
+                    observations[mkt].append({
+                        "engine": name,
+                        "prob": float(prob),
+                        "outcome": y,
+                        "odds": price,
+                        "ev": ev,
+                        "fixture_id": fixture.id,
+                        "event_date": fixture.event_date.isoformat() if fixture.event_date else None,
+                    })
 
     markets: dict[str, dict] = {}
     for mkt, rows in sorted(observations.items()):
@@ -185,7 +199,7 @@ async def run_lab(date_from: date | None, date_to: date | None, market: str | No
                 "roi": round(profit / len(priced), 6) if priced else None,
             }
 
-    return {
+    report = {
         "scope": {"date_from": date_from.isoformat() if date_from else None,
                   "date_to": date_to.isoformat() if date_to else None, "market": market},
         "fixtures_seen": fixtures_seen,
@@ -200,6 +214,14 @@ async def run_lab(date_from: date | None, date_to: date | None, market: str | No
             "missing_bayesian_output": "treated as missing observation",
         },
     }
+    if include_observations:
+        # Preserve chronological order for walk-forward calibration while keeping
+        # the normal report compact unless the caller explicitly requests data.
+        report["observations"] = {
+            mkt: sorted(rows, key=lambda r: (r["event_date"] or "", r["fixture_id"] or 0, r["engine"]))
+            for mkt, rows in sorted(observations.items())
+        }
+    return report
 
 
 def parse_args() -> argparse.Namespace:
@@ -208,16 +230,28 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--to", dest="date_to", type=date.fromisoformat)
     p.add_argument("--market")
     p.add_argument("--output", default="model_quality_lab.json")
+    p.add_argument("--observations-output", help="Optional JSON file containing raw point-in-time observations")
     return p.parse_args()
 
 
 async def main() -> None:
     args = parse_args()
-    report = await run_lab(args.date_from, args.date_to, args.market)
+    report = await run_lab(
+        args.date_from, args.date_to, args.market,
+        include_observations=bool(args.observations_output),
+    )
     output = Path(args.output)
     if not output.is_absolute():
         output = Path.cwd() / output
     output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if args.observations_output:
+        obs_output = Path(args.observations_output)
+        if not obs_output.is_absolute():
+            obs_output = Path.cwd() / obs_output
+        obs_output.write_text(json.dumps(report.pop("observations", {}), indent=2), encoding="utf-8")
+        # Re-write the compact report after removing the raw observation payload.
+        output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"Saved point-in-time observations to: {obs_output.resolve()}")
     print(json.dumps(report, indent=2))
     print(f"\nSaved model-quality report to: {output.resolve()}")
 
