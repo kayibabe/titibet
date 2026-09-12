@@ -4,10 +4,13 @@ import { verifyPayment } from '../api/payments'
 
 export default function PaymentCallbackPage({ onDone }) {
   const onDoneRef = useRef(onDone)
-  onDoneRef.current = onDone
   const [status, setStatus] = useState('verifying') // verifying | success | error
   const [tier, setTier] = useState('')
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    onDoneRef.current = onDone
+  }, [onDone])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
