@@ -30,7 +30,7 @@ function FactorBadge({ factor }) {
   )
 }
 
-function WinRateBar({ rate, barColor = 'bg-[var(--accent)]' }) {
+function WinRateBar({ rate }) {
   const pct = Math.min(100, Math.max(0, rate ?? 0))
   const color = pct >= 60 ? 'bg-green-400' : pct >= 45 ? 'bg-yellow-400' : 'bg-red-400'
   return (

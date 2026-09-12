@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react'
-import { Brain, AlertTriangle, TrendingDown, RefreshCw, ChevronDown, ChevronUp, Zap, Shield } from 'lucide-react'
+import { Brain, AlertTriangle, TrendingDown, ChevronDown, ChevronUp, Zap, Shield } from 'lucide-react'
 import { fetchLossAnalysisSummary, triggerLossAnalysisPipeline } from '../../api/analytics'
 import LoadingSpinner from '../shared/LoadingSpinner'
 
@@ -177,7 +177,7 @@ export default function LossAnalysisDashboard() {
     }
   }
 
-  useEffect(() => { load() }, [lookback])
+  useEffect(() => { load() }, [lookback]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const runPipeline = async () => {
     setRunning(true)

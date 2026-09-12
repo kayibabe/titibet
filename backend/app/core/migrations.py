@@ -221,6 +221,11 @@ def _is_duplicate_column_error(exc: BaseException) -> bool:
     return "duplicate column" in msg
 
 
+def _is_no_such_table_error(exc: BaseException) -> bool:
+    """Column migration on a table that hasn't been created yet — not an error."""
+    return "no such table" in str(exc).lower()
+
+
 INDEX_MIGRATIONS: list[tuple[str, str]] = [
     ("ix_provider_obs_received", "CREATE INDEX IF NOT EXISTS ix_provider_obs_received ON provider_observations(received_at)"),
     ("ix_odds_quotes_fixture_market_time", "CREATE INDEX IF NOT EXISTS ix_odds_quotes_fixture_market_time ON odds_quotes(fixture_id, market_key, received_at)"),
@@ -368,6 +373,12 @@ async def run_migrations(engine: AsyncEngine) -> None:
             except OperationalError as e:
                 if _is_duplicate_column_error(e):
                     log.debug("Migration already applied: %s.%s", table, column)
+                elif _is_no_such_table_error(e):
+                    log.debug(
+                        "Column migration deferred for %s.%s — table not yet created "
+                        "(TABLE_MIGRATIONS will create it with this column included)",
+                        table, column,
+                    )
                 else:
                     log.warning(
                         "Migration FAILED for %s.%s — schema may be out of "

@@ -721,7 +721,7 @@ const ANALYTICS_TABS = [
   { id: 'strategy',  label: 'Strategy',  desc: 'Staking, calibration and self-learning' },
 ]
 
-export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNavigate, settings }) {
+export default function AnalyticsPage({ onUpgrade, onApplySignalFilter, onNavigate }) {
   const { isPro } = useTier()
   const [analyticsTab, setAnalyticsTab] = useState('overview')
   const [dateFrom,     setDateFrom]   = useState('')
@@ -1456,7 +1456,7 @@ function StakingSimulator({ dateFrom, dateTo }) {
           { label: 'Flat (1%)', value: finalFlat, color: '#6366f1' },
           { label: '½ Kelly',   value: finalHalf, color: '#f59e0b' },
           { label: 'Full Kelly',value: finalKelly, color: '#10b981' },
-        ].map(({ label, value, color }) => (
+        ].map(({ label, value }) => (
           <div key={label} className="rounded-lg bg-[var(--code-bg)] p-2.5 text-center">
             <p className="text-[10px] text-[var(--text)] opacity-55 mb-0.5">{label}</p>
             <p className={`text-sm font-bold tabular-nums ${roiColor(value)}`}>

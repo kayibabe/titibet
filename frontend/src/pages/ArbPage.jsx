@@ -27,7 +27,7 @@ function fmtKickoff(iso) {
   return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 }
 
-function ArbCard({ opp, bankroll = 1000 }) {
+function ArbCard({ opp }) {
   const [units, setUnits] = useState(100)
   const stakeA = (opp.stake_a / 100 * units).toFixed(2)
   const stakeB = (opp.stake_b / 100 * units).toFixed(2)

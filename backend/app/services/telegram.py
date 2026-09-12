@@ -956,7 +956,7 @@ def build_value_band_message(
         league_line = (
             f"{_esc(fix.country)} · {_esc(fix.league)}" if fix.country else _esc(fix.league or "")
         )
-        best_odd = sig.bayesian_best_odd or sig.poisson_prob and round(1 / sig.poisson_prob, 2)
+        best_odd = sig.bayesian_best_odd
         odd_str = f"@{best_odd:.2f}" if best_odd else ""
         parts.append(
             f"\n<b>{i}. {_esc(fix.home_team)} vs {_esc(fix.away_team)}</b>"
@@ -1421,5 +1421,3 @@ async def push_ingestion_alert(
         logger.info("Ingestion alert sent for %s (status=%s)", date_str, status)
     except Exception as exc:
         logger.warning("push_ingestion_alert failed (non-fatal): %s", exc)
-
-

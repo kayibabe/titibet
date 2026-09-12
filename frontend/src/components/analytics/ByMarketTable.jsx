@@ -18,7 +18,7 @@ function WinRateBar({ rate }) {
   )
 }
 
-function SortIcon({ col, active, dir }) {
+function SortIcon({ active, dir }) {
   if (active) {
     return dir === 'desc'
       ? <ChevronDown size={11} className="text-[var(--accent)]" />

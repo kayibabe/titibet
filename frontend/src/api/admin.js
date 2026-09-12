@@ -176,7 +176,11 @@ export async function backfillDates({ dateFrom, dateTo, dryRun = false } = {}) {
       const err = await res.json()
       detail = err.detail || err.message || detail
     } catch {
-      try { detail = `HTTP ${res.status} — ${(await res.text()).slice(0, 200)}` } catch {}
+      try {
+        detail = `HTTP ${res.status} — ${(await res.text()).slice(0, 200)}`
+      } catch {
+        detail = `HTTP ${res.status}`
+      }
     }
     throw new Error(detail)
   }

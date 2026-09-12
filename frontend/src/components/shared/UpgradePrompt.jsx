@@ -1,4 +1,4 @@
-import { Lock, Zap, Shield } from 'lucide-react'
+import { Lock, Zap } from 'lucide-react'
 
 /**
  * UpgradePrompt — subscription gate component.

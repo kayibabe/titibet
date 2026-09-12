@@ -1,6 +1,7 @@
 import { apiFetch } from './client'
 
 const BASE = '/api/tracker'
+const DEFAULT_FLAT_STAKE = 50_000
 
 export async function syncData(run_date, { force = false } = {}) {
   const params = new URLSearchParams()
@@ -109,12 +110,10 @@ export async function fetchModelInsights() {
  * whenever today's signals are loaded.  source_rule_key='system_auto' lets the
  * TrackerPage distinguish system picks from manual ones.
  */
-const DEFAULT_FLAT_STAKE = 50_000
-
-export async function autoTrackSignal(signal, { bankroll = DEFAULT_FLAT_STAKE } = {}) {
-  const odds =
-    signal.bayesian?.best_odd ||
-    (signal.poisson?.prob > 0 ? parseFloat((1 / signal.poisson.prob).toFixed(2)) : null)
+export async function autoTrackSignal(signal) {
+  // Tracking requires a real executable bookmaker quote. A model-implied
+  // price is not evidence that a user could have obtained that price.
+  const odds = Number(signal.bayesian?.best_odd)
   if (!odds || odds <= 1.01) return null   // nothing valid to track
 
   const stakeAmt = DEFAULT_FLAT_STAKE

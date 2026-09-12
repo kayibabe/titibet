@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { trackPick } from '../../api/tracker'
 import { fmtK } from '../../utils/format'
 
-export default function TrackModal({ signal, bankroll, onClose, onTracked }) {
+export default function TrackModal({ signal, onClose, onTracked }) {
   const recPct = signal.dual_recommended_stake_pct ?? 0.01
   const recAmount = 50_000
   const bestOdd = signal.bayesian?.best_odd ?? null

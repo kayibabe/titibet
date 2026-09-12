@@ -179,8 +179,13 @@ function CleanupPanel() {
 }
 
 function BackfillPanel() {
-  const today = new Date().toISOString().slice(0, 10)
-  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
+  const [{ today, sevenDaysAgo }] = useState(() => {
+    const now = Date.now()
+    return {
+      today: new Date(now).toISOString().slice(0, 10),
+      sevenDaysAgo: new Date(now - 7 * 86400000).toISOString().slice(0, 10),
+    }
+  })
   const [dateFrom, setDateFrom] = useState(sevenDaysAgo)
   const [dateTo, setDateTo]     = useState(today)
   const [result, setResult]     = useState(null)
