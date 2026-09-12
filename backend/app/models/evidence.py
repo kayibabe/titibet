@@ -1,19 +1,21 @@
 """Durable Stage 1 evidence records used for point-in-time replay."""
 
 from datetime import datetime
+
 from sqlalchemy import (
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
     String,
     Text,
-    Float,
     UniqueConstraint,
     func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.core.database import Base
 
 

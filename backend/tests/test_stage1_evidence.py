@@ -10,10 +10,10 @@ from app.models import (
     Fixture,
     FixtureRevision,
     MarketSnapshot,
-    OddsQuote,
     ModelVersion,
+    OddsQuote,
 )
-from app.services.legacy_evidence_importer import import_legacy_evidence, content_sha256
+from app.services.legacy_evidence_importer import content_sha256, import_legacy_evidence
 from app.services.snapshot_store import save_feature_snapshot
 
 
