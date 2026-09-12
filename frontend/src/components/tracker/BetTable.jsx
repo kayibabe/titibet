@@ -3,6 +3,18 @@ import { Download, Lock, Ticket, Bot, User, Pencil, Trash2, X, Clock, CheckCircl
 import { fmtK, fmtPL, fmtPLCompact, marketColor } from '../../utils/format'
 import { updateBet, deleteBet } from '../../api/tracker'
 
+const EVIDENCE_LABELS = {
+  late_entry_unverified: 'Entered after kickoff · unverified',
+  pre_kickoff_incomplete_evidence: 'Entered before kickoff · evidence incomplete',
+  timing_unknown: 'Entry timing unknown',
+}
+
+function EvidenceLabel({ bet }) {
+  return <span className="block text-[10px] text-[var(--text)] opacity-70 mt-1">
+    {EVIDENCE_LABELS[bet.evidence_status] || EVIDENCE_LABELS.timing_unknown}
+  </span>
+}
+
 function fmtLegKickoff(isoStr) {
   if (!isoStr) return null
   const utc = isoStr.endsWith('Z') || isoStr.includes('+') ? isoStr : `${isoStr}Z`
@@ -55,7 +67,7 @@ function betsToCSV(bets) {
   const headers = [
     'Date', 'Kickoff', 'Match', 'League', 'Bookmaker', 'Market', 'Selection', 'Odds',
     'Stake', 'Profit/Loss', 'Result', 'Confidence', 'Rule Key', 'Notes',
-    'Home Score', 'Away Score', 'CLV %', 'Closing Odds', 'Settled At',
+    'Home Score', 'Away Score', 'CLV %', 'Closing Odds', 'Settled At', 'Evidence Status',
   ]
   const rows = bets.map(b => {
     const matchName = b.home_team && b.away_team
@@ -81,6 +93,7 @@ function betsToCSV(bets) {
       b.clv_pct != null ? b.clv_pct.toFixed(2) : '',
       b.closing_odds != null ? b.closing_odds.toFixed(2) : '',
       b.settled_at ?? '',
+      b.evidence_status ?? 'timing_unknown',
     ].map(escapeCsv).join(',')
   })
   return [headers.join(','), ...rows].join('\r\n')
@@ -413,6 +426,7 @@ function BetRow({ bet, onRefresh }) {
             </>
           )}
         </div>
+        <EvidenceLabel bet={bet} />
       </div>
 
       <div className="shrink-0 text-center hidden sm:flex flex-col items-center justify-center min-w-[80px]">
@@ -475,7 +489,9 @@ function AccaRow({ bet, onRefresh }) {
   try {
     const parsed = JSON.parse(bet.notes || '{}')
     legs = parsed.legs || []
-  } catch (_) {}
+  } catch {
+    legs = [] // Legacy notes may be plain text rather than ticket JSON.
+  }
 
   async function handleDelete() {
     if (!window.confirm(`Delete this accumulator?\n${bet.match_name}`)) return

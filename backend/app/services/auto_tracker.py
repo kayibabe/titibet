@@ -44,6 +44,7 @@ from app.core.config import (
     CUP_UNDER35_SUPPRESSED_LEAGUES,
     is_womens_fixture,
 )
+from app.services.tracking_evidence import tracking_rejection
 from app.services.acca_builder import (
     build_acca_candidates, build_accumulator, _ACCA_WIN_PROB_FLOOR,
 )
@@ -176,6 +177,10 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
 
     inserted = 0
     for signal, fixture in rows:
+        rejection = await tracking_rejection(db, signal, fixture)
+        if rejection:
+            logger.info("auto_track: fixture=%s market=%s rejected=%s", fixture.id, signal.market, rejection)
+            continue
         if existing_single_count + inserted >= MAX_DAILY_SINGLE_BETS:
             logger.info(
                 "auto_track_date %s: daily cap of %d reached — stopping early",
@@ -210,13 +215,7 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
             if any(k in league_lower for k in UNDER_GOALS_SUPPRESSED_LEAGUES):
                 continue
 
-        odds = signal.bayesian_best_odd
-        if not odds or odds <= 1.01:
-            prob = signal.poisson_prob or signal.bayesian_prob
-            if prob and 0.0 < prob < 1.0:
-                odds = round(1.0 / prob, 3)
-            else:
-                continue
+        odds = signal.bayesian_best_odd  # Real quote checked above; never synthesize odds.
 
         # Dead-zone odds gate: 1.50–1.64 band has -9.3% ROI across 8 bets.
         # <1.35, 1.35–1.49, and 1.65–2.09 are all profitable; strip the dead zone.

@@ -6,6 +6,7 @@ import BankrollChart from '../components/backtest/BankrollChart'
 import MarketStatsTable from '../components/backtest/MarketStatsTable'
 import UpgradePrompt from '../components/shared/UpgradePrompt'
 import useTier from '../hooks/useTier'
+import { useAuth } from '../context/AuthContext'
 
 function Section({ icon: Icon, title, subtitle, children }) {
   return (
@@ -46,6 +47,8 @@ function RunContext({ params }) {
 
 export default function BacktestPage({ onUpgrade }) {
   const { isPro } = useTier()
+  const { user } = useAuth()
+  const isAdmin = !!user?.is_admin
   const [loading,      setLoading]      = useState(false)
   const [summary,      setSummary]      = useState(null)
   const [curve,        setCurve]        = useState([])
@@ -53,6 +56,7 @@ export default function BacktestPage({ onUpgrade }) {
   const [lastParams,   setLastParams]   = useState(null)
 
   async function handleRun(params) {
+    if (!isAdmin) return
     setLoading(true)
     setError(null)
     setSummary(null)
@@ -87,7 +91,8 @@ export default function BacktestPage({ onUpgrade }) {
 
       {/* Controls */}
       <Section icon={FlaskConical} title="Backtest Configuration">
-        <BacktestControls onRun={handleRun} loading={loading} />
+        <BacktestControls onRun={handleRun} loading={loading} disabled={!isAdmin} />
+        {!isAdmin && <p className="mt-2 text-sm text-[var(--text)]">An administrator must run shared backtests.</p>}
       </Section>
 
       {/* Error */}

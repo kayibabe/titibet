@@ -17,6 +17,7 @@ This costs zero API calls on hot-reload restarts during development.
 The scheduled jobs still run normally — only the one-shot startup pull is skipped.
 """
 from __future__ import annotations
+from app.services.learning_suggestions import save_suggestion
 
 import logging
 import os
@@ -462,10 +463,7 @@ async def _cleanup_old_snapshots() -> None:
     30 days.  These odds are no longer needed for signal computation or settlement
     and are the primary driver of DB growth (1.15 M rows → ~300 MB).
 
-    Also deactivates learning proposals whose change_type is no longer consumed
-    by the current signal engine (tier_suppression, quality_threshold) or whose
-    target is already covered by a hard-coded ban in DISABLED_MARKETS /
-    DISABLED_LEAGUES.
+    Does not alter learning proposals. Rule retirement requires administrator review.
     """
     from sqlalchemy import text
     from app.core.config import DISABLED_MARKETS, DISABLED_LEAGUES
@@ -490,52 +488,7 @@ async def _cleanup_old_snapshots() -> None:
             await db.execute(text("VACUUM"))
             logger.info("Cleanup: VACUUM complete — freed disk space reclaimed")
 
-            # 2. Deactivate stale learning proposals
-            #    — change types not consumed by current code
-            unused_types = ("tier_suppression", "quality_threshold")
-            r1 = await db.execute(text("""
-                UPDATE learning_proposals SET is_active=0
-                WHERE is_active=1 AND change_type IN ('tier_suppression','quality_threshold')
-            """))
-            #    — market_suppression whose target is already in DISABLED_MARKETS
-            disabled_mkt_list = ", ".join(f"'{m}'" for m in DISABLED_MARKETS)
-            r2 = await db.execute(text(f"""
-                UPDATE learning_proposals SET is_active=0
-                WHERE is_active=1
-                  AND change_type='market_suppression'
-                  AND target IN ({disabled_mkt_list})
-            """))
-            #    — league_suppression whose target is already in DISABLED_LEAGUES
-            disabled_lg_list = ", ".join(f"'{lg}'" for lg in DISABLED_LEAGUES)
-            r3 = await db.execute(text(f"""
-                UPDATE learning_proposals SET is_active=0
-                WHERE is_active=1
-                  AND change_type='league_suppression'
-                  AND lower(trim(target)) IN ({disabled_lg_list})
-            """))
-            #    — market_odds_ceiling proposals whose target market is already in DISABLED_MARKETS
-            r4 = await db.execute(text(f"""
-                UPDATE learning_proposals SET is_active=0
-                WHERE is_active=1
-                  AND change_type='market_odds_ceiling'
-                  AND target IN ({disabled_mkt_list})
-            """))
-            # 2026-07-10: expire unimplemented proposal types. The signal engine and
-            # auto_tracker only consume league_suppression and kelly_fraction_adj.
-            # rule_disable and min_confidence are not wired to any consumer and were
-            # written by the LLM with free-text targets that don't match real market
-            # names. market_suppression is also unimplemented in the signal path.
-            # market_odds_ceiling (non-DISABLED target) is similarly unconsumed.
-            r5 = await db.execute(text("""
-                UPDATE learning_proposals SET is_active=0
-                WHERE is_active=1
-                  AND change_type IN ('rule_disable', 'min_confidence',
-                                      'market_suppression', 'market_odds_ceiling')
-            """))
-            deactivated = r1.rowcount + r2.rowcount + r3.rowcount + r4.rowcount + r5.rowcount
-            await db.commit()
-            if deactivated:
-                logger.info("Cleanup: deactivated %d stale learning proposals.", deactivated)
+            # Active rules are preserved; retirement requires administrator review.
 
         except Exception:
             logger.exception("Cleanup job failed — continuing normally")
@@ -709,9 +662,9 @@ async def _daily_calibration_job() -> None:
                             f"Backtested: ROI={roi:.1%} over {len(market_bets)} settled bets — "
                             "negative ROI confirms suppression justified."
                         ),
-                        is_active=True,
+                        is_active=False,
                     )
-                    db.add(new_proposal)
+                    new_proposal = await save_suggestion(db, new_proposal)
                     await db.commit()
                     logger.warning(
                         "Calibration SUPPRESSION proposed: %s (brier_skill failed 2 windows, ROI=%.1f%%)",

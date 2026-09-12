@@ -1,16 +1,16 @@
 import { useState } from 'react'
-import { Percent, FlaskConical, Settings as SettingsIcon } from 'lucide-react'
+import { Percent, FlaskConical, Settings as SettingsIcon, Activity } from 'lucide-react'
 import ArbPage from './ArbPage'
 import BacktestPage from './BacktestPage'
 import SettingsPage from './SettingsPage'
+import QuantLabPage from './QuantLabPage'
 
-// Tools — a single home for low-frequency, power-user, and configuration
-// surfaces. Keeps the primary nav focused on the daily-driver pages
-// (Signals · Tracker · Analytics) while keeping these one tap away.
+// Tools — low-frequency, power-user, and configuration surfaces.
 const TABS = [
   { id: 'arbitrage', label: 'Arbitrage', icon: Percent },
   { id: 'backtest',  label: 'Backtest',  icon: FlaskConical },
-  { id: 'settings',  label: 'Settings',  icon: SettingsIcon },
+  { id: 'quantlab',  label: 'Quant Lab', icon: Activity },
+  { id: 'settings',  label: 'Settings', icon: SettingsIcon },
 ]
 
 export default function ToolsPage({ settings, onUpgrade, onUpdate, initialTab = 'arbitrage' }) {
@@ -18,7 +18,6 @@ export default function ToolsPage({ settings, onUpgrade, onUpdate, initialTab = 
 
   return (
     <div className="space-y-5">
-      {/* Tab bar */}
       <div className="flex gap-1 border-b border-[var(--border)] overflow-x-auto">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
@@ -37,8 +36,9 @@ export default function ToolsPage({ settings, onUpgrade, onUpdate, initialTab = 
       </div>
 
       {tab === 'arbitrage' && <ArbPage />}
-      {tab === 'backtest'  && <BacktestPage settings={settings} onUpgrade={onUpgrade} />}
-      {tab === 'settings'  && <SettingsPage settings={settings} onUpdate={onUpdate} />}
+      {tab === 'backtest' && <BacktestPage settings={settings} onUpgrade={onUpgrade} />}
+      {tab === 'quantlab' && <QuantLabPage />}
+      {tab === 'settings' && <SettingsPage settings={settings} onUpdate={onUpdate} />}
     </div>
   )
 }

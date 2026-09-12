@@ -18,6 +18,7 @@ Both pipelines write to LearningProposal with their own change_type namespace so
 never overwrite each other's slots.
 """
 from __future__ import annotations
+from app.services.learning_suggestions import save_suggestion
 
 import asyncio
 import dataclasses
@@ -561,106 +562,13 @@ def _evaluate_proposal(
 # ── Suppression reactivation monitor ──────────────────────────────────────────
 
 async def check_suppression_reactivations(db: AsyncSession) -> int:
+    """Automatic recovery cannot change active production rules in proposal-only mode.
+
+    Existing suppressions remain in force until an administrator reviews them.
     """
-    Runs after every settlement batch. Checks all active market_suppression proposals
-    to see if the suppressed market has recovered. If ROI > -2% over the last 30 bets
-    SINCE suppression was applied, deactivates the proposal (reactivates the market).
+    logger.info("Suppression reactivation is review-only; no rules changed")
+    return 0
 
-    Also deactivates any proposal older than SUPPRESSION_HARD_EXPIRY_DAYS regardless
-    of ROI (time-based hard expiry).
-
-    Returns the number of proposals reactivated.
-    """
-    now = datetime.now(timezone.utc)
-    hard_expiry_cutoff = now - timedelta(days=SUPPRESSION_HARD_EXPIRY_DAYS)
-
-    # Fetch all active market_suppression proposals.
-    result = await db.execute(
-        select(LearningProposal).where(
-            LearningProposal.change_type == "market_suppression",
-            LearningProposal.is_active == True,  # noqa: E712
-        )
-    )
-    active_suppressions: list[LearningProposal] = result.scalars().all()
-
-    if not active_suppressions:
-        return 0
-
-    reactivated = 0
-
-    for proposal in active_suppressions:
-        market = proposal.target or ""
-
-        # Normalise created_at to UTC for comparison.
-        created_at = proposal.created_at
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-
-        # ── Hard expiry: deactivate if proposal is older than 90 days ─────────
-        if created_at <= hard_expiry_cutoff:
-            proposal.is_active = False
-            reactivated += 1
-            logger.info(
-                "Reactivating suppressed market %s: proposal age %d days exceeds hard expiry of %d days",
-                market,
-                (now - created_at).days,
-                SUPPRESSION_HARD_EXPIRY_DAYS,
-            )
-            continue
-
-        # ── ROI-based reactivation: check post-suppression performance ────────
-        # Query settled bets on this market placed AFTER the suppression was written.
-        # Limit to REACTIVATION_LOOKBACK_BETS most recent bets for efficiency.
-        _ADVISORY_KEYS_RA = ("scout_pick", "strategist_pick", "skeptic_pick")
-        bets_result = await db.execute(
-            select(TrackedBet)
-            .where(
-                TrackedBet.market_type == market,
-                TrackedBet.result_status.in_(["Won", "Lost"]),
-                TrackedBet.created_at >= created_at,
-                TrackedBet.source_rule_key.notin_(_ADVISORY_KEYS_RA),
-            )
-            .order_by(TrackedBet.created_at.desc())
-            .limit(REACTIVATION_LOOKBACK_BETS)
-        )
-        post_bets: list[TrackedBet] = bets_result.scalars().all()
-        n = len(post_bets)
-
-        if n < REACTIVATION_MIN_BETS:
-            # Not enough data yet — leave suppression in place.
-            logger.debug(
-                "Suppression check for %s: only %d post-suppression bets (need %d) — skipping",
-                market, n, REACTIVATION_MIN_BETS,
-            )
-            continue
-
-        # Calculate ROI using stake and profit_loss fields (mirrors TrackedBet usage in analytics.py).
-        total_stake = sum(b.stake for b in post_bets if b.stake)
-        total_pl = sum(b.profit_loss for b in post_bets if b.profit_loss is not None)
-        roi = (total_pl / total_stake) if total_stake > 0 else 0.0
-
-        if roi > REACTIVATION_ROI_THRESHOLD:
-            proposal.is_active = False
-            reactivated += 1
-            logger.info(
-                "Reactivating suppressed market %s: ROI=%.1f%% over %d post-suppression bets "
-                "(threshold: %.1f%%)",
-                market, roi * 100, n, REACTIVATION_ROI_THRESHOLD * 100,
-            )
-        else:
-            logger.debug(
-                "Suppression maintained for %s: ROI=%.1f%% over %d post-suppression bets "
-                "(needs > %.1f%%)",
-                market, roi * 100, n, REACTIVATION_ROI_THRESHOLD * 100,
-            )
-
-    if reactivated:
-        await db.commit()
-
-    return reactivated
-
-
-# ── Pipeline orchestrator ──────────────────────────────────────────────────────
 
 async def run_strategy_pipeline(db: AsyncSession) -> StrategyPipelineReport:
     """
@@ -723,24 +631,8 @@ async def run_strategy_pipeline(db: AsyncSession) -> StrategyPipelineReport:
                 continue
 
             try:
-                # Deactivate existing active proposal for the same slot
-                existing_result = await db.execute(
-                    select(LearningProposal).where(
-                        LearningProposal.change_type == change_type,
-                        LearningProposal.target == target,
-                        LearningProposal.is_active == True,  # noqa: E712
-                    )
-                )
-                for old_row in existing_result.scalars().all():
-                    old_row.is_active = False
-                    logger.info(
-                        "LearningProposal deactivated: change_type=%s target=%s (superseded by new proposal)",
-                        old_row.change_type, old_row.target,
-                    )
-
-                await db.flush()  # Flush deactivation before insert
-
-                # Insert new active proposal
+                # Suggestions never supersede or activate production rules.
+                # Save inactive for review
                 new_proposal = LearningProposal(
                     change_type=change_type,
                     target=target,
@@ -748,9 +640,9 @@ async def run_strategy_pipeline(db: AsyncSession) -> StrategyPipelineReport:
                     rationale=proposal.get("rationale"),
                     confidence=proposal.get("confidence"),
                     backtest_note=proposal.get("backtest_note"),
-                    is_active=True,
+                    is_active=False,
                 )
-                db.add(new_proposal)
+                new_proposal = await save_suggestion(db, new_proposal)
                 await db.commit()
                 logger.info(
                     "Strategy pipeline persisted accepted proposal to LearningProposal: %s/%s",

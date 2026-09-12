@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.core.auth import require_admin
 
 import asyncio
 from datetime import date, datetime
@@ -12,6 +13,8 @@ from app.core.database import get_db, AsyncSessionLocal
 from app.models import BacktestResult
 import app.services.backtester as _bt_svc
 from app.services.backtester import run_backtest, _summarise
+from app.quant.backtest_report import summarize_backtest
+from app.quant.model_comparison import compare_engines
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 
@@ -19,7 +22,7 @@ router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 _job: dict = {"running": False, "started_at": None, "finished_at": None, "params": {}, "error": None}
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_admin)])
 async def run(
     request: Request,
     body: dict = {},
@@ -75,7 +78,7 @@ async def job_status():
     return {**_job, "progress": _bt_svc.backtest_progress}
 
 
-@router.post("/cancel")
+@router.post("/cancel", dependencies=[Depends(require_admin)])
 async def cancel():
     global _job
     if not _job["running"]:
@@ -114,6 +117,92 @@ async def summary(
     rows = await db.execute(q)
     results = list(rows.scalars().all())
     return _summarise(results)
+
+
+@router.get("/validation")
+async def validation(
+    market: Optional[str] = Query(None),
+    engine: Optional[str] = Query(None),
+    confidence: Optional[str] = Query(None),
+    min_baseline_n: int = Query(30, ge=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return quantitative validation diagnostics for persisted backtest results.
+
+    This endpoint is diagnostic only. It does not modify signals or learning rules.
+    """
+    q = select(BacktestResult)
+    if market:
+        q = q.where(BacktestResult.market == market)
+    if engine:
+        q = q.where(BacktestResult.source_engine == engine)
+    if confidence:
+        q = q.where(BacktestResult.dual_confidence == confidence)
+    q = q.order_by(BacktestResult.fixture_date, BacktestResult.id)
+    rows = await db.execute(q)
+    report = summarize_backtest(rows.scalars().all(), min_baseline_n=min_baseline_n)
+    return {
+        "n": report.n,
+        "wins": report.wins,
+        "hit_rate": report.hit_rate,
+        "hit_rate_ci": report.hit_rate_ci,
+        "brier": report.brier,
+        "log_loss": report.log_loss,
+        "calibration_error": report.calibration_error,
+        "mean_model_probability": report.mean_model_probability,
+        "mean_implied_probability": report.mean_implied_probability,
+        "mean_ev": report.mean_ev,
+        "positive_ev_rate": report.positive_ev_rate,
+        "roi": report.roi,
+        "significance_vs_baseline": report.significance_vs_baseline,
+    }
+
+
+@router.get("/compare-engines")
+async def compare_backtest_engines(
+    market: Optional[str] = Query(None),
+    min_n: int = Query(30, ge=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare persisted Bayesian/Poisson/Dual runs using common diagnostics.
+
+    This endpoint never runs a model and never changes stored results. It is an
+    experiment-reporting endpoint. Candidate engines should only be promoted
+    after a strict chronological, point-in-time experiment with unseen data.
+    """
+    q = select(BacktestResult).order_by(BacktestResult.fixture_date, BacktestResult.id)
+    if market:
+        q = q.where(BacktestResult.market == market)
+    rows = list((await db.execute(q)).scalars().all())
+    comparisons = compare_engines(rows)
+
+    output = []
+    for item in comparisons:
+        report = item.report
+        output.append({
+            "engine": item.engine,
+            "eligible_for_comparison": report.get("n", 0) >= min_n,
+            "n": report.get("n", 0),
+            "wins": report.get("wins", 0),
+            "hit_rate": report.get("hit_rate", 0.0),
+            "hit_rate_ci": report.get("hit_rate_ci", (0.0, 0.0)),
+            "brier": report.get("brier"),
+            "log_loss": report.get("log_loss"),
+            "calibration_error": report.get("calibration_error"),
+            "mean_model_probability": report.get("mean_model_probability"),
+            "mean_implied_probability": report.get("mean_implied_probability"),
+            "mean_ev": report.get("mean_ev"),
+            "positive_ev_rate": report.get("positive_ev_rate"),
+            "roi": report.get("roi", 0.0),
+            "significance_vs_baseline": report.get("significance_vs_baseline"),
+        })
+
+    return {
+        "market": market,
+        "min_n": min_n,
+        "results": output,
+        "methodology": "Persisted experiment comparison only; use strict chronological point-in-time replay before promotion.",
+    }
 
 
 @router.get("/bankroll-curve")

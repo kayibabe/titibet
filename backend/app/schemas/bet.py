@@ -31,6 +31,9 @@ class BetUpdate(BaseModel):
 
 
 class BetOut(BaseModel):
+    # Timing classification only; complete prospective lineage is not yet stored.
+    evidence_status: str = "timing_unknown"
+    evidence_version: str = "entry_timing_v1"
     id: int
     fixture_id: Optional[int] = None
     bookmaker: str

@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
   # Allows deploy.yml to reuse this workflow as a pre-deploy gate.
   workflow_call:
 
@@ -35,6 +36,33 @@ jobs:
         # empty API keys) — no secrets are needed and no external calls happen.
         run: python -m pytest -q
 
+  backend-static:
+    name: Backend static checks (reviewed surface)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Ruff
+        run: ruff check app/core/database.py app/models/evidence.py app/services/legacy_evidence_importer.py app/services/snapshot_store.py tests/test_stage1_evidence.py
+
+      - name: Mypy
+        run: mypy --ignore-missing-imports --follow-imports=skip app/models/evidence.py app/services/legacy_evidence_importer.py app/services/snapshot_store.py
+
   frontend-build:
     name: Frontend build (vite)
     runs-on: ubuntu-latest
@@ -57,3 +85,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Lint reviewed surface
+        run: npm run lint:reviewed

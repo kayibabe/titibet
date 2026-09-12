@@ -1,4 +1,5 @@
 ﻿from __future__ import annotations
+from app.core.auth import require_admin
 from datetime import date, datetime
 from typing import Optional
 
@@ -19,6 +20,7 @@ from app.schemas.bet import (
 from app.services import ingestion, settlement
 from app.services.analytics import build_analytics
 from app.services.clv import compute_clv_all
+from app.services.tracking_evidence import classify_entry
 from app.services.performance_intelligence import compute_performance_weights
 
 router = APIRouter(prefix="/api/tracker", tags=["tracker"])
@@ -90,6 +92,7 @@ def _bet_out_from_models(bet: TrackedBet, fixture: Fixture | None = None) -> Bet
         away_score=fixture.away_score if fixture else None,
         fixture_status=fixture.status if fixture else None,
         kickoff_at=fixture.kickoff_at if fixture else None,
+        evidence_status=classify_entry(bet.created_at, fixture.kickoff_at if fixture else None),
     )
 
 
@@ -159,7 +162,7 @@ async def _track_or_reuse_bet(
 
 # ── Sync ─────────────────────────────────────────────────────────────────────
 
-@router.post("/sync")
+@router.post("/sync", dependencies=[Depends(require_admin)])
 async def sync(
     run_date: Optional[str] = Query(None),
     force: bool = Query(False, description="Bypass cooldown + cache guards to recover missing scores"),
@@ -402,7 +405,7 @@ async def list_bets(
         )
         .select_from(TrackedBet)
         .outerjoin(FixtureModel, TrackedBet.fixture_id == FixtureModel.id)
-        .order_by(TrackedBet.created_at.desc())
+        .order_by(TrackedBet.created_at.desc(), TrackedBet.id.desc())
         .limit(limit)
     )
 
@@ -459,6 +462,7 @@ async def list_bets(
             home_score=row["home_score"], away_score=row["away_score"],
             fixture_status=row["fixture_status"],
             kickoff_at=row["kickoff_at"],
+            evidence_status=classify_entry(row["created_at"], row["kickoff_at"]),
         ))
     return out
 
@@ -748,6 +752,7 @@ async def settle_results(
     target = date.fromisoformat(run_date) if run_date else None
 
     if force_sync:
+        require_admin(current_user)
         # Re-sync the target date (or all past dates with pending bets) to refresh
         # fixture statuses from the API before running settlement.
         if target:

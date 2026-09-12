@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { RefreshCw, CheckCircle, TrendingUp, Lock, Upload, Settings2, Bot, User, Layers, ListChecks, ArrowRight, FileUp } from 'lucide-react'
 import { useTracker } from '../store/useTracker'
 import { syncData, computeCLV, deduplicateBets, normalizeStakes } from '../api/tracker'
@@ -10,7 +10,6 @@ import BetStatsBar from '../components/tracker/BetStatsBar'
 import ImportCSVModal from '../components/tracker/ImportCSVModal'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import DatePicker from '../components/shared/DatePicker'
-import { fmtK } from '../utils/format'
 import useTier from '../hooks/useTier'
 
 const STATUS_OPTIONS = ['', 'Pending', 'Won', 'Lost', 'Void']
@@ -37,7 +36,7 @@ function toYMD(d) {
   return d.toISOString().slice(0, 10)
 }
 
-export default function TrackerPage({ user, settings, onUpgrade }) {
+export default function TrackerPage({ user, onUpgrade }) {
   const { isPro } = useTier()
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo]     = useState('')
@@ -64,7 +63,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
 
   // After 8 s of loading with no data, surface a hint so the user isn't staring at a blank spinner
   useEffect(() => {
-    if (!loading || bets.length > 0) { setSlowLoad(false); return }
+    if (!loading || bets.length > 0) return undefined
     const id = setTimeout(() => setSlowLoad(true), 8_000)
     return () => clearTimeout(id)
   }, [loading, bets.length])
@@ -83,7 +82,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     if (sourceFilter === 'system') return bets.filter(isSystemPick)
     if (sourceFilter === 'manual') return bets.filter(isManualPick)
     return showAdvisory ? bets : bets.filter(b => !isAdvisoryPick(b))
-  }, [bets, sourceFilter, showAdvisory]) // eslint-disable-line
+  }, [bets, sourceFilter, showAdvisory])
 
   // Analytics summary for the currently filtered view — same backend
   // build_analytics() implementation the Analytics page uses, scoped with
@@ -222,7 +221,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
     <div className="space-y-6">
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={handleSync} disabled={syncing}
+        <button onClick={handleSync} disabled={syncing || !user?.is_admin} title={!user?.is_admin ? "Administrator access required" : undefined}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)] text-sm text-[var(--text)] hover:text-[var(--text-h)] hover:bg-[var(--code-bg)] disabled:opacity-50 transition-colors">
           <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
           {syncing ? 'Syncing…' : 'Sync'}
@@ -451,7 +450,7 @@ export default function TrackerPage({ user, settings, onUpgrade }) {
       {loading && (
         <div className="flex flex-col items-center gap-3 py-8">
           <LoadingSpinner />
-          {slowLoad && (
+          {slowLoad && loading && (
             <p className="text-xs text-[var(--text)] opacity-60 text-center max-w-xs">
               Server is starting up — this can take up to 30 seconds on first load.
             </p>

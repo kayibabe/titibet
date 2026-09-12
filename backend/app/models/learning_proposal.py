@@ -4,7 +4,7 @@ learning_proposal.py — Persisted output of the Threshold Tuner + Backtester pi
 Each row represents a concrete, backtester-validated threshold change.
 Lifecycle:
   1. loss_analysis_agent / strategy_pipeline write accepted proposals here
-     (deactivating any prior active row for the same target first).
+     as inactive suggestions, preserving prior active rows.
   2. Signal scoring reads active proposals to apply threshold overrides.
   3. Rows are never hard-deleted — set is_active = False to retire them.
 """
@@ -51,7 +51,7 @@ class LearningProposal(Base):
 
     # Only one active proposal per (change_type, target) should be True at once.
     # When a new proposal supersedes an older one, the old row is set False.
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

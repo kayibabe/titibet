@@ -1,4 +1,5 @@
 ﻿from __future__ import annotations
+from app.core.auth import require_admin
 
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -1294,7 +1295,7 @@ async def fixture_signals(fixture_id: int, db: AsyncSession = Depends(get_db)):
     ]
 
 
-@router.post("/compute")
+@router.post("/compute", dependencies=[Depends(require_admin)])
 async def compute_signals(
     body: dict = {},
     db: AsyncSession = Depends(get_db),

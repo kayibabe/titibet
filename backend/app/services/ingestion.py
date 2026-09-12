@@ -26,13 +26,15 @@ from __future__ import annotations
 
 import logging
 import os
+import hashlib
+import json
 from datetime import datetime, date, timedelta, timezone
 
 from sqlalchemy import select, update, delete, func as sql_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_league_tier, DISABLED_LEAGUES
-from app.models import Fixture, MarketSnapshot, IngestionRun
+from app.models import Fixture, MarketSnapshot, IngestionRun, ProviderObservation, OddsQuote, FixtureRevision
 from app.services import api_client
 
 logger = logging.getLogger("titibet.ingestion")
@@ -181,6 +183,18 @@ async def sync_date(
         )
         fixture_rows = await api_client.fetch_fixtures(date_str, force=force or past_with_live)
         fixtures_upserted = 0
+        fixture_received_at = datetime.now(timezone.utc)
+        fixture_payload = json.dumps(fixture_rows, sort_keys=True, separators=(",", ":"), default=str)
+        fixture_observation = ProviderObservation(
+            provider="api-football",
+            endpoint="/fixtures",
+            request_scope=date_str,
+            received_at=fixture_received_at,
+            payload_json=fixture_payload,
+            content_sha256=hashlib.sha256(fixture_payload.encode("utf-8")).hexdigest(),
+        )
+        db.add(fixture_observation)
+        await db.flush()
 
         # Statuses that signal a fixture is not playable (cancelled, postponed, etc.)
         # For new fixtures: skip entirely — no point creating a row for a dead game.
@@ -281,6 +295,35 @@ async def sync_date(
         fixture_map = {row.external_fixture_id: row.id for row in fixture_rows_db}
         fixture_status = {row.id: row.status for row in fixture_rows_db}
         all_fixture_ids = list(fixture_map.values())
+
+        # Preserve every provider view.  The mutable Fixture row remains the
+        # compatibility projection used by current callers.
+        for row in fixture_rows:
+            internal_id = fixture_map.get(row.get("external_fixture_id"))
+            if internal_id is None:
+                continue
+            previous = await db.scalar(
+                select(FixtureRevision)
+                .where(FixtureRevision.fixture_id == internal_id)
+                .order_by(FixtureRevision.received_at.desc(), FixtureRevision.id.desc())
+                .limit(1)
+            )
+            db.add(FixtureRevision(
+                fixture_id=internal_id,
+                external_fixture_id=row.get("external_fixture_id"),
+                event_date=str(row.get("event_date")) if row.get("event_date") else None,
+                kickoff_at=row.get("kickoff_at"),
+                status=row.get("status"),
+                home_score=row.get("home_score"),
+                away_score=row.get("away_score"),
+                home_score_ht=row.get("home_score_ht"),
+                away_score_ht=row.get("away_score_ht"),
+                provider_observation_id=fixture_observation.id,
+                received_at=fixture_received_at,
+                supersedes_id=previous.id if previous else None,
+                evidence_class="provider",
+            ))
+        await db.commit()
 
         # Which fixture IDs already have at least one snapshot in the DB?
         fixtures_with_snapshots: set[int] = set()
@@ -448,6 +491,46 @@ async def sync_date(
             key = (internal_id, row["bookmaker"], row["market_type"], row["selection_name"])
             deduped[key] = row
 
+        # Stage 1 append-only evidence record. The latest-state MarketSnapshot
+        # projection below may be replaced on a later sync; these quotes remain
+        # available for point-in-time replay and audit.
+        evidence_received_at = datetime.now(timezone.utc)
+        evidence_rows = [
+            {
+                "fixture_id": internal_id,
+                "bookmaker": bookmaker,
+                "market_type": market_type,
+                "selection_name": selection_name,
+                "odds": row.get("odds"),
+                "pulled_at": str(row.get("pulled_at", evidence_received_at)),
+            }
+            for (internal_id, bookmaker, market_type, selection_name), row in deduped.items()
+        ]
+        evidence_payload = json.dumps(evidence_rows, sort_keys=True, separators=(",", ":"), default=str)
+        observation = ProviderObservation(
+            provider="api-football",
+            endpoint="/odds",
+            request_scope=date_str,
+            received_at=evidence_received_at,
+            payload_json=evidence_payload,
+            content_sha256=hashlib.sha256(evidence_payload.encode("utf-8")).hexdigest(),
+        )
+        db.add(observation)
+        await db.flush()
+        for (internal_id, bookmaker, market_type, selection_name), row in deduped.items():
+            pulled_at = row.get("pulled_at", evidence_received_at)
+            db.add(OddsQuote(
+                fixture_id=internal_id,
+                market_key=market_type,
+                bookmaker=bookmaker,
+                selection_name=selection_name,
+                odds=row["odds"],
+                pulled_at=pulled_at,
+                received_at=evidence_received_at,
+                provider_observation_id=observation.id,
+                availability="prematch",
+            ))
+
         for (internal_id, bookmaker, market_type, selection_name), row in deduped.items():
             db.add(MarketSnapshot(
                 fixture_id=internal_id,
@@ -476,4 +559,3 @@ async def sync_date(
         raise
 
     return run
-
