@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import logging
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -131,7 +132,7 @@ async def verify_transaction(reference: str) -> dict[str, Any]:
     """
     async with httpx.AsyncClient(timeout=15) as client:
         res = await client.get(
-            f"{PAYSTACK_BASE}/transaction/verify/{reference}",
+            f"{PAYSTACK_BASE}/transaction/verify/{quote(reference, safe='')}",
             headers=_headers(),
         )
         data = res.json()
