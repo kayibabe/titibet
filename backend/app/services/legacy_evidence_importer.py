@@ -5,6 +5,7 @@ records the time this process received the row, and marks the result as legacy.
 It never claims that import time was the original availability time and never
 updates or deletes a legacy row.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -27,7 +28,11 @@ class LegacyImportReport:
 
 
 def _utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
 
 
 async def import_legacy_evidence(
@@ -44,11 +49,20 @@ async def import_legacy_evidence(
     """
     receipt = _utc(imported_at or datetime.now(timezone.utc))
     if fixture_ids is None:
-        fixture_count = int((await db.execute(text("SELECT COUNT(*) FROM fixtures"))).scalar_one())
-        quote_count = int((await db.execute(text(
-            "SELECT COUNT(*) FROM market_snapshots WHERE odds IS NOT NULL AND pulled_at IS NOT NULL"
-        ))).scalar_one())
-        revision_result = await db.execute(text("""
+        fixture_count = int(
+            (await db.execute(text("SELECT COUNT(*) FROM fixtures"))).scalar_one()
+        )
+        quote_count = int(
+            (
+                await db.execute(
+                    text(
+                        "SELECT COUNT(*) FROM market_snapshots WHERE odds IS NOT NULL AND pulled_at IS NOT NULL"
+                    )
+                )
+            ).scalar_one()
+        )
+        revision_result = await db.execute(
+            text("""
             INSERT INTO fixture_revisions
                 (fixture_id, external_fixture_id, event_date, kickoff_at, status,
                  home_score, away_score, home_score_ht, away_score_ht,
@@ -60,8 +74,11 @@ async def import_legacy_evidence(
             WHERE NOT EXISTS (
                 SELECT 1 FROM fixture_revisions r WHERE r.legacy_fixture_id = f.id
             )
-        """), {"received_at": receipt.replace(tzinfo=None)})
-        quote_result = await db.execute(text("""
+        """),
+            {"received_at": receipt.replace(tzinfo=None)},
+        )
+        quote_result = await db.execute(
+            text("""
             INSERT INTO odds_quotes
                 (fixture_id, market_key, market_version, bookmaker, selection_name,
                  odds, pulled_at, received_at, availability, evidence_class,
@@ -74,7 +91,9 @@ async def import_legacy_evidence(
               AND NOT EXISTS (
                   SELECT 1 FROM odds_quotes q WHERE q.legacy_snapshot_id = ms.id
               )
-        """), {"received_at": receipt.replace(tzinfo=None)})
+        """),
+            {"received_at": receipt.replace(tzinfo=None)},
+        )
         await db.commit()
         return LegacyImportReport(
             fixtures_seen=fixture_count,
@@ -93,28 +112,40 @@ async def import_legacy_evidence(
 
     for fixture in fixtures:
         revision = await db.scalar(
-            select(FixtureRevision).where(FixtureRevision.legacy_fixture_id == fixture.id)
+            select(FixtureRevision).where(
+                FixtureRevision.legacy_fixture_id == fixture.id
+            )
         )
         if revision is None:
-            db.add(FixtureRevision(
-                fixture_id=fixture.id,
-                external_fixture_id=fixture.external_fixture_id,
-                event_date=fixture.event_date.isoformat() if fixture.event_date else None,
-                kickoff_at=fixture.kickoff_at,
-                status=fixture.status,
-                home_score=fixture.home_score,
-                away_score=fixture.away_score,
-                home_score_ht=fixture.home_score_ht,
-                away_score_ht=fixture.away_score_ht,
-                received_at=receipt,
-                evidence_class="legacy_import",
-                legacy_fixture_id=fixture.id,
-            ))
+            db.add(
+                FixtureRevision(
+                    fixture_id=fixture.id,
+                    external_fixture_id=fixture.external_fixture_id,
+                    event_date=fixture.event_date.isoformat()
+                    if fixture.event_date
+                    else None,
+                    kickoff_at=fixture.kickoff_at,
+                    status=fixture.status,
+                    home_score=fixture.home_score,
+                    away_score=fixture.away_score,
+                    home_score_ht=fixture.home_score_ht,
+                    away_score_ht=fixture.away_score_ht,
+                    received_at=receipt,
+                    evidence_class="legacy_import",
+                    legacy_fixture_id=fixture.id,
+                )
+            )
             revisions_created += 1
 
-        snapshots = list((await db.scalars(
-            select(MarketSnapshot).where(MarketSnapshot.fixture_id == fixture.id).order_by(MarketSnapshot.id)
-        )).all())
+        snapshots = list(
+            (
+                await db.scalars(
+                    select(MarketSnapshot)
+                    .where(MarketSnapshot.fixture_id == fixture.id)
+                    .order_by(MarketSnapshot.id)
+                )
+            ).all()
+        )
         quotes_seen += len(snapshots)
         for snapshot in snapshots:
             if snapshot.odds is None or snapshot.pulled_at is None:
@@ -126,20 +157,22 @@ async def import_legacy_evidence(
             )
             if already is not None:
                 continue
-            db.add(OddsQuote(
-                fixture_id=fixture.id,
-                market_key=snapshot.market_type,
-                market_version="legacy-v1",
-                bookmaker=snapshot.bookmaker,
-                selection_name=snapshot.selection_name,
-                odds=snapshot.odds,
-                pulled_at=_utc(snapshot.pulled_at),
-                received_at=receipt,
-                provider_observation_id=None,
-                availability="unknown",
-                evidence_class="legacy_import",
-                legacy_snapshot_id=snapshot.id,
-            ))
+            db.add(
+                OddsQuote(
+                    fixture_id=fixture.id,
+                    market_key=snapshot.market_type,
+                    market_version="legacy-v1",
+                    bookmaker=snapshot.bookmaker,
+                    selection_name=snapshot.selection_name,
+                    odds=snapshot.odds,
+                    pulled_at=_utc(snapshot.pulled_at),
+                    received_at=receipt,
+                    provider_observation_id=None,
+                    availability="unknown",
+                    evidence_class="legacy_import",
+                    legacy_snapshot_id=snapshot.id,
+                )
+            )
             quotes_created += 1
 
     await db.commit()

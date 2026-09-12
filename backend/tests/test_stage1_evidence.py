@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import select, text
@@ -7,7 +7,11 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.core.database import Base
 from app.core.migrations import run_migrations
 from app.models import (
-    Fixture, FixtureRevision, MarketSnapshot, OddsQuote, ModelVersion,
+    Fixture,
+    FixtureRevision,
+    MarketSnapshot,
+    OddsQuote,
+    ModelVersion,
 )
 from app.services.legacy_evidence_importer import import_legacy_evidence, content_sha256
 from app.services.snapshot_store import save_feature_snapshot
@@ -16,20 +20,33 @@ from app.services.snapshot_store import save_feature_snapshot
 @pytest.mark.asyncio
 async def test_legacy_import_is_additive_idempotent_and_keeps_receipt_distinct(db):
     fixture = Fixture(
-        id=71001, external_fixture_id=81001, event_date=datetime(2026, 9, 1).date(),
-        home_team="Home", away_team="Away", status="FT",
-        kickoff_at=datetime(2026, 9, 1, 18), home_score=2, away_score=1,
+        id=71001,
+        external_fixture_id=81001,
+        event_date=date(2026, 9, 1),
+        home_team="Home",
+        away_team="Away",
+        status="FT",
+        kickoff_at=datetime(2026, 9, 1, 18, tzinfo=timezone.utc),
+        home_score=2,
+        away_score=1,
     )
     snapshot = MarketSnapshot(
-        id=72001, fixture_id=fixture.id, bookmaker="Book", market_type="Match Winner",
-        selection_name="Home", odds=2.25, pulled_at=datetime(2026, 9, 1, 16),
+        id=72001,
+        fixture_id=fixture.id,
+        bookmaker="Book",
+        market_type="Match Winner",
+        selection_name="Home",
+        odds=2.25,
+        pulled_at=datetime(2026, 9, 1, 16, tzinfo=timezone.utc),
     )
     db.add_all([fixture, snapshot])
     await db.commit()
 
     receipt = datetime(2026, 9, 12, 10, tzinfo=timezone.utc)
     first = await import_legacy_evidence(db, imported_at=receipt)
-    second = await import_legacy_evidence(db, imported_at=datetime(2026, 9, 13, tzinfo=timezone.utc))
+    second = await import_legacy_evidence(
+        db, imported_at=datetime(2026, 9, 13, tzinfo=timezone.utc)
+    )
 
     assert first.fixture_revisions_created == 1
     assert first.quotes_created == 1
@@ -39,7 +56,7 @@ async def test_legacy_import_is_additive_idempotent_and_keeps_receipt_distinct(d
     quote = await db.scalar(select(OddsQuote))
     assert revision.evidence_class == "legacy_import"
     assert revision.provider_observation_id is None
-    assert quote.pulled_at == snapshot.pulled_at
+    assert quote.pulled_at == snapshot.pulled_at.replace(tzinfo=None)
     assert quote.received_at == receipt.replace(tzinfo=None)
     assert quote.availability == "unknown"
     assert quote.provider_observation_id is None
@@ -48,23 +65,31 @@ async def test_legacy_import_is_additive_idempotent_and_keeps_receipt_distinct(d
 
 @pytest.mark.asyncio
 async def test_stage1_evidence_rows_are_database_immutable():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     await run_migrations(engine)
     async with engine.begin() as connection:
-        await connection.execute(text(
-            "INSERT INTO model_versions (name, version, config_sha256, parameters_json) VALUES ('m', '1', 'x', '{}')"
-        ))
+        await connection.execute(
+            text(
+                "INSERT INTO model_versions (name, version, config_sha256, parameters_json) VALUES ('m', '1', 'x', '{}')"
+            )
+        )
         with pytest.raises(Exception, match="immutable evidence"):
-            await connection.execute(text("UPDATE model_versions SET version='2' WHERE id=1"))
+            await connection.execute(
+                text("UPDATE model_versions SET version='2' WHERE id=1")
+            )
     await engine.dispose()
 
 
 @pytest.mark.asyncio
 async def test_stage1_disk_rehearsal_runs_fresh_and_repeat_migrations(tmp_path):
     db_path = tmp_path / "stage1-rehearsal.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{db_path}", connect_args={"check_same_thread": False}
+    )
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
         await connection.exec_driver_sql("PRAGMA foreign_keys=ON")
@@ -72,14 +97,20 @@ async def test_stage1_disk_rehearsal_runs_fresh_and_repeat_migrations(tmp_path):
     await run_migrations(engine)
     async with engine.connect() as connection:
         tables = {
-            row[0] for row in (await connection.exec_driver_sql(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )).all()
+            row[0]
+            for row in (
+                await connection.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            ).all()
         }
         triggers = {
-            row[0] for row in (await connection.exec_driver_sql(
-                "SELECT name FROM sqlite_master WHERE type='trigger'"
-            )).all()
+            row[0]
+            for row in (
+                await connection.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='trigger'"
+                )
+            ).all()
         }
         assert {"fixture_revisions", "model_versions", "feature_snapshots"} <= tables
         assert "trg_feature_snapshots_immutable_update" in triggers
@@ -92,24 +123,35 @@ async def test_feature_snapshot_is_hash_bound_to_revision_and_model(db):
     fixture = Fixture(id=73001, external_fixture_id=83001, home_team="H", away_team="A")
     db.add(fixture)
     await db.flush()
-    revision = FixtureRevision(fixture_id=fixture.id, received_at=datetime(2026, 9, 12), evidence_class="provider")
-    model = ModelVersion(name="dual", version="1", config_sha256="c" * 64, parameters_json="{}")
+    revision = FixtureRevision(
+        fixture_id=fixture.id,
+        received_at=datetime(2026, 9, 12, tzinfo=timezone.utc),
+        evidence_class="provider",
+    )
+    model = ModelVersion(
+        name="dual", version="1", config_sha256="c" * 64, parameters_json="{}"
+    )
     db.add_all([revision, model])
     await db.flush()
     snapshot = await save_feature_snapshot(
-        db, fixture_revision=revision, model_version=model,
+        db,
+        fixture_revision=revision,
+        model_version=model,
         as_of=datetime(2026, 9, 12, tzinfo=timezone.utc),
         features={"lambda_h": 1.2, "missing": None},
-        input_refs={"observation_ids": [4]}, transform_version="t1",
+        input_refs={"observation_ids": [4]},
+        transform_version="t1",
         evidence_class="prospective",
     )
-    assert snapshot.content_sha256 == content_sha256({
-        "fixture_revision_id": revision.id,
-        "as_of": "2026-09-12T00:00:00",
-        "features": {"lambda_h": 1.2, "missing": None},
-        "input_refs": {"observation_ids": [4]},
-        "transform_version": "t1",
-    })
+    assert snapshot.content_sha256 == content_sha256(
+        {
+            "fixture_revision_id": revision.id,
+            "as_of": "2026-09-12T00:00:00",
+            "features": {"lambda_h": 1.2, "missing": None},
+            "input_refs": {"observation_ids": [4]},
+            "transform_version": "t1",
+        }
+    )
     await db.commit()
 
 

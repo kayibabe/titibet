@@ -6,7 +6,9 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
-engine = create_async_engine(settings.db_url, echo=False, connect_args={"check_same_thread": False})
+engine = create_async_engine(
+    settings.db_url, echo=False, connect_args={"check_same_thread": False}
+)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -20,13 +22,21 @@ def _set_sqlite_pragmas(dbapi_connection, _connection_record):
     try:
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=30000")   # 30 s — matches frontend AbortController
+        cursor.execute(
+            "PRAGMA busy_timeout=30000"
+        )  # 30 s — matches frontend AbortController
         cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA wal_autocheckpoint=400")  # checkpoint every ~1.6 MB (keeps WAL small)
-        cursor.execute("PRAGMA cache_size=-65536")       # 64 MB page cache
-        cursor.execute("PRAGMA mmap_size=268435456")     # 256 MB memory-mapped I/O (major read speedup on large DB)
-        cursor.execute("PRAGMA temp_store=MEMORY")       # temp tables in RAM, not disk
-        cursor.execute("PRAGMA optimize")                # update query-planner stats for recently changed tables
+        cursor.execute(
+            "PRAGMA wal_autocheckpoint=400"
+        )  # checkpoint every ~1.6 MB (keeps WAL small)
+        cursor.execute("PRAGMA cache_size=-65536")  # 64 MB page cache
+        cursor.execute(
+            "PRAGMA mmap_size=268435456"
+        )  # 256 MB memory-mapped I/O (major read speedup on large DB)
+        cursor.execute("PRAGMA temp_store=MEMORY")  # temp tables in RAM, not disk
+        cursor.execute(
+            "PRAGMA optimize"
+        )  # update query-planner stats for recently changed tables
     finally:
         cursor.close()
 
