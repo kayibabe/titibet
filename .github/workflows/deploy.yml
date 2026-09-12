@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   # Test gate: reuses ci.yml (backend pytest + frontend build).

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 log = logging.getLogger(__name__)
@@ -429,6 +429,28 @@ async def run_migrations(engine: AsyncEngine) -> None:
                 log.info("Index migration applied: %s", index_name)
             except Exception as e:  # noqa: BLE001
                 log.warning("Index migration FAILED for %s: %s", index_name, e)
+                if index_name == "uq_odds_quote_observation_key" and isinstance(e, IntegrityError):
+                    # Legacy imports may already contain duplicate evidence rows.
+                    # Evidence is append-only, so deleting or rewriting those rows
+                    # to satisfy a new uniqueness constraint would destroy lineage.
+                    # Preserve them and install the equivalent lookup index; clean
+                    # databases still receive the unique index above.
+                    try:
+                        await conn.execute(text(
+                            "CREATE INDEX IF NOT EXISTS ix_odds_quote_observation_key "
+                            "ON odds_quotes(provider_observation_id, market_key, "
+                            "market_version, bookmaker, selection_name) "
+                            "WHERE provider_observation_id IS NOT NULL"
+                        ))
+                        log.warning(
+                            "Legacy duplicate odds evidence retained; using a non-unique "
+                            "lookup index for uq_odds_quote_observation_key"
+                        )
+                        continue
+                    except Exception as fallback_error:  # noqa: BLE001
+                        raise RuntimeError(
+                            "Required Stage 1 odds evidence lookup index could not be created"
+                        ) from fallback_error
                 if index_name in REQUIRED_EVIDENCE_INDEXES:
                     raise RuntimeError(f"Required Stage 1 index could not be created: {index_name}") from e
 

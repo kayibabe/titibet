@@ -119,6 +119,49 @@ async def test_stage1_disk_rehearsal_runs_fresh_and_repeat_migrations(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_duplicate_legacy_odds_evidence_does_not_block_startup():
+    """Legacy append-only evidence is preserved when the new key is not unique."""
+    from app.core.migrations import TABLE_MIGRATIONS
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE fixtures (id INTEGER PRIMARY KEY, status TEXT, kickoff_at DATETIME, home_team TEXT, event_date DATE)"))
+        await conn.execute(text("CREATE TABLE market_snapshots (id INTEGER PRIMARY KEY, fixture_id INTEGER, pulled_at DATETIME)"))
+        await conn.execute(text("CREATE TABLE signals (id INTEGER PRIMARY KEY, fixture_id INTEGER, market TEXT, computed_at DATETIME)"))
+        await conn.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY, tier TEXT, is_admin INTEGER DEFAULT 0)"))
+        await conn.execute(text("CREATE TABLE tracked_bets (id INTEGER PRIMARY KEY, user_id INTEGER, fixture_id INTEGER, market_type TEXT, bookmaker TEXT, selection_name TEXT, source_rule_key TEXT, event_date DATE, created_at DATETIME)"))
+        await conn.execute(text("CREATE TABLE learning_proposals (id INTEGER PRIMARY KEY, change_type TEXT, target TEXT)"))
+        for sql in TABLE_MIGRATIONS:
+            await conn.execute(text(sql))
+        await conn.execute(text(
+            "INSERT INTO provider_observations "
+            "(provider, endpoint, received_at, content_sha256) "
+            "VALUES ('test', '/odds', CURRENT_TIMESTAMP, 'abc')"
+        ))
+        for _ in range(2):
+            await conn.execute(text(
+                "INSERT INTO odds_quotes "
+                "(fixture_id, market_key, market_version, bookmaker, selection_name, odds, "
+                "pulled_at, received_at, provider_observation_id) "
+                "VALUES (1, 'goals', 'v1', 'book', 'Over 2.5', 1.9, CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP, 1)"
+            ))
+
+    await run_migrations(engine)
+    async with engine.connect() as conn:
+        indexes = {
+            row[1]
+            for row in (await conn.execute(text(
+                "PRAGMA index_list('odds_quotes')"
+            ))).all()
+        }
+        count = await conn.scalar(text("SELECT COUNT(*) FROM odds_quotes"))
+    assert "ix_odds_quote_observation_key" in indexes
+    assert count == 2
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_feature_snapshot_is_hash_bound_to_revision_and_model(db):
     fixture = Fixture(id=73001, external_fixture_id=83001, home_team="H", away_team="A")
     db.add(fixture)
