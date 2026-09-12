@@ -19,6 +19,7 @@ Setup
 from __future__ import annotations
 
 import logging
+import os as _os
 import random
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
@@ -260,6 +261,10 @@ async def _send_to(chat_id: str, text: str) -> bool:
         try:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
+            data = resp.json()
+            if not isinstance(data, dict) or data.get("ok") is not True:
+                logger.warning("Telegram API returned an unsuccessful response for chat %s", chat_id)
+                return False
             return True
         except httpx.HTTPStatusError as exc:
             logger.warning(
@@ -545,7 +550,6 @@ _CAT_LABEL = "CAT"
 # tonight + the after-midnight (overnight) window, NOT all of tomorrow — otherwise
 # tomorrow's afternoon/evening fixtures show up and look like today's. ~12h from
 # 20:30 CAT reaches ~08:30 CAT, covering the overnight slate only.
-import os as _os
 DIGEST_HORIZON_HOURS = int(_os.getenv("DIGEST_HORIZON_HOURS", "12"))
 
 
@@ -947,7 +951,7 @@ def build_value_band_message(
     date_label = run_date.strftime("%a %d %b %Y")
     count = len(rows)
     parts = [
-        f"◆ <b>TiTiBet Pro — Value Band Picks</b>",
+        "◆ <b>TiTiBet Pro — Value Band Picks</b>",
         f"<i>{date_label} · {count} pick{'s' if count != 1 else ''} · Poisson edge at 1.65–2.09 · 91–98% WR historically</i>",
     ]
     for i, (sig, fix) in enumerate(rows, 1):
@@ -1154,7 +1158,7 @@ def build_results_message(
     hit_rate = round(won / (won + lost) * 100) if (won + lost) > 0 else 0
 
     parts = [
-        f"📊 <b>TiTiBet — Results</b>",
+        "📊 <b>TiTiBet — Results</b>",
         f"<i>{date_label} · {total} picks · Hit rate: {hit_rate}%</i>",
     ]
 
