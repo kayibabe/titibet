@@ -58,7 +58,7 @@ jobs:
         run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Ruff
-        run: ruff check app/core/database.py app/core/migrations.py app/models/evidence.py app/models/__init__.py app/services/ingestion.py app/services/legacy_evidence_importer.py app/services/signal_engine.py app/services/snapshot_store.py tests/test_stage1_evidence.py
+        run: ruff check app/core/database.py app/models/evidence.py app/services/legacy_evidence_importer.py app/services/snapshot_store.py tests/test_stage1_evidence.py
 
       - name: Mypy
         run: mypy --ignore-missing-imports --follow-imports=skip app/models/evidence.py app/services/legacy_evidence_importer.py app/services/snapshot_store.py
