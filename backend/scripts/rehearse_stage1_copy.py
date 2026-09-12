@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 
@@ -44,6 +45,9 @@ def _backup(source: Path, target: Path, *, source_verified: bool) -> dict[str, i
 async def _migrate_and_import(target: Path):
     os.environ["DB_URL"] = f"sqlite+aiosqlite:///{target.as_posix()}"
     os.environ["SKIP_STARTUP_SYNC"] = "true"
+    backend_dir = Path(__file__).resolve().parents[1]
+    if str(backend_dir) not in sys.path:
+        sys.path.insert(0, str(backend_dir))
     from app.core.database import AsyncSessionLocal, engine
     from app.core.migrations import run_migrations
     from app.services.legacy_evidence_importer import import_legacy_evidence
