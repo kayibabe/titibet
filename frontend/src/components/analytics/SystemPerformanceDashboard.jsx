@@ -103,7 +103,7 @@ export default function SystemPerformanceDashboard({ summary, byMarket = [] }) {
 
   const {
     win_rate = 0, total_profit_loss = 0, roi = 0,
-    wins = 0, losses = 0, settled_bets = 0,
+    wins = 0, losses = 0,
   } = summary
 
   const TARGET_MARKETS = ['Under 3.5', 'Home Over 0.5', 'Over 2.5']

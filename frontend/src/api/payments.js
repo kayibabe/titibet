@@ -20,7 +20,7 @@ export async function initializePayment(planId) {
 }
 
 export async function verifyPayment(reference) {
-  const res = await apiFetch(`/api/payments/verify?reference=${reference}`)
+  const res = await apiFetch(`/api/payments/verify?reference=${encodeURIComponent(reference)}`)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.detail || 'Verification failed')

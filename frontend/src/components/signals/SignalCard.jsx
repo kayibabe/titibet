@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect } from 'react'
 import { ChevronDown, ChevronUp, Clock, TrendingDown, TrendingUp, Lock, CheckCircle2, Lightbulb, X, Heart, Bot, Plus, Zap } from 'lucide-react'
-import { ConfidenceBadge, AgreementBadge } from './SignalBadge'
+import { AgreementBadge } from './SignalBadge'
 import EngineBreakdown from './EngineBreakdown'
 import ContradictionAlert from './ContradictionAlert'
 import OddsDisplay from '../shared/OddsDisplay'

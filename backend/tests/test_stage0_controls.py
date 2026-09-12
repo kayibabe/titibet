@@ -164,6 +164,22 @@ async def test_advisor_records_exact_bookmaker_and_rejects_late_pick(db):
     assert await auto_track_advisor_picks(db, *args) == 0
 
 
+def test_telegram_value_band_never_invents_a_price():
+    from app.services.telegram import build_value_band_message
+
+    fixture = SimpleNamespace(
+        country='England', league='Premier League', home_team='Home',
+        away_team='Away', kickoff_at=datetime(2026, 9, 12, 12, tzinfo=timezone.utc),
+    )
+    signal = SimpleNamespace(
+        market='Home Over 0.5', bayesian_prob=0.8, poisson_prob=0.8,
+        bayesian_best_odd=None,
+    )
+    message = build_value_band_message([(signal, fixture)], datetime(2026, 9, 12).date())
+    assert '@1.25' not in message
+    assert '@' not in message
+
+
 async def test_legacy_api_classifies_without_changing_records(db):
     from app.routers.tracker import router
     now, fx, sig, quote = await seed_signal(db)

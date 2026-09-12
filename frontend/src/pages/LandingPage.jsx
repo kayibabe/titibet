@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import {
-  TrendingUp, Shield, Zap, BarChart3, CheckCircle, Lock,
-  ChevronRight, Clock, Trophy, Globe, Users, Activity,
-  Brain, Database, Target, Star, ArrowRight, Menu, X
+  TrendingUp, Shield, BarChart3, CheckCircle, Lock,
+  ChevronRight, Clock, Globe, Users, Activity,
+  Brain, Database, Target, ArrowRight, Menu, X
 } from 'lucide-react'
 
 const TICKER_ITEMS = [

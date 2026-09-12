@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef } from 'react'
-import { LayoutDashboard, Menu, X, User, LogOut, Settings } from 'lucide-react'
+import { Menu, X, LogOut, Settings } from 'lucide-react'
 import Sidebar from './Sidebar'
 import BottomNav from './BottomNav'
 import { useAuth } from '../../context/AuthContext'

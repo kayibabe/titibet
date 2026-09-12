@@ -245,46 +245,6 @@ function InsightCard({ insight, onApplySignalFilter }) {
   )
 }
 
-// ── Pick source widget ────────────────────────────────────────────────────────
-
-function PickSourceWidget({ bySource }) {
-  const rows = (bySource ?? [])
-    .filter(r => (r.bets ?? 0) >= 5)
-    .sort((a, b) => b.roi - a.roi)
-    .slice(0, 5)
-
-  if (rows.length === 0) return null
-
-  return (
-    <div className="border-t border-[var(--border)] px-4 py-3">
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--text)] opacity-50 mb-2">
-        Pick source performance
-      </p>
-      <div className="space-y-1.5">
-        {rows.map(r => {
-          const roiColor = r.roi >= 5 ? 'text-emerald-400' : r.roi >= 0 ? 'text-[var(--text-h)]' : 'text-red-400'
-          const barW = Math.min(Math.abs(r.roi) / 30 * 100, 100)
-          const barColor = r.roi >= 0 ? 'bg-emerald-500/50' : 'bg-red-500/50'
-          return (
-            <div key={r.source} className="flex items-center gap-2">
-              <span className="text-xs text-[var(--text)] opacity-80 w-28 shrink-0 truncate">{r.source}</span>
-              <div className="flex-1 h-1.5 bg-[var(--code-bg)] rounded-full overflow-hidden">
-                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${barW}%` }} />
-              </div>
-              <span className={`text-xs font-mono font-semibold w-14 text-right shrink-0 ${roiColor}`}>
-                {r.roi >= 0 ? '+' : ''}{r.roi}% ROI
-              </span>
-              <span className="text-[10px] text-[var(--text)] opacity-50 w-12 text-right shrink-0">
-                {r.win_rate}% wr
-              </span>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 const MAX_VISIBLE = 4

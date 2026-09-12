@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CheckCircle, XCircle, Loader } from 'lucide-react'
 import { verifyPayment } from '../api/payments'
-import { useAuth } from '../context/AuthContext'
 
 export default function PaymentCallbackPage({ onDone }) {
-  const { token, user } = useAuth()
+  const onDoneRef = useRef(onDone)
+  onDoneRef.current = onDone
   const [status, setStatus] = useState('verifying') // verifying | success | error
   const [tier, setTier] = useState('')
   const [error, setError] = useState('')
@@ -22,7 +22,7 @@ export default function PaymentCallbackPage({ onDone }) {
         setTier(data.tier)
         setStatus('success')
         // Reload user context after 1.5s then navigate home
-        setTimeout(() => onDone?.(), 2000)
+        setTimeout(() => onDoneRef.current?.(), 2000)
       })
       .catch(e => {
         setStatus('error')

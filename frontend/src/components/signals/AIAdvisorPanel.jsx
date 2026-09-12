@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Sparkles, AlertTriangle, CheckCircle, MinusCircle, Loader2, RefreshCw, ArrowRight,
-  Download, FileText, Printer, Zap, Clock, Bot,
+  Download, FileText, Printer, Zap, Bot,
 } from 'lucide-react'
 import { fetchAdvisorInsights, explainPicks } from '../../api/advisor'
 import { fetchSignals } from '../../api/signals'
@@ -163,7 +163,9 @@ function exportPdf(data, date) {
   w.document.write(html)
   w.document.close()
   // Give styles a moment to paint, then trigger print
-  setTimeout(() => { try { w.focus(); w.print() } catch (_) {} }, 400)
+  setTimeout(() => {
+    try { w.focus(); w.print() } catch { /* popup may have closed */ }
+  }, 400)
 }
 
 function exportWord(data, date) {
@@ -225,38 +227,6 @@ function ExportButton({ data, date }) {
         </div>
       )}
     </div>
-  )
-}
-
-// ── Accumulator ticket ────────────────────────────────────────────────────────
-
-function fmtLegKickoff(iso) {
-  if (!iso) return null
-  const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z')
-  if (Number.isNaN(d.getTime())) return null
-  return d.toLocaleString('en-GB', {
-    weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
-  })
-}
-
-const LEG_RESULT_CFG = {
-  won:     { icon: CheckCircle,   cls: 'text-green-400',  label: 'Won'  },
-  lost:    { icon: AlertTriangle, cls: 'text-red-400',    label: 'Lost' },
-  void:    { icon: MinusCircle,   cls: 'text-[var(--text)] opacity-60', label: 'Void' },
-  pending: { icon: Clock,         cls: 'text-[var(--text)] opacity-50', label: null },
-}
-
-function LegResultBadge({ result, score }) {
-  const cfg = LEG_RESULT_CFG[result] || LEG_RESULT_CFG.pending
-  const Icon = cfg.icon
-  if (result === 'pending' || !result) {
-    return score ? <span className={`text-[10px] font-mono ${cfg.cls}`}>{score}</span> : null
-  }
-  return (
-    <span className={`flex items-center gap-1 text-[10px] font-bold ${cfg.cls}`}>
-      <Icon size={11} />
-      {cfg.label}{score ? ` ${score}` : ''}
-    </span>
   )
 }
 
@@ -813,7 +783,7 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
   const isConfigured = data?.configured !== false
 
   // ── Shared inner content ──────────────────────────────────────────────────
-  function PanelContent() {
+  function renderPanelContent() {
     return (
       <div className="space-y-4">
         {error && (
@@ -930,7 +900,7 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
             </button>
           </div>
         </div>
-        <PanelContent />
+        {renderPanelContent()}
       </div>
     )
   }
@@ -996,7 +966,7 @@ export default function AIAdvisorPanel({ date, tabMode = false, onFilterPick }) 
 
       {open && (
         <div className="border-t border-[var(--border)] p-5">
-          <PanelContent />
+          {renderPanelContent()}
         </div>
       )}
     </div>

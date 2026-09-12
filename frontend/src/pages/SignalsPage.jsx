@@ -1,9 +1,9 @@
 ﻿import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 
 const _LIVE_SET = new Set(['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT'])
-import { RefreshCw, Download, Calendar, TrendingUp, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Radio, Search, Heart, Bot, Clock } from 'lucide-react'
+import { RefreshCw, Download, Calendar, ArrowUpDown, SlidersHorizontal, AlertCircle, X, Filter, Target, Zap, HelpCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Radio, Search, Heart, Bot, Clock } from 'lucide-react'
 import { useSignals } from '../store/useSignals'
-import { computeSignals, fetchSignals } from '../api/signals'
+import { computeSignals } from '../api/signals'
 import { syncData, fetchBets } from '../api/tracker'
 import { fetchValueBandStreak } from '../api/analytics'
 import SignalCard from '../components/signals/SignalCard'
@@ -418,7 +418,7 @@ const params = {
     }
 
     return list
-  }, [signals, marketFamily, sortBy, minProb, leagueSearch, showSavedOnly, viewMode]) // eslint-disable-line
+  }, [signals, marketFamily, sortBy, minProb, leagueSearch, showSavedOnly, viewMode])
 
   // Summary stats for the result bar
   const stats = useMemo(() => {
@@ -433,7 +433,7 @@ const params = {
     if (!loading && !error && displayedSignals.length === 0 && activeFilterCount > 0) {
       setFiltersOpen(true)
     }
-  }, [loading, error, displayedSignals.length, activeFilterCount]) // eslint-disable-line
+  }, [loading, error, displayedSignals.length, activeFilterCount])
 
   const hasLiveMatches = signals.some(s => _LIVE_SET.has((s.status || '').trim().toUpperCase()))
 
