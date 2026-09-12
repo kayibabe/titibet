@@ -2,6 +2,7 @@
 loss_analysis.py — API endpoints for AI-powered loss analysis and self-learning.
 """
 from __future__ import annotations
+from app.core.auth import require_admin
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +31,7 @@ async def get_summary(
     return await get_loss_analysis_summary(db, lookback_days=lookback_days)
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_admin)])
 async def trigger_pipeline(
     lookback_days: int = Query(default=90, ge=7, le=365),
     db: AsyncSession = Depends(get_db),

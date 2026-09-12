@@ -8,6 +8,7 @@ to relax the ceiling for that sub-band.
 Observation type: 'ho05_high_odds'
 """
 from __future__ import annotations
+from app.services.tracking_evidence import tracking_rejection
 
 import logging
 from datetime import date, datetime, timezone
@@ -75,6 +76,8 @@ async def shadow_track_date(db: AsyncSession, run_date: date) -> int:
 
     inserted = 0
     for signal, fixture in rows:
+        if await tracking_rejection(db, signal, fixture):
+            continue
         odds = signal.bayesian_best_odd or 0.0
         if not (ODDS_LO <= odds < ODDS_HI):
             continue

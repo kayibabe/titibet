@@ -18,6 +18,7 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 def _set_sqlite_pragmas(dbapi_connection, _connection_record):
     cursor = dbapi_connection.cursor()
     try:
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA busy_timeout=30000")   # 30 s — matches frontend AbortController
         cursor.execute("PRAGMA synchronous=NORMAL")

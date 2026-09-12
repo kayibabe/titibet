@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select, delete
@@ -45,11 +45,12 @@ from app.services.form_service import get_team_form_lambdas
 from app.engines import poisson as poi_engine
 from app.engines import dual_engine
 from app.engines import bos as bos_engine
-from app.models import Fixture, MarketSnapshot, Signal
+from app.models import Fixture, MarketSnapshot, Signal, FixtureRevision, OddsQuote
 from app.services.performance_intelligence import compute_performance_weights, PerformanceWeights
 from app.core.config import (
     BOS_SI_THRESHOLD, BOS_O00_MAX, BOS_CMA_MAX,
 )
+from app.services.snapshot_store import get_or_create_model_version, save_feature_snapshot
 
 settings = get_settings()
 
@@ -542,16 +543,37 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         from app.services.advisor_service import invalidate_advisory_cache
         await invalidate_advisory_cache(db, run_date)
 
+    snapshot_evidence_class = "research_reconstruction" if run_date < datetime.now(timezone.utc).date() else "prospective"
+    model_version = await get_or_create_model_version(
+        db,
+        name="titibet-dual-engine",
+        version="working-tree",
+        config={
+            "market_min_odds": dict(MARKET_MIN_ODDS),
+            "market_max_odds": dict(MARKET_MAX_ODDS),
+            "poisson_rules": dict(POISSON_RULES),
+            "disabled_markets": sorted(DISABLED_MARKETS),
+            "disabled_leagues": sorted(DISABLED_LEAGUES),
+        },
+        evidence_class="model_artifact",
+    )
+
     # Pre-load ALL market snapshots for all fixtures in ONE query.
     # Eliminates the N+1 pattern where each fixture triggered a separate
     # SELECT (50 fixtures = 50 round-trips; now 1 query total).
     _snapshots_by_fixture: dict[int, list[MarketSnapshot]] = {}
+    _quotes_by_fixture: dict[int, list[OddsQuote]] = {}
     if fixture_ids_today:
         _all_snaps = await db.execute(
             select(MarketSnapshot).where(MarketSnapshot.fixture_id.in_(fixture_ids_today))
         )
         for _s in _all_snaps.scalars().all():
             _snapshots_by_fixture.setdefault(_s.fixture_id, []).append(_s)
+        _all_quotes = await db.execute(
+            select(OddsQuote).where(OddsQuote.fixture_id.in_(fixture_ids_today))
+        )
+        for _q in _all_quotes.scalars().all():
+            _quotes_by_fixture.setdefault(_q.fixture_id, []).append(_q)
 
     # Collect all new Signal objects across all fixtures before writing to DB.
     # This allows portfolio-level stake normalization (improvement #1) to run
@@ -583,6 +605,10 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         if not snapshots_raw:
             continue
         snapshots = _latest_snapshots(snapshots_raw)
+        quote_by_key = {
+            (quote.bookmaker, quote.market_key, quote.selection_name): quote
+            for quote in _quotes_by_fixture.get(fixture.id, [])
+        }
 
         cs_by_bookie = _build_cs_by_bookie(snapshots)
         goals_ou = _build_goals_ou(snapshots)
@@ -625,6 +651,67 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             away_team=fixture.away_team,
             before_date=fixture.event_date or run_date,
         )
+
+        # Persist the exact inputs used by the model.  Missing fixture lineage
+        # is retained as a compatibility limitation; no revision is invented.
+        fixture_revision = await db.scalar(
+            select(FixtureRevision)
+            .where(FixtureRevision.fixture_id == fixture.id)
+            .order_by(FixtureRevision.received_at.desc(), FixtureRevision.id.desc())
+            .limit(1)
+        )
+        if fixture_revision is not None:
+            snapshot_as_of = datetime.now(timezone.utc)
+            await save_feature_snapshot(
+                db,
+                fixture_revision=fixture_revision,
+                model_version=model_version,
+                as_of=snapshot_as_of,
+                features={
+                    "home_team": fixture.home_team,
+                    "away_team": fixture.away_team,
+                    "league": fixture.league,
+                    "country": fixture.country,
+                    "form_lambdas": form_lambdas or {},
+                    "odds": [
+                        {
+                            "id": snap.id,
+                            "bookmaker": snap.bookmaker,
+                            "market_type": snap.market_type,
+                            "selection_name": snap.selection_name,
+                            "odds": snap.odds,
+                            "pulled_at": snap.pulled_at,
+                            "odds_quote_id": (
+                                quote_by_key.get((snap.bookmaker, snap.market_type, snap.selection_name)).id
+                                if quote_by_key.get((snap.bookmaker, snap.market_type, snap.selection_name))
+                                else None
+                            ),
+                            "provider_observation_id": (
+                                quote_by_key.get((snap.bookmaker, snap.market_type, snap.selection_name)).provider_observation_id
+                                if quote_by_key.get((snap.bookmaker, snap.market_type, snap.selection_name))
+                                else None
+                            ),
+                            "quote_received_at": (
+                                quote_by_key.get((snap.bookmaker, snap.market_type, snap.selection_name)).received_at
+                                if quote_by_key.get((snap.bookmaker, snap.market_type, snap.selection_name))
+                                else None
+                            ),
+                        }
+                        for snap in snapshots
+                    ],
+                },
+                input_refs={
+                    "fixture_revision_id": fixture_revision.id,
+                    "market_snapshot_ids": [snap.id for snap in snapshots],
+                    "odds_quote_ids": [
+                        quote_by_key[(snap.bookmaker, snap.market_type, snap.selection_name)].id
+                        for snap in snapshots
+                        if (snap.bookmaker, snap.market_type, snap.selection_name) in quote_by_key
+                    ],
+                },
+                transform_version="signal-inputs-v1",
+                evidence_class=snapshot_evidence_class,
+            )
 
         poi_result = poi_engine.analyse_fixture(
             fixture_id=fixture.id,

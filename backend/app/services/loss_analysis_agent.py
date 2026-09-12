@@ -48,6 +48,7 @@ Requires GROQ_API_KEY in backend/.env. Falls back gracefully when absent
 (rules-based tagging only, no narrative). Mirrors the pattern in advisor_service.py.
 """
 from __future__ import annotations
+from app.services.learning_suggestions import save_suggestion
 
 import asyncio
 import json
@@ -535,6 +536,12 @@ def _backtest_proposal(
     if proposed_value is None:
         return BacktestResult(pid, accepted=False, reason="Rejected — proposed_value is None")
 
+    if change_type == "min_probability":
+        return BacktestResult(
+            pid, accepted=False,
+            reason="Probability-at-selection evidence is unavailable; cannot validate a probability threshold",
+        )
+
     # Filter settled bets for this market
     market_bets = [b for b in settled_bets if b.market_type == target and b.odds is not None]
 
@@ -851,24 +858,8 @@ async def run_loss_analysis_pipeline(
                 continue
 
             try:
-                # Deactivate any existing active proposal for the same slot
-                existing = await db.execute(
-                    select(LearningProposal).where(
-                        LearningProposal.change_type == change_type,
-                        LearningProposal.target == target,
-                        LearningProposal.is_active == True,  # noqa: E712
-                    )
-                )
-                for old_row in existing.scalars().all():
-                    old_row.is_active = False
-                    logger.info(
-                        "LearningProposal deactivated: change_type=%s target=%s (superseded by new proposal)",
-                        old_row.change_type, old_row.target,
-                    )
-
-                await db.flush()  # Flush deactivation before insert
-
-                # Insert the new active proposal
+                # Suggestions never supersede or activate production rules.
+                # Save inactive for review
                 new_row = LearningProposal(
                     change_type=change_type,
                     target=target,
@@ -876,9 +867,9 @@ async def run_loss_analysis_pipeline(
                     rationale=proposal.get("rationale"),
                     confidence=proposal.get("confidence"),
                     backtest_note=proposal.get("backtest"),
-                    is_active=True,
+                    is_active=False,
                 )
-                db.add(new_row)
+                new_row = await save_suggestion(db, new_row)
 
                 await db.commit()
                 logger.info(

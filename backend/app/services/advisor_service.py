@@ -13,6 +13,7 @@ transparently. Rate-limit errors are returned as soft errors (shown in UI).
 Configure as many keys as you like — more keys = more resilience.
 """
 from __future__ import annotations
+from app.services.tracking_evidence import tracking_rejection
 
 import asyncio
 import hashlib
@@ -666,8 +667,8 @@ async def auto_track_advisor_picks(
     def _norm(s: str | None) -> str:
         return (s or "").strip().lower()
 
-    pool_by_names: dict[tuple[str, str], tuple] = {
-        (_norm(fix.home_team), _norm(fix.away_team)): (sig, fix)
+    pool_by_names: dict[tuple[str, str, str], tuple] = {
+        (_norm(fix.home_team), _norm(fix.away_team), sig.market): (sig, fix)
         for sig, fix in rows
     }
 
@@ -702,7 +703,7 @@ async def auto_track_advisor_picks(
             if not home or not away or not market:
                 continue
 
-            pair = pool_by_names.get((home, away))
+            pair = pool_by_names.get((home, away, market))
             if pair is None:
                 logger.debug(
                     "auto_track_advisor_picks: no signal for %s vs %s (%s) — skipping",
@@ -711,6 +712,8 @@ async def auto_track_advisor_picks(
                 continue
 
             sig, fix = pair
+            if await tracking_rejection(db, sig, fix):
+                continue
 
             # Skip picks from suppressed leagues — mirrors auto_tracker suppression so
             # zero-stake advisory rows don't inflate loss counts for disabled markets.
@@ -722,13 +725,7 @@ async def auto_track_advisor_picks(
             if market in _OVER_ADV and any(k in _league_lower for k in OVER_GOALS_SUPPRESSED_LEAGUES):
                 continue
 
-            odds = sig.bayesian_best_odd
-            if not odds or odds <= 1.0:
-                prob = sig.bayesian_prob or sig.poisson_prob
-                if prob and 0.0 < prob < 1.0:
-                    odds = round(1.0 / prob, 3)
-                else:
-                    continue
+            odds = sig.bayesian_best_odd  # Verified against the exact market and bookmaker.
 
             # Over 1.5 quality gate: Bayesian-only Over 1.5 at 1.30–1.36 in early
             # European qualifying has ~43% WR — far below the ~75% break-even at
@@ -756,7 +753,7 @@ async def auto_track_advisor_picks(
             db.add(TrackedBet(
                 user_id=None,
                 fixture_id=fix.id,
-                bookmaker="AI Advisory",
+                bookmaker=sig.bayesian_bookmaker,
                 event_date=target_date,
                 match_name=f"{fix.home_team} vs {fix.away_team}",
                 league=fix.league,
@@ -1491,8 +1488,8 @@ async def get_advisor_insights(
     _pool_by_fid: dict[int, tuple[Signal, Fixture]] = {
         fix.id: (sig, fix) for sig, fix in acca_pool
     }
-    _pool_by_names: dict[tuple[str, str], tuple[Signal, Fixture]] = {
-        (_norm(fix.home_team), _norm(fix.away_team)): (sig, fix)
+    _pool_by_names: dict[tuple[str, str, str], tuple[Signal, Fixture]] = {
+        (_norm(fix.home_team), _norm(fix.away_team), sig.market): (sig, fix)
         for sig, fix in acca_pool
     }
 
@@ -1698,8 +1695,8 @@ async def get_advisor_insights(
         # Opening up to the full advisory pool (Medium+single-engine) would compound
         # low-quality legs and produce structurally losing tickets (Jul-2026 postmortem).
         _pool_by_fid = {fix.id: (sig, fix) for sig, fix in acca_pool}
-        _pool_by_names = {
-            (_norm(fix.home_team), _norm(fix.away_team)): (sig, fix)
+        _pool_by_names: dict[tuple[str, str, str], tuple[Signal, Fixture]] = {
+            (_norm(fix.home_team), _norm(fix.away_team), sig.market): (sig, fix)
             for sig, fix in acca_pool
         }
         _COMBINED_MAX = 20.0

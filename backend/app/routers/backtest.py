@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.core.auth import require_admin
 
 import asyncio
 from datetime import date, datetime
@@ -21,7 +22,7 @@ router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 _job: dict = {"running": False, "started_at": None, "finished_at": None, "params": {}, "error": None}
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_admin)])
 async def run(
     request: Request,
     body: dict = {},
@@ -77,7 +78,7 @@ async def job_status():
     return {**_job, "progress": _bt_svc.backtest_progress}
 
 
-@router.post("/cancel")
+@router.post("/cancel", dependencies=[Depends(require_admin)])
 async def cancel():
     global _job
     if not _job["running"]:

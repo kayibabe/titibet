@@ -60,7 +60,7 @@ function Field({ label, children, className = '' }) {
   )
 }
 
-export default function BacktestControls({ onRun, loading }) {
+export default function BacktestControls({ onRun, loading, disabled = false }) {
   const today = new Date().toISOString().slice(0, 10)
 
   const [form, setForm] = useState({
@@ -96,6 +96,7 @@ export default function BacktestControls({ onRun, loading }) {
 
   function handleSubmit(e) {
     e.preventDefault()
+    if (disabled || loading) return
     onRun({
       market:            form.market || null,
       league_id:         form.league_id || null,
@@ -201,7 +202,7 @@ export default function BacktestControls({ onRun, loading }) {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || disabled}
           className="flex items-center gap-2 px-5 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"
         >
           <Play size={14} />

@@ -136,4 +136,7 @@ async def main():
                     total_tracked, settled)
 
 
-asyncio.run(main())
+if __name__ == '__main__':
+    import multiprocessing
+    multiprocessing.freeze_support()
+    asyncio.run(main())

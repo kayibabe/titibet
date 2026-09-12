@@ -15,6 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 log = logging.getLogger(__name__)
 
+REQUIRED_TABLES = frozenset({
+    "fixtures", "market_snapshots", "signals", "tracked_bets",
+    "provider_observations", "market_definitions", "odds_quotes",
+    "fixture_revisions", "model_versions", "feature_snapshots",
+})
+
 # Each entry: (table, column, column_def)
 COLUMN_MIGRATIONS = [
     ("tracked_bets",        "closing_odds",          "REAL"),
@@ -65,9 +71,58 @@ COLUMN_MIGRATIONS = [
     # Allows analytics to group legs by ticket rather than by event_date alone,
     # fixing incorrect hit-rate counts when multiple tickets exist on one date.
     ("tracked_bets", "acca_ticket_id", "TEXT"),
+    ("odds_quotes", "evidence_class", "TEXT NOT NULL DEFAULT 'provider'"),
+    ("odds_quotes", "legacy_snapshot_id", "INTEGER"),
 ]
 
 TABLE_MIGRATIONS: list[str] = [
+    """CREATE TABLE IF NOT EXISTS provider_observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, provider VARCHAR(80) NOT NULL,
+        endpoint VARCHAR(160) NOT NULL, request_scope VARCHAR(255),
+        received_at DATETIME NOT NULL, provider_timestamp DATETIME,
+        payload_json TEXT, content_sha256 VARCHAR(64) NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP)""",
+    """CREATE TABLE IF NOT EXISTS market_definitions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, canonical_key VARCHAR(120) NOT NULL,
+        version VARCHAR(40) NOT NULL, settlement_rules TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(canonical_key, version))""",
+    """CREATE TABLE IF NOT EXISTS odds_quotes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+        market_key VARCHAR(120) NOT NULL, market_version VARCHAR(40) NOT NULL DEFAULT 'v1',
+        bookmaker VARCHAR(80) NOT NULL, selection_name VARCHAR(120) NOT NULL, odds REAL NOT NULL,
+        pulled_at DATETIME NOT NULL, received_at DATETIME NOT NULL,
+        provider_observation_id INTEGER REFERENCES provider_observations(id),
+        availability VARCHAR(20) NOT NULL DEFAULT 'prematch',
+        evidence_class VARCHAR(40) NOT NULL DEFAULT 'provider', legacy_snapshot_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP)""",
+    """CREATE TABLE IF NOT EXISTS fixture_revisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+        external_fixture_id INTEGER, event_date VARCHAR(10), kickoff_at DATETIME,
+        status VARCHAR(60), home_score INTEGER, away_score INTEGER,
+        home_score_ht INTEGER, away_score_ht INTEGER,
+        provider_observation_id INTEGER REFERENCES provider_observations(id),
+        received_at DATETIME NOT NULL, supersedes_id INTEGER REFERENCES fixture_revisions(id),
+        evidence_class VARCHAR(40) NOT NULL DEFAULT 'provider', legacy_fixture_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(legacy_fixture_id))""",
+    """CREATE TABLE IF NOT EXISTS model_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name VARCHAR(100) NOT NULL,
+        version VARCHAR(80) NOT NULL, source_revision VARCHAR(120),
+        config_sha256 VARCHAR(64) NOT NULL, artifact_sha256 VARCHAR(64),
+        training_manifest_json TEXT, max_input_available_at DATETIME,
+        runtime_json TEXT, seed INTEGER, parameters_json TEXT NOT NULL DEFAULT '{}',
+        evidence_class VARCHAR(40) NOT NULL DEFAULT 'prospective',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(name, version, config_sha256))""",
+    """CREATE TABLE IF NOT EXISTS feature_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+        fixture_revision_id INTEGER NOT NULL REFERENCES fixture_revisions(id),
+        model_version_id INTEGER REFERENCES model_versions(id), as_of DATETIME NOT NULL,
+        features_json TEXT NOT NULL, input_refs_json TEXT NOT NULL DEFAULT '{}',
+        transform_version VARCHAR(80) NOT NULL, content_sha256 VARCHAR(64) NOT NULL,
+        evidence_class VARCHAR(40) NOT NULL DEFAULT 'prospective',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(fixture_revision_id, as_of, transform_version, content_sha256))""",
     """
     CREATE TABLE IF NOT EXISTS calibration_snapshots (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,6 +222,14 @@ def _is_duplicate_column_error(exc: BaseException) -> bool:
 
 
 INDEX_MIGRATIONS: list[tuple[str, str]] = [
+    ("ix_provider_obs_received", "CREATE INDEX IF NOT EXISTS ix_provider_obs_received ON provider_observations(received_at)"),
+    ("ix_odds_quotes_fixture_market_time", "CREATE INDEX IF NOT EXISTS ix_odds_quotes_fixture_market_time ON odds_quotes(fixture_id, market_key, received_at)"),
+    ("ix_odds_quotes_received", "CREATE INDEX IF NOT EXISTS ix_odds_quotes_received ON odds_quotes(received_at)"),
+    ("ix_fixture_revisions_fixture_received", "CREATE INDEX IF NOT EXISTS ix_fixture_revisions_fixture_received ON fixture_revisions(fixture_id, received_at)"),
+    ("ix_model_versions_created", "CREATE INDEX IF NOT EXISTS ix_model_versions_created ON model_versions(created_at)"),
+    ("ix_feature_snapshots_fixture_asof", "CREATE INDEX IF NOT EXISTS ix_feature_snapshots_fixture_asof ON feature_snapshots(fixture_id, as_of)"),
+    ("uq_odds_quotes_legacy_snapshot", "CREATE UNIQUE INDEX IF NOT EXISTS uq_odds_quotes_legacy_snapshot ON odds_quotes(legacy_snapshot_id) WHERE legacy_snapshot_id IS NOT NULL"),
+    ("uq_odds_quote_observation_key", "CREATE UNIQUE INDEX IF NOT EXISTS uq_odds_quote_observation_key ON odds_quotes(provider_observation_id, market_key, market_version, bookmaker, selection_name) WHERE provider_observation_id IS NOT NULL"),
     (
         "uq_bet_user",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_bet_user "
@@ -247,6 +310,13 @@ INDEX_MIGRATIONS: list[tuple[str, str]] = [
         "ON fixtures(away_team, event_date DESC)",
     ),
 ]
+
+REQUIRED_EVIDENCE_INDEXES = frozenset({
+    "ix_provider_obs_received", "ix_odds_quotes_fixture_market_time",
+    "ix_odds_quotes_received", "ix_fixture_revisions_fixture_received",
+    "ix_model_versions_created", "ix_feature_snapshots_fixture_asof",
+    "uq_odds_quotes_legacy_snapshot", "uq_odds_quote_observation_key",
+})
 
 # One-shot data fixes — each is an idempotent UPDATE with tight WHERE guards.
 # Runs on every startup (cheap no-op once the condition is no longer true).
@@ -348,6 +418,24 @@ async def run_migrations(engine: AsyncEngine) -> None:
                 log.info("Index migration applied: %s", index_name)
             except Exception as e:  # noqa: BLE001
                 log.warning("Index migration FAILED for %s: %s", index_name, e)
+                if index_name in REQUIRED_EVIDENCE_INDEXES:
+                    raise RuntimeError(f"Required Stage 1 index could not be created: {index_name}") from e
+
+        # Evidence tables are append-only.  Corrections are represented by a new
+        # row linked through supersedes_id; never silently rewrite provenance.
+        for table in ("provider_observations", "market_definitions", "odds_quotes", "fixture_revisions", "model_versions", "feature_snapshots"):
+            trigger = f"trg_{table}_immutable"
+            for operation in ("UPDATE", "DELETE"):
+                try:
+                    await conn.execute(text(
+                        f"CREATE TRIGGER IF NOT EXISTS {trigger}_{operation.lower()} "
+                        f"BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable evidence: {table}'); END"
+                    ))
+                except Exception as e:  # noqa: BLE001
+                    log.warning("Immutability trigger FAILED for %s %s: %s", table, operation, e)
+                    raise RuntimeError(
+                        f"Required Stage 1 immutability trigger could not be created: {trigger}_{operation.lower()}"
+                    ) from e
 
         # ── Data migrations ───────────────────────────────────────────────────
         # Seed is_admin=1 for any existing elite users who predate the column.
@@ -367,3 +455,15 @@ async def run_migrations(engine: AsyncEngine) -> None:
                     log.info("Data migration applied: %d row(s) updated", result.rowcount)
             except Exception as e:  # noqa: BLE001
                 log.warning("Data migration FAILED: %s", e)
+
+        # Publication must fail closed when a required Stage 1 table is absent.
+        # Earlier migrations logged errors and allowed a partially upgraded app
+        # to continue, which made evidence completeness impossible to reason about.
+        if engine.dialect.name == "sqlite":
+            rows = (await conn.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ))).all()
+            present = {row[0] for row in rows}
+            missing = REQUIRED_TABLES - present
+            if missing:
+                raise RuntimeError(f"Required database schema is incomplete; missing tables: {sorted(missing)}")

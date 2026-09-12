@@ -1,22 +1,10 @@
-"""
-league_watch_guard.py — Automated league performance monitoring.
+"""League performance monitoring produces inactive suggestions only.
 
-Checks leagues in LEAGUE_WATCHLIST against BacktestResult and TrackedBet history.
-When a league's ROI drops below its configured threshold (with enough sample size),
-writes a LearningProposal(change_type="league_suppression") to the DB. The signal
-engine reads active league_suppression proposals, so the suppression takes effect
-on the next signal generation cycle without a restart.
-
-When a league's performance recovers above the recovery threshold, the proposal is
-deactivated automatically so the league re-enters the signal pool.
-
-State machine per watched league:
-  OK       → ROI above warn threshold, or not enough bets yet
-  WARNING  → ROI below warn threshold but above suppress threshold, OR not enough bets
-  SUPPRESSED → ROI below suppress threshold AND min_bets_act reached → LP written
-  RECOVERED  → previously suppressed, now above recovery threshold → LP deactivated
+Existing active suppressions are preserved. Recovery is reported for review and
+never automatically re-enables a market. Historical statistics are diagnostic.
 """
 from __future__ import annotations
+from app.services.learning_suggestions import save_suggestion
 
 import logging
 from dataclasses import dataclass, field
@@ -172,14 +160,12 @@ async def run_league_watch_guard(db: AsyncSession) -> list[LeagueStatus]:
 
         # ── Recovery check: previously suppressed, now improving ──────────────
         if active_proposal and total_bets >= min_act and roi >= recover_roi:
-            active_proposal.is_active = False
-            await db.commit()
-            state  = "RECOVERED"
-            action = "reactivated"
+            state  = "REVIEW_REQUIRED"
+            action = "review_recovery"
             proposal_id = active_proposal.id
-            msg_parts.append(f"RECOVERED above {recover_roi:+.1f}% → proposal deactivated")
+            msg_parts.append(f"RECOVERED above {recover_roi:+.1f}% → recovery requires review")
             logger.info(
-                "Watch guard RECOVERED: '%s'  ROI=%+.1f%%  bets=%d  (proposal #%d deactivated)",
+                "Watch guard RECOVERED: '%s'  ROI=%+.1f%%  bets=%d  (proposal #%d retained)",
                 keyword, roi, total_bets, active_proposal.id,
             )
 
@@ -204,20 +190,20 @@ async def run_league_watch_guard(db: AsyncSession) -> list[LeagueStatus]:
                     f"{wins}/{total_bets} wins ({wins/total_bets*100:.0f}% WR)  "
                     f"ROI={roi:+.1f}%  threshold={supp_roi:+.1f}%"
                 ),
-                is_active=True,
+                is_active=False,
             )
-            db.add(proposal)
+            proposal = await save_suggestion(db, proposal)
             await db.flush()   # get the id
             await db.commit()
-            state       = "SUPPRESSED"
-            action      = "suppressed"
+            state       = "REVIEW_REQUIRED"
+            action      = "proposed"
             proposal_id = proposal.id
             msg_parts.append(
-                f"*** AUTO-SUPPRESSED *** ROI={roi:+.1f}% < {supp_roi:+.1f}% "
+                f"SUPPRESSION PROPOSED ROI={roi:+.1f}% < {supp_roi:+.1f}% "
                 f"with {total_bets} bets → LP #{proposal.id} written"
             )
             logger.warning(
-                "Watch guard SUPPRESSED: '%s'  ROI=%+.1f%%  bets=%d  WR=%.0f%%  LP #%d written",
+                "Watch guard PROPOSED: '%s'  ROI=%+.1f%%  bets=%d  WR=%.0f%%  LP #%d written",
                 keyword, roi, total_bets, wins / total_bets * 100 if total_bets else 0, proposal.id,
             )
 
@@ -271,10 +257,8 @@ async def run_league_watch_guard(db: AsyncSession) -> list[LeagueStatus]:
         msg_parts   = [f"bets={total_bets}  wins={wins}  ROI={roi:+.1f}%  [auto-grad]"]
 
         if active_proposal and total_bets >= min_act and roi >= recover_roi:
-            active_proposal.is_active = False
-            await db.commit()
-            state  = "RECOVERED"
-            action = "reactivated"
+            state  = "REVIEW_REQUIRED"
+            action = "review_recovery"
             proposal_id = active_proposal.id
             logger.info("Watch guard (auto) RECOVERED: '%s'  ROI=%+.1f%%", keyword, roi)
 
@@ -295,16 +279,16 @@ async def run_league_watch_guard(db: AsyncSession) -> list[LeagueStatus]:
                     f"{wins}/{total_bets} wins ({wins/total_bets*100:.0f}% WR)  "
                     f"ROI={roi:+.1f}%  threshold={supp_roi:+.1f}%"
                 ),
-                is_active=True,
+                is_active=False,
             )
-            db.add(proposal)
+            proposal = await save_suggestion(db, proposal)
             await db.flush()
             await db.commit()
-            state       = "SUPPRESSED"
-            action      = "suppressed"
+            state       = "REVIEW_REQUIRED"
+            action      = "proposed"
             proposal_id = proposal.id
             logger.warning(
-                "Watch guard (auto) SUPPRESSED: '%s'  ROI=%+.1f%%  bets=%d  LP #%d",
+                "Watch guard (auto) PROPOSED: '%s'  ROI=%+.1f%%  bets=%d  LP #%d",
                 keyword, roi, total_bets, proposal.id,
             )
 

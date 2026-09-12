@@ -7,11 +7,34 @@ from functools import lru_cache
 from pathlib import Path
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 # Resolve the .env path relative to this file so the server can be launched from any
 # working directory (project root, backend/, etc.) without missing the env vars.
 # config.py lives at backend/app/core/config.py → go up 3 levels → backend/
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
+
+
+def resolve_database_url(value: str) -> str:
+    """Anchor ordinary relative SQLite files to backend/, preserving URL options.
+
+    Memory databases retain their caller-defined semantics. Non-SQLite URLs
+    are passed through without rendering credentials.
+    """
+    url = make_url(value)
+    if url.get_backend_name() != "sqlite":
+        return value
+    database = url.database
+    if not database or database == ":memory:":
+        return value
+    is_uri = database.startswith("file:")
+    if is_uri and (database == "file::memory:" or url.query.get("mode") == "memory"):
+        return value
+    path = Path(database[5:] if is_uri else database)
+    if not path.is_absolute():
+        path = (_ENV_FILE.parent / path).resolve()
+    resolved = ("file:" if is_uri else "") + path.as_posix()
+    return url.set(database=resolved).render_as_string(hide_password=False)
 
 
 class Settings(BaseSettings):
@@ -31,6 +54,8 @@ class Settings(BaseSettings):
     cerebras_api_key: str = ""     # inference.cerebras.ai       (free, very fast)
     mistral_api_key: str = ""      # console.mistral.ai          (free tier)
     db_url: str = "sqlite+aiosqlite:///./titibet.db"
+    # Stage 0 operational freshness limit, not a validated betting threshold.
+    tracking_quote_max_age_minutes: int = 120
     backend_port: int = 8010
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
@@ -94,6 +119,9 @@ class Settings(BaseSettings):
                 "Set a strong random secret in backend/.env before starting the server. "
                 "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
             )
+        self.db_url = resolve_database_url(self.db_url)
+        if self.tracking_quote_max_age_minutes <= 0:
+            raise ValueError("TRACKING_QUOTE_MAX_AGE_MINUTES must be positive")
         return self
 
     # Email (SMTP)

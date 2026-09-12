@@ -7,9 +7,14 @@ from app.models.ingestion import IngestionRun
 from app.models.loss_analysis import LossAnalysis
 from app.models.learning_proposal import LearningProposal
 from app.models.signal_observation import SignalObservation
+from app.models.evidence import (
+    ProviderObservation, MarketDefinition, OddsQuote, FixtureRevision,
+    ModelVersion, FeatureSnapshot,
+)
 
 __all__ = [
     "Fixture", "MarketSnapshot", "Signal", "TrackedBet",
     "BacktestResult", "IngestionRun",
-    "LossAnalysis", "LearningProposal", "SignalObservation",
+    "LossAnalysis", "LearningProposal", "SignalObservation", "ProviderObservation", "MarketDefinition", "OddsQuote",
+    "FixtureRevision", "ModelVersion", "FeatureSnapshot",
 ]

@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "lint:reviewed": "eslint src/components/backtest/BacktestControls.jsx src/components/tracker/BetTable.jsx src/pages/BacktestPage.jsx src/pages/TrackerPage.jsx",
     "preview": "vite preview"
   },
   "dependencies": {

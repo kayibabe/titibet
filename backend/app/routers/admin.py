@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_admin as _require_admin
 from app.core.database import get_db
 from app.models.user import User
 from app.models.learning_proposal import LearningProposal
@@ -26,6 +26,7 @@ from app.core.config import (
     OVER25_SUPPRESSED_TIERS,
 )
 from app.services.api_client import get_quota_info
+from app.services.tracking_evidence import tracking_rejection
 from app.services.settlement import refresh_stale_fixtures_and_settle
 from app.services.loss_analysis_agent import run_loss_analysis_pipeline
 from app.services.strategy_pipeline import run_strategy_pipeline
@@ -38,12 +39,6 @@ from app.services.telegram import (
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
-
-
-def _require_admin(current_user: User = Depends(get_current_user)) -> User:
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return current_user
 
 
 class UserAdminOut(BaseModel):
@@ -516,7 +511,8 @@ async def autobet_catchup(
     _admin: User = Depends(_require_admin),
 ):
     """
-    Backfill system auto-picks for a date range.
+    Recover only still-unstarted, real-quoted system picks in a date range.
+    Historical fixtures are rejected; dry runs never recompute or write.
 
     For each date:
       1. If 0 signals exist, recompute them from existing market snapshots.
@@ -580,6 +576,11 @@ async def autobet_catchup(
             .where(Signal.is_candidate == False)  # noqa: E712
         )
         if sig_count_row.scalar() == 0:
+            if dry_run:
+                entry["would_recompute"] = True
+                results.append(entry)
+                current += timedelta(days=1)
+                continue
             try:
                 new_count = await asyncio.wait_for(
                     compute_signals_for_date(db, current), timeout=90
@@ -628,6 +629,12 @@ async def autobet_catchup(
 
         # 4. Create TrackedBet rows
         for sig, fix in deduped:
+            rejection = await tracking_rejection(db, sig, fix)
+            if rejection:
+                entry["bets_skipped"] += 1
+                reasons = entry.setdefault("rejections", {})
+                reasons[rejection] = reasons.get(rejection, 0) + 1
+                continue
             # Check for existing system pick on this fixture+market.
             # Match the uq_system_signal_bet index: any user_id=NULL row for
             # this (fixture_id, market_type) — regardless of source_rule_key.
