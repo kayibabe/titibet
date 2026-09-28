@@ -902,6 +902,70 @@ async def get_loss_analysis_summary(
     cutoff = date.today() - timedelta(days=lookback_days)
     analyses = await _load_recent_analyses(db, lookback_days=lookback_days)
 
+    # Keep the AI annotations separate from the authoritative settlement ledger.
+    # This gives the dashboard useful evidence even when the optional LLM pipeline
+    # has not been run, and prevents an empty analysis table from looking like zero
+    # losses.  Only terminal tracker rows are included.
+    from sqlalchemy import text
+    performance_rows = (await db.execute(text("""
+        SELECT event_date,
+               COUNT(*) AS settled,
+               SUM(CASE WHEN result_status = 'Won' THEN 1 ELSE 0 END) AS wins,
+               SUM(CASE WHEN result_status = 'Lost' THEN 1 ELSE 0 END) AS losses,
+               COALESCE(SUM(profit_loss), 0) AS profit_loss
+        FROM tracked_bets
+        WHERE result_status IN ('Won', 'Lost')
+          AND event_date >= :cutoff
+        GROUP BY event_date
+        ORDER BY event_date DESC
+    """), {"cutoff": cutoff})).mappings().all()
+    market_rows = (await db.execute(text("""
+        SELECT market_type,
+               COUNT(*) AS settled,
+               SUM(CASE WHEN result_status = 'Won' THEN 1 ELSE 0 END) AS wins,
+               SUM(CASE WHEN result_status = 'Lost' THEN 1 ELSE 0 END) AS losses,
+               COALESCE(SUM(profit_loss), 0) AS profit_loss,
+               COALESCE(SUM(stake), 0) AS stake
+        FROM tracked_bets
+        WHERE result_status IN ('Won', 'Lost')
+          AND event_date >= :cutoff
+        GROUP BY market_type
+        ORDER BY losses DESC, settled DESC
+    """), {"cutoff": cutoff})).mappings().all()
+
+    settled = sum(int(row["settled"] or 0) for row in performance_rows)
+    wins = sum(int(row["wins"] or 0) for row in performance_rows)
+    losses = sum(int(row["losses"] or 0) for row in performance_rows)
+    loss_days = sum(1 for row in performance_rows if int(row["losses"] or 0) > 0)
+    loss_free_days = sum(1 for row in performance_rows if int(row["losses"] or 0) == 0)
+    recommendations: list[str] = []
+    if settled:
+        dominant = market_rows[0] if market_rows else None
+        if dominant and int(dominant["losses"] or 0) >= max(3, round(losses * 0.7)):
+            recommendations.append(
+                f"Prioritise a walk-forward review of {dominant['market_type']}: "
+                f"it accounts for {int(dominant['losses'] or 0)} of {losses} losses in this window."
+            )
+        if loss_days:
+            recommendations.append(
+                "Use a daily exposure cap and allow no-bet days; a hit-rate target cannot guarantee a loss-free week."
+            )
+        if wins + losses and wins / (wins + losses) < 0.75:
+            recommendations.append(
+                "Do not widen the published strategy. Keep new thresholds in prospective paper testing until calibration improves."
+            )
+
+    performance = {
+        "settled": settled,
+        "wins": wins,
+        "losses": losses,
+        "hit_rate": round(wins / settled, 4) if settled else None,
+        "loss_days": loss_days,
+        "loss_free_days": loss_free_days,
+        "daily": [dict(row) for row in performance_rows],
+        "by_market": [dict(row) for row in market_rows],
+    }
+
     if not analyses:
         return {
             "total_losses_analysed": 0,
@@ -909,6 +973,8 @@ async def get_loss_analysis_summary(
             "avg_avoidability": None,
             "most_avoidable_market": None,
             "analyses": [],
+            "performance": performance,
+            "recommendations": recommendations,
         }
 
     # Count categories
@@ -957,4 +1023,6 @@ async def get_loss_analysis_summary(
             }
             for a in analyses
         ],
+        "performance": performance,
+        "recommendations": recommendations,
     }

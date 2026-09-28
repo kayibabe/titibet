@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings, DUAL_HIGH_ODDS_CEILING, OVER_GOALS_SUPPRESSED_LEAGUES, DISABLED_LEAGUES
 from app.models import Signal, Fixture
 from app.services.performance_intelligence import PerformanceWeights, compute_performance_weights
+from app.services.promotion_readiness import publication_readiness, published_signal_scope
 
 logger = logging.getLogger(__name__)
 
@@ -662,6 +663,26 @@ async def auto_track_advisor_picks(
     rows — list of (Signal, Fixture) tuples from the current advisory signal pool.
     These are used to resolve team names → fixture_id + odds without any LLM calls.
     """
+    readiness = await publication_readiness(db)
+    if not readiness.ready:
+        logger.warning(
+            "Advisor auto-tracking blocked by publication gate: %s",
+            ",".join(readiness.reasons),
+        )
+        return 0
+    signal_ids = [signal.id for signal, _fixture in rows if signal.id is not None]
+    if not signal_ids:
+        return 0
+    published_ids = set(
+        (
+            await db.scalars(
+                published_signal_scope(select(Signal.id).where(Signal.id.in_(signal_ids)))
+            )
+        ).all()
+    )
+    rows = [(signal, fixture) for signal, fixture in rows if signal.id in published_ids]
+    if not rows:
+        return 0
     from app.models.bet import TrackedBet
 
     def _norm(s: str | None) -> str:
@@ -1271,7 +1292,7 @@ async def get_advisor_insights(
         }
 
     # ── Load signals ──────────────────────────────────────────────────────────
-    q = (
+    q = published_signal_scope(
         select(Signal, Fixture)
         .join(Fixture, Signal.fixture_id == Fixture.id)
         .where(Fixture.event_date == target_date)

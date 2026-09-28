@@ -9,12 +9,17 @@ from app.models.learning_proposal import LearningProposal
 from app.models.signal_observation import SignalObservation
 from app.models.evidence import (
     ProviderObservation, MarketDefinition, OddsQuote, FixtureRevision,
-    ModelVersion, FeatureSnapshot,
+    ModelVersion, FeatureSnapshot, EvidenceExclusion, StrategyVersion,
+    ExperimentRegistration, ExperimentEvaluation, PromotionReview, SignalDecision,
 )
+from app.models.paper_observation import PaperObservation
 
 __all__ = [
     "Fixture", "MarketSnapshot", "Signal", "TrackedBet",
     "BacktestResult", "IngestionRun",
     "LossAnalysis", "LearningProposal", "SignalObservation", "ProviderObservation", "MarketDefinition", "OddsQuote",
-    "FixtureRevision", "ModelVersion", "FeatureSnapshot",
+    "FixtureRevision", "ModelVersion", "FeatureSnapshot", "EvidenceExclusion",
+    "StrategyVersion", "ExperimentRegistration", "SignalDecision",
+    "ExperimentEvaluation", "PromotionReview",
+    "PaperObservation",
 ]

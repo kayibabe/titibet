@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.user import User
 from app.services.advisor_service import get_advisor_insights, track_acca_for_user, chat_with_advisor, explain_system_picks
+from app.services.promotion_readiness import require_publication_ready
 
 
 class _ChatRequest(_BM):
@@ -54,7 +55,11 @@ def _parse_date(date_str: Optional[str]) -> date:
         )
 
 
-@router.get("")
+async def _publication_gate(db: AsyncSession = Depends(get_db)) -> None:
+    await require_publication_ready(db)
+
+
+@router.get("", dependencies=[Depends(_publication_gate)])
 async def advisor_insights(
     date_str:    Optional[str]  = Query(None, alias="date"),
     fixture_ids: Optional[str]  = Query(None, description="Comma-separated fixture IDs to limit analysis"),
@@ -86,7 +91,7 @@ async def advisor_insights(
     return await get_advisor_insights(db, target_date, fixture_ids=ids, current_user=current_user, force=force)
 
 
-@router.post("/track-acca")
+@router.post("/track-acca", dependencies=[Depends(_publication_gate)])
 async def track_acca(
     date_str:      Optional[str]   = Query(None, alias="date"),
     expected_odds: Optional[float] = Query(None, description="Combined odds the user sees — triggers cache refresh if stale"),
@@ -142,7 +147,7 @@ async def advisor_chat(
     return {"answer": answer, "role": "assistant"}
 
 
-@router.post("/explain-picks")
+@router.post("/explain-picks", dependencies=[Depends(_publication_gate)])
 async def explain_picks(
     body: _ExplainPicksRequest,
     current_user: Optional[User] = Depends(get_current_user_optional),

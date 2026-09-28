@@ -45,6 +45,7 @@ from app.core.config import (
     is_womens_fixture,
 )
 from app.services.tracking_evidence import tracking_rejection
+from app.services.promotion_readiness import publication_readiness, published_signal_scope
 from app.services.acca_builder import (
     build_acca_candidates, build_accumulator, _ACCA_WIN_PROB_FLOOR,
 )
@@ -115,14 +116,25 @@ async def auto_track_date(db: AsyncSession, run_date: date) -> int:
     Contradiction (engines actively disagree → no bet).
     Returns count of newly inserted bets.
     """
+    readiness = await publication_readiness(db)
+    if not readiness.ready:
+        logger.warning(
+            "auto_track_date %s blocked by publication gate: %s",
+            run_date,
+            ",".join(readiness.reasons),
+        )
+        return 0
+
     # Load all non-candidate, non-contradiction signals for this date
     rows = list(
         (await db.execute(
-            select(Signal, Fixture)
-            .join(Fixture, Signal.fixture_id == Fixture.id)
-            .where(Fixture.event_date == run_date)
-            .where(Signal.is_candidate == False)  # noqa: E712
-            .where(Signal.dual_agreement != "Contradiction")
+            published_signal_scope(
+                select(Signal, Fixture)
+                .join(Fixture, Signal.fixture_id == Fixture.id)
+                .where(Fixture.event_date == run_date)
+                .where(Signal.is_candidate == False)  # noqa: E712
+                .where(Signal.dual_agreement != "Contradiction")
+            )
         )).all()
     )
 

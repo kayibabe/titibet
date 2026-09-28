@@ -19,6 +19,9 @@ REQUIRED_TABLES = frozenset({
     "fixtures", "market_snapshots", "signals", "tracked_bets",
     "provider_observations", "market_definitions", "odds_quotes",
     "fixture_revisions", "model_versions", "feature_snapshots",
+    "evidence_exclusions", "strategy_versions", "experiment_registrations",
+    "experiment_evaluations", "promotion_reviews", "signal_decisions",
+    "paper_observations",
 })
 
 # Each entry: (table, column, column_def)
@@ -73,6 +76,7 @@ COLUMN_MIGRATIONS = [
     ("tracked_bets", "acca_ticket_id", "TEXT"),
     ("odds_quotes", "evidence_class", "TEXT NOT NULL DEFAULT 'provider'"),
     ("odds_quotes", "legacy_snapshot_id", "INTEGER"),
+    ("signals", "decision_id", "INTEGER REFERENCES signal_decisions(id)"),
 ]
 
 TABLE_MIGRATIONS: list[str] = [
@@ -123,6 +127,63 @@ TABLE_MIGRATIONS: list[str] = [
         evidence_class VARCHAR(40) NOT NULL DEFAULT 'prospective',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(fixture_revision_id, as_of, transform_version, content_sha256))""",
+    """CREATE TABLE IF NOT EXISTS evidence_exclusions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, evidence_type VARCHAR(40) NOT NULL,
+        evidence_id INTEGER NOT NULL, reason_code VARCHAR(80) NOT NULL,
+        details_json TEXT NOT NULL DEFAULT '{}', audit_version VARCHAR(40) NOT NULL,
+        detected_at DATETIME NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(evidence_type, evidence_id, reason_code))""",
+    """CREATE TABLE IF NOT EXISTS strategy_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name VARCHAR(100) NOT NULL,
+        version VARCHAR(80) NOT NULL, source_revision VARCHAR(120) NOT NULL,
+        config_sha256 VARCHAR(64) NOT NULL, config_json TEXT NOT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'research',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(name, version, config_sha256))""",
+    """CREATE TABLE IF NOT EXISTS experiment_registrations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        strategy_version_id INTEGER NOT NULL REFERENCES strategy_versions(id),
+        market_definition_id INTEGER NOT NULL REFERENCES market_definitions(id),
+        version VARCHAR(40) NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'draft',
+        min_distinct_fixtures INTEGER NOT NULL, min_settled_predictions INTEGER NOT NULL,
+        min_calendar_days INTEGER NOT NULL, max_ece REAL NOT NULL,
+        max_brier_score REAL NOT NULL, max_drawdown_pct REAL NOT NULL,
+        min_roi_lower_bound REAL NOT NULL, max_concentration_pct REAL NOT NULL,
+        resampling_seed INTEGER NOT NULL, resampling_repetitions INTEGER NOT NULL,
+        costs_json TEXT NOT NULL, risk_limits_json TEXT NOT NULL,
+        content_sha256 VARCHAR(64) NOT NULL, registered_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(strategy_version_id, market_definition_id, version))""",
+    """CREATE TABLE IF NOT EXISTS signal_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+        feature_snapshot_id INTEGER NOT NULL REFERENCES feature_snapshots(id),
+        model_version_id INTEGER NOT NULL REFERENCES model_versions(id),
+        strategy_version_id INTEGER NOT NULL REFERENCES strategy_versions(id),
+        market_definition_id INTEGER NOT NULL REFERENCES market_definitions(id),
+        executable_quote_id INTEGER REFERENCES odds_quotes(id),
+        market_key VARCHAR(120) NOT NULL, computed_at DATETIME NOT NULL,
+        eligibility_status VARCHAR(40) NOT NULL, eligibility_reason TEXT,
+        content_sha256 VARCHAR(64) NOT NULL UNIQUE,
+        lineage_complete INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP)""",
+    """CREATE TABLE IF NOT EXISTS experiment_evaluations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        registration_id INTEGER NOT NULL REFERENCES experiment_registrations(id),
+        metrics_json TEXT NOT NULL, evaluation_started_at DATETIME NOT NULL,
+        evaluation_ended_at DATETIME NOT NULL,
+        evidence_manifest_sha256 VARCHAR(64) NOT NULL,
+        evaluator_source_revision VARCHAR(120) NOT NULL,
+        content_sha256 VARCHAR(64) NOT NULL UNIQUE,
+        evaluated_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP)""",
+    """CREATE TABLE IF NOT EXISTS promotion_reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        evaluation_id INTEGER NOT NULL REFERENCES experiment_evaluations(id),
+        decision VARCHAR(20) NOT NULL, reviewer_identity VARCHAR(120) NOT NULL,
+        rationale TEXT NOT NULL, content_sha256 VARCHAR(64) NOT NULL UNIQUE,
+        reviewed_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP)""",
     """
     CREATE TABLE IF NOT EXISTS calibration_snapshots (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,6 +273,29 @@ TABLE_MIGRATIONS: list[str] = [
         settled_at       DATETIME
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS paper_observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        decision_id INTEGER NOT NULL REFERENCES signal_decisions(id),
+        fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+        market_type VARCHAR(120) NOT NULL,
+        event_date DATE,
+        kickoff_at DATETIME NOT NULL,
+        observed_at DATETIME NOT NULL,
+        odds REAL NOT NULL,
+        model_probability REAL NOT NULL,
+        quote_id INTEGER NOT NULL REFERENCES odds_quotes(id),
+        feature_snapshot_id INTEGER NOT NULL REFERENCES feature_snapshots(id),
+        model_version_id INTEGER NOT NULL REFERENCES model_versions(id),
+        strategy_version_id INTEGER NOT NULL REFERENCES strategy_versions(id),
+        evidence_class VARCHAR(40) NOT NULL DEFAULT 'prospective',
+        result_status VARCHAR(20) NOT NULL DEFAULT 'Pending',
+        profit_loss REAL NOT NULL DEFAULT 0.0,
+        settled_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(fixture_id, market_type, strategy_version_id)
+    )
+    """,
 ]
 
 
@@ -233,6 +317,16 @@ INDEX_MIGRATIONS: list[tuple[str, str]] = [
     ("ix_fixture_revisions_fixture_received", "CREATE INDEX IF NOT EXISTS ix_fixture_revisions_fixture_received ON fixture_revisions(fixture_id, received_at)"),
     ("ix_model_versions_created", "CREATE INDEX IF NOT EXISTS ix_model_versions_created ON model_versions(created_at)"),
     ("ix_feature_snapshots_fixture_asof", "CREATE INDEX IF NOT EXISTS ix_feature_snapshots_fixture_asof ON feature_snapshots(fixture_id, as_of)"),
+    ("ix_evidence_exclusions_target", "CREATE INDEX IF NOT EXISTS ix_evidence_exclusions_target ON evidence_exclusions(evidence_type, evidence_id)"),
+    ("ix_strategy_versions_status", "CREATE INDEX IF NOT EXISTS ix_strategy_versions_status ON strategy_versions(status)"),
+    ("ix_experiment_registration_status", "CREATE INDEX IF NOT EXISTS ix_experiment_registration_status ON experiment_registrations(status)"),
+    ("ix_experiment_evaluations_registration", "CREATE INDEX IF NOT EXISTS ix_experiment_evaluations_registration ON experiment_evaluations(registration_id, evaluated_at)"),
+    ("ix_promotion_reviews_evaluation", "CREATE INDEX IF NOT EXISTS ix_promotion_reviews_evaluation ON promotion_reviews(evaluation_id)"),
+    ("ix_signal_decisions_fixture_time", "CREATE INDEX IF NOT EXISTS ix_signal_decisions_fixture_time ON signal_decisions(fixture_id, computed_at)"),
+    ("ix_signal_decisions_market_status", "CREATE INDEX IF NOT EXISTS ix_signal_decisions_market_status ON signal_decisions(market_key, eligibility_status)"),
+    ("ix_paper_observations_fixture_status", "CREATE INDEX IF NOT EXISTS ix_paper_observations_fixture_status ON paper_observations(fixture_id, result_status)"),
+    ("ix_paper_observations_market_date", "CREATE INDEX IF NOT EXISTS ix_paper_observations_market_date ON paper_observations(market_type, event_date)"),
+    ("ix_signals_decision", "CREATE INDEX IF NOT EXISTS ix_signals_decision ON signals(decision_id)"),
     ("uq_odds_quotes_legacy_snapshot", "CREATE UNIQUE INDEX IF NOT EXISTS uq_odds_quotes_legacy_snapshot ON odds_quotes(legacy_snapshot_id) WHERE legacy_snapshot_id IS NOT NULL"),
     ("uq_odds_quote_observation_key", "CREATE UNIQUE INDEX IF NOT EXISTS uq_odds_quote_observation_key ON odds_quotes(provider_observation_id, market_key, market_version, bookmaker, selection_name) WHERE provider_observation_id IS NOT NULL"),
     (
@@ -456,7 +550,13 @@ async def run_migrations(engine: AsyncEngine) -> None:
 
         # Evidence tables are append-only.  Corrections are represented by a new
         # row linked through supersedes_id; never silently rewrite provenance.
-        for table in ("provider_observations", "market_definitions", "odds_quotes", "fixture_revisions", "model_versions", "feature_snapshots"):
+        for table in (
+            "provider_observations", "market_definitions", "odds_quotes",
+            "fixture_revisions", "model_versions", "feature_snapshots",
+            "evidence_exclusions", "strategy_versions",
+            "experiment_registrations", "experiment_evaluations",
+            "promotion_reviews", "signal_decisions",
+        ):
             trigger = f"trg_{table}_immutable"
             for operation in ("UPDATE", "DELETE"):
                 try:
@@ -468,7 +568,54 @@ async def run_migrations(engine: AsyncEngine) -> None:
                     log.warning("Immutability trigger FAILED for %s %s: %s", table, operation, e)
                     raise RuntimeError(
                         f"Required Stage 1 immutability trigger could not be created: {trigger}_{operation.lower()}"
-                    ) from e
+                ) from e
+
+        # A paper observation preserves the pre-kickoff decision evidence.  Its
+        # settlement is a one-way transition, so outcome fields can be written
+        # exactly once while price, probability, and lineage remain immutable.
+        try:
+            await conn.execute(text(
+                "CREATE TRIGGER IF NOT EXISTS trg_paper_observations_guard_update "
+                "BEFORE UPDATE ON paper_observations WHEN "
+                "NEW.decision_id IS NOT OLD.decision_id OR "
+                "NEW.fixture_id IS NOT OLD.fixture_id OR "
+                "NEW.market_type IS NOT OLD.market_type OR "
+                "NEW.event_date IS NOT OLD.event_date OR "
+                "NEW.kickoff_at IS NOT OLD.kickoff_at OR "
+                "NEW.observed_at IS NOT OLD.observed_at OR "
+                "NEW.odds IS NOT OLD.odds OR "
+                "NEW.model_probability IS NOT OLD.model_probability OR "
+                "NEW.quote_id IS NOT OLD.quote_id OR "
+                "NEW.feature_snapshot_id IS NOT OLD.feature_snapshot_id OR "
+                "NEW.model_version_id IS NOT OLD.model_version_id OR "
+                "NEW.strategy_version_id IS NOT OLD.strategy_version_id OR "
+                "NEW.evidence_class IS NOT OLD.evidence_class OR "
+                "NEW.created_at IS NOT OLD.created_at OR "
+                "OLD.result_status <> 'Pending' OR "
+                "NEW.result_status NOT IN ('Won', 'Lost', 'Void') OR "
+                "NEW.settled_at IS NULL OR "
+                "(NEW.result_status = 'Void' AND NEW.profit_loss <> 0.0) OR "
+                "(NEW.result_status = 'Lost' AND NEW.profit_loss <> -1.0) OR "
+                "(NEW.result_status = 'Won' AND ABS(NEW.profit_loss - (NEW.odds - 1.0)) > 0.000001) "
+                "BEGIN SELECT RAISE(ABORT, 'immutable paper observation'); END"
+            ))
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(
+                "Required paper-observation evidence guard could not be created"
+            ) from e
+
+        # Existing signal rows remain as research-only legacy projections, but
+        # every new row must point to an immutable decision before insertion.
+        try:
+            await conn.execute(text(
+                "CREATE TRIGGER IF NOT EXISTS trg_signals_require_decision_insert "
+                "BEFORE INSERT ON signals WHEN NEW.decision_id IS NULL "
+                "BEGIN SELECT RAISE(ABORT, 'signal decision lineage required'); END"
+            ))
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(
+                "Required signal-decision insert guard could not be created"
+            ) from e
 
         # ── Data migrations ───────────────────────────────────────────────────
         # Seed is_admin=1 for any existing elite users who predate the column.

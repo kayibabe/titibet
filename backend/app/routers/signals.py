@@ -17,12 +17,13 @@ from app.core.config import (
     MAX_SIGNALS_PER_TIER3_LEAGUE, MAX_SIGNALS_PER_MARKET, DUAL_HIGH_ODDS_CEILING, is_grade_c_ceiling_exception,
     WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS, HO05_DATA_POOR_COUNTRIES,
     COPA_HO05_SUPPRESSED_LEAGUES, PROVISIONAL_LEAGUE_MIN_BETS,
-    is_womens_fixture, OVER25_SUPPRESSED_TIERS,
+    is_womens_fixture, OVER25_SUPPRESSED_TIERS, MAX_PUBLISHED_SIGNALS_PER_DAY,
 )
 from app.models import Signal, Fixture, TrackedBet
 from app.models.odds import MarketSnapshot
 from app.models.user import User
 from app.services.signal_engine import get_learned_market_ceilings
+from app.services.promotion_readiness import published_signal_scope, require_publication_ready
 from app.schemas.signal import SignalOut, BayesianOut, PoissonOut, AdvancedModelsOut, BookmakerOdds, AlternativeSignal
 from pydantic import BaseModel as _BaseModel
 
@@ -49,6 +50,15 @@ _WOMEN_UNIVERSAL_MARKETS: frozenset = WOMEN_OVER_SUPPRESSED_MARKETS | frozenset(
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
 settings = get_settings()
+
+
+async def _publication_gate(db: AsyncSession = Depends(get_db)) -> None:
+    await require_publication_ready(db)
+
+
+def _published_decisions(query):
+    """Restrict serving to complete decisions from the configured strategy artifact."""
+    return published_signal_scope(query, settings)
 
 
 async def _compute_clv_market_ranks(db: AsyncSession) -> dict[str, int]:
@@ -300,7 +310,8 @@ def _to_signal_out(
         )
 
     return SignalOut(
-        id=sig.id, fixture_id=sig.fixture_id, market=sig.market,
+        id=sig.id, decision_id=sig.decision_id,
+        fixture_id=sig.fixture_id, market=sig.market,
         bayesian=bayesian, poisson=poisson,
         dual_confidence=sig.dual_confidence, dual_agreement=sig.dual_agreement,
         dual_quality_score=sig.dual_quality_score,
@@ -322,7 +333,7 @@ def _to_signal_out(
     )
 
 
-@router.get("", response_model=SignalsResponse)
+@router.get("", response_model=SignalsResponse, dependencies=[Depends(_publication_gate)])
 async def list_signals(
     date_str: Optional[str] = Query(None, alias="date"),
     confidence: Optional[str] = Query(None, description="Comma-separated: High,Medium"),
@@ -336,7 +347,7 @@ async def list_signals(
 ):
     target_date = date.fromisoformat(date_str) if date_str else date.today()
 
-    query = (
+    query = _published_decisions(
         select(Signal, Fixture)
         .join(Fixture, Signal.fixture_id == Fixture.id)
         .where(Fixture.event_date == target_date)
@@ -619,6 +630,11 @@ async def list_signals(
             mkt_capped.append(r)
         results = mkt_capped
 
+    # Final portfolio-size guard. Keep the highest-ranked rows only; this limits
+    # clustered daily exposure without changing stored model evidence.
+    if MAX_PUBLISHED_SIGNALS_PER_DAY > 0:
+        results = results[:MAX_PUBLISHED_SIGNALS_PER_DAY]
+
     # ── Banker annotation ─────────────────────────────────────────────────────
     # Top 3 High-confidence Both-engines signals with prob ≥ 0.70 are flagged as
     # "Banker" picks — the day's highest-conviction recommendations.
@@ -700,7 +716,7 @@ async def list_signals(
     return SignalsResponse(signals=results, hidden_high_confidence_count=hidden_count)
 
 
-@router.get("/stat-picks")
+@router.get("/stat-picks", dependencies=[Depends(_publication_gate)])
 async def stat_driven_picks(
     date_str: Optional[str] = Query(None, alias="date"),
     db: AsyncSession = Depends(get_db),
@@ -724,7 +740,7 @@ async def stat_driven_picks(
 
     _STAT_MARKETS = ["Home Over 0.5", "Away Over 0.5"]
 
-    query = (
+    query = _published_decisions(
         select(Signal, Fixture)
         .join(Fixture, Signal.fixture_id == Fixture.id)
         .where(Fixture.event_date == target_date)
@@ -889,7 +905,7 @@ async def stat_driven_picks(
     }
 
 
-@router.get("/{fixture_id}/explain")
+@router.get("/{fixture_id}/explain", dependencies=[Depends(_publication_gate)])
 async def explain_signal(
     fixture_id: int,
     market: Optional[str] = Query(None, description="Specific market to explain (optional — uses best signal if omitted)"),
@@ -901,7 +917,7 @@ async def explain_signal(
     Covers: model agreement, probability vs bookmaker, edge, odds drift, coverage.
     """
     from fastapi import HTTPException
-    q = (
+    q = _published_decisions(
         select(Signal, Fixture)
         .join(Fixture, Signal.fixture_id == Fixture.id)
         .where(Signal.fixture_id == fixture_id)
@@ -1134,7 +1150,7 @@ async def signals_diag(
     }
 
 
-@router.get("/debug-engine")
+@router.get("/debug-engine", dependencies=[Depends(require_admin)])
 async def debug_engine(
     date_str: Optional[str] = Query(None, alias="date"),
     db: AsyncSession = Depends(get_db),
@@ -1142,7 +1158,7 @@ async def debug_engine(
     """
     Run bayesian + poisson engines on the FIRST fixture with snapshots for a date
     and return all intermediate values so we can see exactly where signals fail.
-    No auth required — read-only diagnostic.
+    Admin-only diagnostic. It exposes raw odds and intermediate model values.
     """
     from app.engines import bayesian as bay_engine, poisson as poi_engine
     from app.services.signal_engine import (
@@ -1242,11 +1258,11 @@ async def debug_engine(
     }
 
 
-@router.get("/{fixture_id}", response_model=list[SignalOut])
+@router.get("/{fixture_id}", response_model=list[SignalOut], dependencies=[Depends(_publication_gate)])
 async def fixture_signals(fixture_id: int, db: AsyncSession = Depends(get_db)):
     """All markets for one fixture (Deep Dive). Includes per-bookmaker odds from snapshots."""
     # Load signals
-    sig_query = (
+    sig_query = _published_decisions(
         select(Signal, Fixture)
         .join(Fixture, Signal.fixture_id == Fixture.id)
         .where(Signal.fixture_id == fixture_id)

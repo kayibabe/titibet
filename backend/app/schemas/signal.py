@@ -69,6 +69,7 @@ class AlternativeSignal(BaseModel):
 
 class SignalOut(BaseModel):
     id: int
+    decision_id: Optional[int] = None
     fixture_id: int
     market: str
     bayesian: Optional[BayesianOut] = None

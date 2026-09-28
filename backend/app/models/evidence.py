@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -196,5 +197,165 @@ class FeatureSnapshot(Base):
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     evidence_class: Mapped[str] = mapped_column(
         String(40), nullable=False, server_default="prospective"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class EvidenceExclusion(Base):
+    """Append-only audit finding that excludes immutable evidence from promotion."""
+
+    __tablename__ = "evidence_exclusions"
+    __table_args__ = (
+        UniqueConstraint(
+            "evidence_type", "evidence_id", "reason_code",
+            name="uq_evidence_exclusion_reason",
+        ),
+        Index("ix_evidence_exclusions_target", "evidence_type", "evidence_id"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    evidence_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    evidence_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(80), nullable=False)
+    details_json: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'{}'")
+    )
+    audit_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class StrategyVersion(Base):
+    """Immutable strategy/configuration identity used by signal decisions."""
+
+    __tablename__ = "strategy_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "name", "version", "config_sha256", name="uq_strategy_version_identity"
+        ),
+        Index("ix_strategy_versions_status", "status"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    version: Mapped[str] = mapped_column(String(80), nullable=False)
+    source_revision: Mapped[str] = mapped_column(String(120), nullable=False)
+    config_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default="research"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ExperimentRegistration(Base):
+    """Frozen, prespecified market experiment and its reviewed metric report."""
+
+    __tablename__ = "experiment_registrations"
+    __table_args__ = (
+        UniqueConstraint(
+            "strategy_version_id", "market_definition_id", "version",
+            name="uq_experiment_registration_version",
+        ),
+        Index("ix_experiment_registration_status", "status"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    strategy_version_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("strategy_versions.id"), nullable=False
+    )
+    market_definition_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("market_definitions.id"), nullable=False
+    )
+    version: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default="draft"
+    )
+    min_distinct_fixtures: Mapped[int] = mapped_column(Integer, nullable=False)
+    min_settled_predictions: Mapped[int] = mapped_column(Integer, nullable=False)
+    min_calendar_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_ece: Mapped[float] = mapped_column(Float, nullable=False)
+    max_brier_score: Mapped[float] = mapped_column(Float, nullable=False)
+    max_drawdown_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    min_roi_lower_bound: Mapped[float] = mapped_column(Float, nullable=False)
+    max_concentration_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    resampling_seed: Mapped[int] = mapped_column(Integer, nullable=False)
+    resampling_repetitions: Mapped[int] = mapped_column(Integer, nullable=False)
+    costs_json: Mapped[str] = mapped_column(Text, nullable=False)
+    risk_limits_json: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    registered_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ExperimentEvaluation(Base):
+    """Immutable out-of-sample metric report for a frozen registration."""
+
+    __tablename__ = "experiment_evaluations"
+    __table_args__ = (
+        Index("ix_experiment_evaluations_registration", "registration_id", "evaluated_at"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    registration_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("experiment_registrations.id"), nullable=False
+    )
+    metrics_json: Mapped[str] = mapped_column(Text, nullable=False)
+    evaluation_started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    evaluation_ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    evidence_manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    evaluator_source_revision: Mapped[str] = mapped_column(String(120), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PromotionReview(Base):
+    """Immutable human approval/rejection of one exact evaluation report."""
+
+    __tablename__ = "promotion_reviews"
+    __table_args__ = (Index("ix_promotion_reviews_evaluation", "evaluation_id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    evaluation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("experiment_evaluations.id"), nullable=False
+    )
+    decision: Mapped[str] = mapped_column(String(20), nullable=False)
+    reviewer_identity: Mapped[str] = mapped_column(String(120), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SignalDecision(Base):
+    """Immutable lineage record for one generated signal decision."""
+
+    __tablename__ = "signal_decisions"
+    __table_args__ = (
+        Index("ix_signal_decisions_fixture_time", "fixture_id", "computed_at"),
+        Index("ix_signal_decisions_market_status", "market_key", "eligibility_status"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fixture_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("fixtures.id"), nullable=False
+    )
+    feature_snapshot_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("feature_snapshots.id"), nullable=False
+    )
+    model_version_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("model_versions.id"), nullable=False
+    )
+    strategy_version_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("strategy_versions.id"), nullable=False
+    )
+    market_definition_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("market_definitions.id"), nullable=False
+    )
+    executable_quote_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("odds_quotes.id"), nullable=True
+    )
+    market_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    eligibility_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    eligibility_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    lineage_complete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="0"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

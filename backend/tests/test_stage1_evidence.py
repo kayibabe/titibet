@@ -112,9 +112,51 @@ async def test_stage1_disk_rehearsal_runs_fresh_and_repeat_migrations(tmp_path):
                 )
             ).all()
         }
-        assert {"fixture_revisions", "model_versions", "feature_snapshots"} <= tables
+        assert {
+            "fixture_revisions", "model_versions", "feature_snapshots",
+            "evidence_exclusions", "strategy_versions",
+            "experiment_registrations", "experiment_evaluations",
+            "promotion_reviews", "signal_decisions",
+        } <= tables
         assert "trg_feature_snapshots_immutable_update" in triggers
+        assert "trg_signal_decisions_immutable_update" in triggers
+        assert "trg_promotion_reviews_immutable_delete" in triggers
+        assert "trg_paper_observations_guard_update" in triggers
+        assert "trg_signals_require_decision_insert" in triggers
         assert (await connection.exec_driver_sql("PRAGMA foreign_keys")).scalar() == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_paper_observation_keeps_capture_evidence_immutable():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    await run_migrations(engine)
+    async with engine.begin() as connection:
+        await connection.execute(text("""
+            INSERT INTO paper_observations (
+                decision_id, fixture_id, market_type, kickoff_at, observed_at,
+                odds, model_probability, quote_id, feature_snapshot_id,
+                model_version_id, strategy_version_id, evidence_class,
+                result_status, profit_loss
+            ) VALUES (1, 1, 'Under 3.5', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                      1.50, 0.70, 1, 1, 1, 1, 'prospective', 'Pending', 0.0)
+        """))
+        with pytest.raises(Exception, match="immutable paper observation"):
+            await connection.execute(
+                text("UPDATE paper_observations SET odds = 9.99 WHERE id = 1")
+            )
+        await connection.execute(text("""
+            UPDATE paper_observations
+            SET result_status = 'Won', profit_loss = 0.50,
+                settled_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+        """))
+        with pytest.raises(Exception, match="immutable paper observation"):
+            await connection.execute(
+                text("UPDATE paper_observations SET profit_loss = 0 WHERE id = 1")
+            )
     await engine.dispose()
 
 

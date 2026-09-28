@@ -83,6 +83,11 @@ class Signal(Base):
     # >14 means the rating differential may not reflect current form.
     glicko_rating_age_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # Mutable serving projection -> immutable decision lineage.
+    decision_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("signal_decisions.id"), nullable=True, index=True
+    )
+
     # Candidate signals are stored for backtesting but excluded from the live feed.
     # True for Over 1.5 / Over 2.5 Bayesian-only signals awaiting performance validation.
     is_candidate: Mapped[bool] = mapped_column(Boolean, default=False)

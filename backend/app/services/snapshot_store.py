@@ -27,6 +27,7 @@ async def get_or_create_model_version(
     *,
     name: str,
     version: str,
+    source_revision: str,
     config: dict[str, Any],
     evidence_class: str,
 ) -> ModelVersion:
@@ -43,7 +44,7 @@ async def get_or_create_model_version(
     model = ModelVersion(
         name=name,
         version=version,
-        source_revision="working-tree",
+        source_revision=source_revision or "unversioned",
         config_sha256=config_hash,
         parameters_json=json.dumps(
             config, sort_keys=True, separators=(",", ":"), default=str
