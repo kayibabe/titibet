@@ -913,18 +913,27 @@ const params = {
         )}
 
         {error && signals.length === 0 && (
-          <div className="rounded-lg border border-red-500/25 bg-red-500/8 px-6 py-8 text-center">
-            <p className="text-sm text-red-400 font-semibold mb-2">Failed to load signals</p>
-            <p className="text-xs text-slate-400 mb-4">{typeof error === 'string' ? error : 'Something went wrong. Please try again.'}</p>
+          <div className={`rounded-lg border px-6 py-8 text-center ${error.code === 'RESEARCH_ONLY' ? 'border-amber-500/30 bg-amber-500/8' : 'border-red-500/25 bg-red-500/8'}`}>
+            <p className={`text-sm font-semibold mb-2 ${error.code === 'RESEARCH_ONLY' ? 'text-amber-400' : 'text-red-400'}`}>
+              {error.code === 'RESEARCH_ONLY' ? 'Signals are research-only' : 'Failed to load signals'}
+            </p>
+            <p className="text-xs text-slate-400 mb-3">
+              {error.code === 'RESEARCH_ONLY'
+                ? 'The publication gate is closed, so no picks are exposed as actionable signals.'
+                : (typeof error === 'string' ? error : 'Something went wrong. Please try again.')}
+            </p>
+            {error.reasons?.length > 0 && (
+              <p className="text-[11px] text-amber-300/80 mb-4">Reason: {error.reasons.join(' · ')}</p>
+            )}
             <button onClick={() => window.location.reload()} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition-colors">
-              Retry
+              {error.code === 'RESEARCH_ONLY' ? 'Check again' : 'Retry'}
             </button>
           </div>
         )}
 
         {error && signals.length > 0 && (
           <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-            {error}
+            {error.message || String(error)}
           </div>
         )}
 

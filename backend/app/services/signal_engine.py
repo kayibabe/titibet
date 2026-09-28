@@ -51,6 +51,17 @@ from app.core.config import (
     BOS_SI_THRESHOLD, BOS_O00_MAX, BOS_CMA_MAX,
 )
 from app.services.snapshot_store import get_or_create_model_version, save_feature_snapshot
+from app.services.evidence_lineage import (
+    SnapshotAssessment,
+    assess_snapshot,
+    create_signal_decision,
+    get_or_create_market_definition,
+    get_or_create_strategy_version,
+    record_snapshot_exclusions,
+    utc as evidence_utc,
+)
+from app.services.strategy_registry import active_strategy_version, strategy_configuration
+from app.services.clv import _BET_TO_SELECTION, _MARKET_TYPE_SCOPE
 
 settings = get_settings()
 
@@ -543,11 +554,12 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         from app.services.advisor_service import invalidate_advisory_cache
         await invalidate_advisory_cache(db, run_date)
 
-    snapshot_evidence_class = "research_reconstruction" if run_date < datetime.now(timezone.utc).date() else "prospective"
+    source_revision = settings.source_revision or "unversioned"
     model_version = await get_or_create_model_version(
         db,
         name="titibet-dual-engine",
-        version="working-tree",
+        version=source_revision,
+        source_revision=source_revision,
         config={
             "market_min_odds": dict(MARKET_MIN_ODDS),
             "market_max_odds": dict(MARKET_MAX_ODDS),
@@ -556,6 +568,13 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             "disabled_leagues": sorted(DISABLED_LEAGUES),
         },
         evidence_class="model_artifact",
+    )
+    strategy_version = await get_or_create_strategy_version(
+        db,
+        name="titibet-serving-policy",
+        version=active_strategy_version(settings),
+        source_revision=source_revision,
+        config=strategy_configuration(settings),
     )
 
     # Pre-load ALL market snapshots for all fixtures in ONE query.
@@ -605,10 +624,14 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
         if not snapshots_raw:
             continue
         snapshots = _latest_snapshots(snapshots_raw)
-        quote_by_key = {
-            (quote.bookmaker, quote.market_key, quote.selection_name): quote
-            for quote in _quotes_by_fixture.get(fixture.id, [])
-        }
+        snapshot_as_of = datetime.now(timezone.utc)
+        quote_by_key: dict[tuple[str, str, str], OddsQuote] = {}
+        for quote in sorted(
+            _quotes_by_fixture.get(fixture.id, []),
+            key=lambda item: (evidence_utc(item.received_at), item.id),
+        ):
+            if evidence_utc(quote.received_at) <= snapshot_as_of:
+                quote_by_key[(quote.bookmaker, quote.market_key, quote.selection_name)] = quote
 
         cs_by_bookie = _build_cs_by_bookie(snapshots)
         goals_ou = _build_goals_ou(snapshots)
@@ -652,22 +675,35 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             before_date=fixture.event_date or run_date,
         )
 
-        # Persist the exact inputs used by the model.  Missing fixture lineage
-        # is retained as a compatibility limitation; no revision is invented.
+        # Persist the exact inputs used by the model. A signal without immutable
+        # fixture lineage is not written; no compatibility revision is invented.
         fixture_revision = await db.scalar(
             select(FixtureRevision)
             .where(FixtureRevision.fixture_id == fixture.id)
             .order_by(FixtureRevision.received_at.desc(), FixtureRevision.id.desc())
             .limit(1)
         )
-        if fixture_revision is not None:
-            snapshot_as_of = datetime.now(timezone.utc)
-            await save_feature_snapshot(
-                db,
-                fixture_revision=fixture_revision,
-                model_version=model_version,
-                as_of=snapshot_as_of,
-                features={
+        if fixture_revision is None:
+            logger.warning(
+                "Skipping fixture %s: no immutable fixture revision for signal lineage",
+                fixture.id,
+            )
+            continue
+        required_quotes = [
+            quote_by_key.get((snap.bookmaker, snap.market_type, snap.selection_name))
+            for snap in snapshots
+        ]
+        snapshot_assessment = assess_snapshot(
+            fixture_revision=fixture_revision,
+            as_of=snapshot_as_of,
+            required_quotes=required_quotes,
+        )
+        feature_snapshot = await save_feature_snapshot(
+            db,
+            fixture_revision=fixture_revision,
+            model_version=model_version,
+            as_of=snapshot_as_of,
+            features={
                     "home_team": fixture.home_team,
                     "away_team": fixture.away_team,
                     "league": fixture.league,
@@ -699,8 +735,8 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                         }
                         for snap in snapshots
                     ],
-                },
-                input_refs={
+            },
+            input_refs={
                     "fixture_revision_id": fixture_revision.id,
                     "market_snapshot_ids": [snap.id for snap in snapshots],
                     "odds_quote_ids": [
@@ -708,10 +744,39 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                         for snap in snapshots
                         if (snap.bookmaker, snap.market_type, snap.selection_name) in quote_by_key
                     ],
-                },
-                transform_version="signal-inputs-v1",
-                evidence_class=snapshot_evidence_class,
-            )
+            },
+            transform_version="signal-inputs-v1",
+            evidence_class=snapshot_assessment.evidence_class,
+        )
+        await record_snapshot_exclusions(
+            db,
+            snapshot=feature_snapshot,
+            assessment=snapshot_assessment,
+            detected_at=snapshot_as_of,
+        )
+
+        def _exact_executable_quote(signal: Signal) -> OddsQuote | None:
+            if not signal.bayesian_bookmaker or signal.bayesian_best_odd is None:
+                return None
+            selection = _BET_TO_SELECTION.get(signal.market, signal.market)
+            scopes = _MARKET_TYPE_SCOPE.get(signal.market, (signal.market,))
+            candidates = [
+                quote
+                for (bookmaker, market_type, selection_name), quote in quote_by_key.items()
+                if bookmaker == signal.bayesian_bookmaker
+                and market_type in scopes
+                and selection_name == selection
+                and abs(quote.odds - signal.bayesian_best_odd) <= 1e-9
+            ]
+            return max(candidates, key=lambda quote: (evidence_utc(quote.received_at), quote.id), default=None)
+
+        def _attach_lineage(signal: Signal) -> Signal:
+            signal._lineage_snapshot = feature_snapshot
+            signal._lineage_assessment = snapshot_assessment
+            signal._lineage_quote = _exact_executable_quote(signal)
+            signal._lineage_strategy = strategy_version
+            signal._lineage_model = model_version
+            return signal
 
         poi_result = poi_engine.analyse_fixture(
             fixture_id=fixture.id,
@@ -1098,7 +1163,6 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
             odds_drift: float | None = None
             if b and b.best_bookmaker and b.best_bookmaker != "N/A" and b.best_actual_odd:
                 # Map Bayesian market name → selection_name used in snapshots
-                from app.services.clv import _BET_TO_SELECTION, _MARKET_TYPE_SCOPE
                 sel_name = _BET_TO_SELECTION.get(market, market)
                 market_scope = _MARKET_TYPE_SCOPE.get(market, frozenset({market}))
                 opening_candidates = [
@@ -1239,7 +1303,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 glicko_rating_age_days=_glicko_age,
                 is_candidate=is_candidate,
             )
-            pending_signals.append(sig)
+            pending_signals.append(_attach_lineage(sig))
             count += 1
 
         # ── Shared lambda values used by flip signals ────────────────────────────
@@ -1348,7 +1412,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 _sig = _flip_signal("Home Win to Nil", "hwtn_flip", _hwtn_prob, _hwtn_odd,
                                     _b_hwtn, _fl_lambda_h, _fl_lambda_a, _hwtn_strong)
                 if _sig:
-                    pending_signals.append(_sig)
+                    pending_signals.append(_attach_lineage(_sig))
                     count += 1
 
         # ── Away Win to Nil flip — weak home scorer + scoring away ───────────────
@@ -1372,7 +1436,7 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
                 _sig = _flip_signal("Away Win to Nil", "awtn_flip", _awtn_prob, _awtn_odd,
                                     _b_awtn, _fl_lambda_h, _fl_lambda_a, _awtn_strong)
                 if _sig:
-                    pending_signals.append(_sig)
+                    pending_signals.append(_attach_lineage(_sig))
                     count += 1
 
     # ── Portfolio stake normalization ─────────────────────────────────────────
@@ -1391,8 +1455,24 @@ async def compute_signals_for_date(db: AsyncSession, run_date: date) -> int:
     # commits, letting other requests (bets, health checks) slip through.
     _WRITE_BATCH = 50
     for i in range(0, len(pending_signals), _WRITE_BATCH):
-        for sig in pending_signals[i : i + _WRITE_BATCH]:
+        batch = pending_signals[i : i + _WRITE_BATCH]
+        for sig in batch:
+            market_definition = await get_or_create_market_definition(db, sig.market)
+            decision = await create_signal_decision(
+                db,
+                fixture_id=sig.fixture_id,
+                market_key=sig.market,
+                computed_at=sig.computed_at or datetime.now(timezone.utc),
+                snapshot=sig._lineage_snapshot,
+                model_version=sig._lineage_model,
+                strategy_version=sig._lineage_strategy,
+                market_definition=market_definition,
+                executable_quote=sig._lineage_quote,
+                assessment=sig._lineage_assessment,
+            )
+            sig.decision_id = decision.id
             db.add(sig)
+        await db.flush()
         await db.commit()
         await asyncio.sleep(0)   # yield between batches
 

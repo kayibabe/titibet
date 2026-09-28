@@ -12,7 +12,19 @@ from sqlalchemy.engine import make_url
 from app.core.auth import get_current_user, require_admin
 from app.core.config import resolve_database_url
 from app.core.database import get_db
-from app.models import Fixture, MarketSnapshot, Signal, TrackedBet
+from app.models import (
+    FeatureSnapshot,
+    Fixture,
+    FixtureRevision,
+    MarketDefinition,
+    MarketSnapshot,
+    ModelVersion,
+    OddsQuote,
+    Signal,
+    SignalDecision,
+    StrategyVersion,
+    TrackedBet,
+)
 from app.models.learning_proposal import LearningProposal
 from app.services.tracking_evidence import classify_entry, tracking_rejection
 from app.services.learning_suggestions import save_suggestion
@@ -81,7 +93,69 @@ async def seed_signal(db):
     quote = MarketSnapshot(fixture_id=fx.id, bookmaker='Test Book',
                            market_type='Goals Over/Under', selection_name='Under 3.5',
                            odds=1.33, pulled_at=now - timedelta(minutes=3))
-    db.add_all([fx, sig, quote])
+    db.add(fx)
+    await db.flush()
+    revision = FixtureRevision(
+        fixture_id=fx.id,
+        kickoff_at=fx.kickoff_at,
+        status="NS",
+        received_at=now - timedelta(minutes=5),
+        evidence_class="provider",
+    )
+    model = ModelVersion(
+        name="test-model",
+        version="v1",
+        source_revision="0123456789abcdef0123456789abcdef01234567",
+        config_sha256="4" * 64,
+        parameters_json="{}",
+    )
+    market = MarketDefinition(
+        canonical_key=sig.market,
+        version="canonical-v1",
+        settlement_rules="{}",
+    )
+    odds_quote = OddsQuote(
+        fixture_id=fx.id,
+        market_key=quote.market_type,
+        bookmaker=quote.bookmaker,
+        selection_name=quote.selection_name,
+        odds=quote.odds,
+        pulled_at=quote.pulled_at,
+        received_at=quote.pulled_at,
+    )
+    db.add_all([revision, model, market, odds_quote])
+    await db.flush()
+    snapshot = FeatureSnapshot(
+        fixture_id=fx.id,
+        fixture_revision_id=revision.id,
+        model_version_id=model.id,
+        as_of=now - timedelta(minutes=2),
+        features_json="{}",
+        input_refs_json=f'{{"odds_quote_ids":[{odds_quote.id}]}}',
+        transform_version="test-v1",
+        content_sha256="5" * 64,
+        evidence_class="prospective",
+    )
+    db.add(snapshot)
+    await db.flush()
+    strategy = await db.scalar(select(StrategyVersion))
+    decision = SignalDecision(
+        fixture_id=fx.id,
+        feature_snapshot_id=snapshot.id,
+        model_version_id=model.id,
+        strategy_version_id=strategy.id,
+        market_definition_id=market.id,
+        executable_quote_id=odds_quote.id,
+        market_key=sig.market,
+        computed_at=sig.computed_at,
+        eligibility_status="eligible_for_review",
+        content_sha256="6" * 64,
+        lineage_complete=True,
+    )
+    db.add(decision)
+    await db.flush()
+    sig.decision_id = decision.id
+    db.add_all([sig, quote])
     await db.commit()
     return now, fx, sig, quote
 
@@ -315,3 +389,21 @@ async def test_admin_can_reach_cancel_without_running_a_job():
         response = await client.post('/api/backtest/cancel')
         assert response.status_code == 200
         assert response.json()['status'] == 'not_running'
+
+
+async def test_debug_engine_requires_admin_before_exposing_model_inputs():
+    from app.routers import signals
+
+    app = FastAPI()
+    app.include_router(signals.router)
+
+    async def dummy_db():
+        yield None
+
+    app.dependency_overrides[get_db] = dummy_db
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get("/api/signals/debug-engine")).status_code == 401
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            is_active=True, is_admin=False
+        )
+        assert (await client.get("/api/signals/debug-engine")).status_code == 403

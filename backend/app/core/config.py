@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     db_url: str = "sqlite+aiosqlite:///./titibet.db"
     # Stage 0 operational freshness limit, not a validated betting threshold.
     tracking_quote_max_age_minutes: int = 120
+    # Publication is fail-closed. Both fields must be explicitly configured,
+    # and the version must have a passing registered experiment review.
+    publication_enabled: bool = False
+    # Version used for prospective paper decisions while publication is disabled.
+    research_strategy_version: str = ""
+    promoted_strategy_version: str = ""
+    # Exact deployed Git/artifact revision. "working-tree" is never promotion-safe.
+    source_revision: str = ""
     backend_port: int = 8010
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
@@ -445,6 +453,14 @@ MAX_SIGNALS_PER_MARKET: dict[str, int] = {
     "Home Over 0.5": 30,
     "Away Over 0.5": 25,
 }
+# Exposure guard: even a positive-hit-rate day can produce clustered losses.
+# This limits published selections; it does not claim to create loss-free days.
+MAX_PUBLISHED_SIGNALS_PER_DAY: int = 8
+PROSPECTIVE_RESEARCH_MARKETS: tuple[str, ...] = (
+    "Under 3.5",
+    "Over 2.5",
+    "Home Over 0.5",
+)
 MARKET_MAX_ODDS: dict[str, float] = {
     "Home Over 1.5": 6.0,
     "Away Over 1.5": 6.0,

@@ -12,7 +12,16 @@ export async function fetchSignals({ date, confidence, agreement, market, min_qu
   if (sort_by) params.set('sort_by', sort_by)
   if (best_per_fixture === false) params.set('best_per_fixture', 'false')
   const res = await apiFetch(`${BASE}?${params}`)
-  if (!res.ok) throw new Error(`Signals fetch failed: ${res.status}`)
+  if (!res.ok) {
+    let detail = null
+    try { detail = await res.json() } catch { /* keep the status fallback */ }
+    const error = new Error(`Signals fetch failed: ${res.status}`)
+    error.status = res.status
+    error.detail = detail?.detail || null
+    error.code = detail?.detail?.code || null
+    error.reasons = detail?.detail?.reasons || []
+    throw error
+  }
   return res.json()
 }
 

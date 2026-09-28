@@ -272,6 +272,26 @@ export default function LossAnalysisDashboard() {
 
       {!loading && summary && (
         <>
+          {summary.performance && (
+            <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-4 space-y-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <h3 className="text-[10px] font-semibold uppercase tracking-widest text-amber-300">Settlement evidence</h3>
+                  <p className="text-xs text-[var(--text)] opacity-70 mt-1">
+                    {summary.performance.settled} settled · {summary.performance.wins}W / {summary.performance.losses}L · {summary.performance.loss_free_days} loss-free active days in the selected window
+                  </p>
+                </div>
+                <span className="text-sm font-bold text-amber-300">
+                  {summary.performance.hit_rate != null ? `${(summary.performance.hit_rate * 100).toFixed(1)}% hit rate` : 'No settled evidence'}
+                </span>
+              </div>
+              {summary.recommendations?.map((recommendation, i) => (
+                <p key={i} className="text-xs text-[var(--text)] opacity-80 flex gap-2">
+                  <Shield size={12} className="text-amber-300 mt-0.5 shrink-0" />{recommendation}
+                </p>
+              ))}
+            </div>
+          )}
           {/* KPI row */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[

@@ -60,7 +60,7 @@ export function useSignals() {
       _cache.fetchedAt = Date.now()
       _publish(data)
     } catch (e) {
-      if (seq === requestSeq.current) setError(e.message)
+      if (seq === requestSeq.current) setError(e)
     } finally {
       if (seq === requestSeq.current) setLoading(false)
     }

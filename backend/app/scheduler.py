@@ -35,6 +35,10 @@ from app.services import ingestion
 from app.services.signal_engine import compute_signals_for_date
 from app.services.auto_tracker import auto_track_date
 from app.services.shadow_tracker import shadow_track_date, settle_shadow_observations
+from app.services.paper_observations import (
+    collect_paper_observations_for_research_cohort,
+    settle_paper_observations,
+)
 from app.services.settlement import settle_bets_for_date, FINAL_STATUSES
 from app.services.loss_analysis_agent import run_loss_analysis_pipeline
 from app.services.strategy_pipeline import run_strategy_pipeline, check_suppression_reactivations
@@ -259,6 +263,42 @@ async def catchup_missed_tracking_dates(lookback_days: int = 14) -> int:
         return total_created
 
 
+async def settlement_only(run_date: date | None = None) -> None:
+    """Refresh fixture results and settle; never compute, publish, or auto-track."""
+    if run_date is None:
+        run_date = date.today()
+    async with AsyncSessionLocal() as db:
+        logger.info("Settlement-only: refreshing results for %s", run_date)
+        run = await ingestion.sync_date(db, run_date)
+        if run.status != "success":
+            try:
+                await push_ingestion_alert(
+                    db, run_date, run.status, getattr(run, "error_message", None)
+                )
+            except Exception:
+                logger.exception("Settlement-only ingestion alert failed")
+        settle_info = await settle_bets_for_date(db, None)
+        await settle_shadow_observations(db)
+        await settle_paper_observations(db)
+        n_settled = settle_info["settled"]
+        logger.info("Settlement-only: %d bet(s) settled", n_settled)
+        if n_settled <= 0:
+            return
+        try:
+            await run_loss_analysis_pipeline(db)
+        except Exception:
+            logger.exception("Settlement-only loss analysis failed")
+        try:
+            await run_strategy_pipeline(db)
+        except Exception:
+            logger.exception("Settlement-only strategy pipeline failed")
+        try:
+            await check_suppression_reactivations(db)
+            await run_league_watch_guard(db)
+        except Exception:
+            logger.exception("Settlement-only review suggestions failed")
+
+
 async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool = False, evening_extras: bool = False) -> None:
     if run_date is None:
         run_date = date.today()
@@ -288,6 +328,12 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                         logger.info("Shadow tracker: %d observation(s) for %s", n_shadow, run_date)
                 except Exception:
                     logger.exception("Shadow tracker failed for %s — continuing normally", run_date)
+                try:
+                    n_paper = await collect_paper_observations_for_research_cohort(db, run_date)
+                    if n_paper:
+                        logger.info("Paper collector: %d prospective observation(s) for %s", n_paper, run_date)
+                except Exception:
+                    logger.exception("Paper collector failed for %s — continuing normally", run_date)
                 # ACCA tracking runs in morning_extras (first daily sync) via auto_track_acca_legs.
                 # The signal-model fallback (auto_track_acca_signals) runs at the END of
                 # morning_extras — after the advisor ACCA has had a chance to build tickets,
@@ -295,6 +341,7 @@ async def sync_and_compute(run_date: date | None = None, *, morning_extras: bool
                 # Settle every pending bet with a final fixture (any event_date), not only run_date.
                 n_settled = (await settle_bets_for_date(db, None))["settled"]
                 await settle_shadow_observations(db)
+                await settle_paper_observations(db)
                 logger.info(
                     "Scheduler: %s done — %d fixtures, %d signals, %d bets settled",
                     run_date, run.fixtures_pulled, count, n_settled,
@@ -688,13 +735,18 @@ def get_scheduler() -> AsyncIOScheduler:
         #   availability) + advisory + ACCA + "Tomorrow's Picks" Telegram digest.
         # 23:00 UTC — settlement-only: core ingest + settle + learning pipelines.
         for i, (hour, minute) in enumerate(settings.sync_times_list):
+            job = settlement_only if i == 2 else sync_and_compute
             _scheduler.add_job(
-                sync_and_compute,
+                job,
                 CronTrigger(hour=hour, minute=minute),
                 id=f"sync-{hour:02d}{minute:02d}",
                 replace_existing=True,
                 misfire_grace_time=300,
-                kwargs={"morning_extras": i == 0, "evening_extras": i == 1},
+                kwargs=(
+                    {}
+                    if i == 2
+                    else {"morning_extras": i == 0, "evening_extras": i == 1}
+                ),
             )
         # Pre-kickoff alert — runs every 60 min, 04:00–22:00 UTC (06:00–00:00 CAT).
         # Sends a compact Telegram message for High+Both signals kicking off

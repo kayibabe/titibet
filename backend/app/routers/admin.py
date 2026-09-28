@@ -1,5 +1,6 @@
 ﻿from datetime import datetime, timezone
 from typing import Optional
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -10,6 +11,7 @@ from app.core.auth import get_current_user, require_admin as _require_admin
 from app.core.database import get_db
 from app.models.user import User
 from app.models.learning_proposal import LearningProposal
+from app.models import ExperimentRegistration, MarketDefinition, StrategyVersion
 import httpx
 
 from app.core.config import (
@@ -30,6 +32,8 @@ from app.services.tracking_evidence import tracking_rejection
 from app.services.settlement import refresh_stale_fixtures_and_settle
 from app.services.loss_analysis_agent import run_loss_analysis_pipeline
 from app.services.strategy_pipeline import run_strategy_pipeline
+from app.services.promotion_readiness import publication_readiness
+from app.services.promotion_workflow import approve_evaluation, evaluate_registered_experiment
 from app.services.league_watch_guard import get_watchlist_status, run_league_watch_guard
 from app.services.telegram import (
     _send_to as telegram_send_to,
@@ -70,6 +74,36 @@ class AdminStats(BaseModel):
     pro_users: int
 
 
+class PromotionReviewRequest(BaseModel):
+    decision: str = "approved"
+    rationale: str
+
+
+class PromotionEvaluationOut(BaseModel):
+    id: int
+    registration_id: int
+    metrics: dict
+    evidence_manifest_sha256: str
+    evaluator_source_revision: str
+    content_sha256: str
+    evaluated_at: datetime
+
+
+class PromotionReadinessOut(BaseModel):
+    ready: bool
+    reasons: list[str]
+    registration_id: Optional[int] = None
+
+
+class PromotionRegistrationOut(BaseModel):
+    id: int
+    market_key: str
+    strategy_version: str
+    source_revision: str
+    version: str
+    status: str
+
+
 @router.get("/stats", response_model=AdminStats)
 async def admin_stats(
     db: AsyncSession = Depends(get_db),
@@ -82,6 +116,88 @@ async def admin_stats(
         active_subscriptions=sum(1 for u in users if u.subscription_status == "active"),
         free_users=sum(1 for u in users if u.tier == "free"),
         pro_users=sum(1 for u in users if u.tier == "pro"),
+    )
+
+
+@router.get("/promotion/readiness", response_model=PromotionReadinessOut)
+async def promotion_readiness_status(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    result = await publication_readiness(db)
+    return PromotionReadinessOut(
+        ready=result.ready,
+        reasons=list(result.reasons),
+        registration_id=result.registration_id,
+    )
+
+
+@router.get("/promotion/registrations", response_model=list[PromotionRegistrationOut])
+async def promotion_registrations(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    rows = await db.execute(
+        select(ExperimentRegistration, MarketDefinition, StrategyVersion)
+        .join(MarketDefinition, ExperimentRegistration.market_definition_id == MarketDefinition.id)
+        .join(StrategyVersion, ExperimentRegistration.strategy_version_id == StrategyVersion.id)
+        .order_by(ExperimentRegistration.registered_at.desc(), ExperimentRegistration.id.desc())
+    )
+    return [
+        PromotionRegistrationOut(
+            id=registration.id,
+            market_key=market.canonical_key,
+            strategy_version=strategy.version,
+            source_revision=strategy.source_revision,
+            version=registration.version,
+            status=registration.status,
+        )
+        for registration, market, strategy in rows.all()
+    ]
+
+
+@router.post("/promotion/registrations/{registration_id}/evaluate", response_model=PromotionEvaluationOut)
+async def evaluate_promotion_registration(
+    registration_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    try:
+        evaluation = await evaluate_registered_experiment(db, registration_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PromotionEvaluationOut(
+        id=evaluation.id,
+        registration_id=evaluation.registration_id,
+        metrics=json.loads(evaluation.metrics_json),
+        evidence_manifest_sha256=evaluation.evidence_manifest_sha256,
+        evaluator_source_revision=evaluation.evaluator_source_revision,
+        content_sha256=evaluation.content_sha256,
+        evaluated_at=evaluation.evaluated_at,
+    )
+
+
+@router.post("/promotion/evaluations/{evaluation_id}/review", response_model=PromotionReadinessOut)
+async def review_promotion_evaluation(
+    evaluation_id: int,
+    body: PromotionReviewRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(_require_admin),
+):
+    try:
+        _review, readiness = await approve_evaluation(
+            db,
+            evaluation_id,
+            reviewer_identity=admin.email,
+            rationale=body.rationale,
+            decision=body.decision,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PromotionReadinessOut(
+        ready=readiness.ready,
+        reasons=list(readiness.reasons),
+        registration_id=readiness.registration_id,
     )
 
 
@@ -1707,10 +1823,13 @@ async def shadow_candidates(
             s["sum_odds"] += sig.bayesian_best_odd
             s["odds_count"] += 1
 
+    from app.services.promotion_readiness import registered_market_readiness
+
     summaries = []
     for mkt, s in sorted(by_market.items()):
         settled = s["settled"]
         wins = s["wins"]
+        readiness = await registered_market_readiness(db, mkt)
         summaries.append({
             "market":             mkt,
             "n_total":            s["n"],
@@ -1719,7 +1838,9 @@ async def shadow_candidates(
             "win_rate_pct":       round(100 * wins / settled, 1) if settled else None,
             "avg_odds":           round(s["sum_odds"] / s["odds_count"], 3) if s["odds_count"] else None,
             "pending_to_promote": max(0, PROMOTION_THRESHOLD - settled),
-            "promotion_ready":    settled >= PROMOTION_THRESHOLD,
+            "promotion_ready":    readiness.ready,
+            "readiness_reasons":  list(readiness.reasons),
+            "registration_id":    readiness.registration_id,
         })
 
     return {

@@ -12,11 +12,13 @@ from datetime import date
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.promotion_readiness import published_signal_scope
+
 from app.models import Signal, Fixture
 from app.core.config import (
     DISABLED_MARKETS, DISABLED_LEAGUES,
     OVER_GOALS_SUPPRESSED_LEAGUES, AWAY_GOALS_SUPPRESSED_LEAGUES, OVER25_SUPPRESSED_TIERS,
-    DUAL_HIGH_ODDS_CEILING, WOMEN_LEAGUE_KEYWORDS, WOMEN_OVER_SUPPRESSED_MARKETS,
+    DUAL_HIGH_ODDS_CEILING, WOMEN_OVER_SUPPRESSED_MARKETS,
     HO05_DATA_POOR_COUNTRIES, ACCA_OVER25_UNKNOWN_TIER_CEILING,
     COPA_HO05_SUPPRESSED_LEAGUES,
     is_womens_fixture,
@@ -181,7 +183,7 @@ async def build_acca_candidates(
     gates.  Single-engine legs are still excluded.  Optionally exclude
     specific fixture IDs so subsequent calls produce non-overlapping leg sets.
     """
-    query = (
+    query = published_signal_scope(
         select(Signal, Fixture)
         .join(Fixture, Signal.fixture_id == Fixture.id)
         .where(Fixture.event_date == target_date)

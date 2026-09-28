@@ -13,11 +13,16 @@ from app.core.database import get_db
 from app.models.bet import TrackedBet
 from app.models.user import User
 from app.services.acca_builder import build_acca_candidates, build_accumulator
+from app.services.promotion_readiness import require_publication_ready
 
 router = APIRouter(prefix="/api/accumulators", tags=["accumulators"])
 
 ACCUMULATOR_TIERS = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
 _FREE_LEG_LIMIT = 2
+
+
+async def _publication_gate(db: AsyncSession = Depends(get_db)) -> None:
+    await require_publication_ready(db)
 
 
 def _gate_legs(legs: list[dict], is_pro: bool) -> list[dict]:
@@ -65,7 +70,7 @@ async def _load_tracked_acca(db: AsyncSession, target_date: date) -> dict | None
         return None
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(_publication_gate)])
 async def get_accumulators(
     date_str: Optional[str] = Query(None, alias="date"),
     target_odds: Optional[float] = Query(None, description="Single tier. If omitted, returns all 6 tiers."),

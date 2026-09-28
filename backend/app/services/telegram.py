@@ -42,12 +42,29 @@ from app.core.config import (
 from app.models import Signal, Fixture
 from app.models.bet import TrackedBet
 from app.services.signal_engine import _get_underperforming_leagues, get_learned_market_ceilings
+from app.services.promotion_readiness import publication_readiness, published_signal_scope
 
 logger   = logging.getLogger("titibet.telegram")
 settings = get_settings()
 
 TELEGRAM_API = "https://api.telegram.org"
 _MAX_CHARS   = 4000   # Telegram limit is 4096; leave buffer for safety
+
+
+async def _publication_allowed(db: AsyncSession, push_type: str) -> bool:
+    readiness = await publication_readiness(db)
+    if readiness.ready:
+        return True
+    logger.warning(
+        "Telegram %s blocked by publication gate: %s",
+        push_type,
+        ",".join(readiness.reasons),
+    )
+    return False
+
+
+def _published_decisions(query):
+    return published_signal_scope(query, settings)
 
 
 # ── Ranking helpers (mirrors app.routers.signals to avoid circular import) ───
@@ -305,6 +322,8 @@ def build_kickoff_alert(signals: list[tuple[Signal, Fixture]]) -> str:
 
 
 async def push_kickoff_alerts(db: AsyncSession) -> int:
+    if not await _publication_allowed(db, "kickoff_alert"):
+        return 0
     """
     Send pre-kickoff alerts for High+Both signals whose fixture kicks off within
     the next 90 minutes and haven't been alerted yet this session.
@@ -322,7 +341,7 @@ async def push_kickoff_alerts(db: AsyncSession) -> int:
     window_end = now + timedelta(minutes=90)
 
     # Fetch High+Both signals with kickoffs in the 90-min window
-    query = (
+    query = _published_decisions(
         select(Signal, Fixture)
         .join(Fixture, Signal.fixture_id == Fixture.id)
         .where(Fixture.event_date == now.date())
@@ -383,7 +402,7 @@ async def _query_all_rows(db: AsyncSession, run_date: date) -> list[tuple[Signal
     bad_leagues    = await _get_underperforming_leagues(db, min_roi_pct=-20.0)
     all_suppressed = bad_leagues | DISABLED_LEAGUES
 
-    query = (
+    query = _published_decisions(
         select(Signal, Fixture)
         .join(Fixture, Signal.fixture_id == Fixture.id)
         .where(Fixture.event_date == run_date)
@@ -466,14 +485,20 @@ async def _query_tracked_singles(
     for r in tracked:
         fixture_market.setdefault(r.fixture_id, set()).add(r.market_type)
 
-    rows = list((await db.execute(
-        select(Signal, Fixture)
-        .join(Fixture, Signal.fixture_id == Fixture.id)
-        .where(
-            Signal.fixture_id.in_(list(fixture_market)),
-            Signal.is_candidate == False,  # noqa: E712
-        )
-    )).all())
+    rows = list(
+        (
+            await db.execute(
+                _published_decisions(
+                    select(Signal, Fixture)
+                    .join(Fixture, Signal.fixture_id == Fixture.id)
+                    .where(
+                        Signal.fixture_id.in_(list(fixture_market)),
+                        Signal.is_candidate == False,  # noqa: E712
+                    )
+                )
+            )
+        ).all()
+    )
 
     # Keep only (fixture_id, market) pairs that were actually tracked; deduplicate.
     result: dict[tuple[int, str], tuple[Signal, Fixture]] = {}
@@ -696,6 +721,8 @@ def build_signal_digest(
 
 
 async def push_signal_digest(db: AsyncSession, free_reveal_count: int = FREE_REVEAL_COUNT) -> int:
+    if not await _publication_allowed(db, "signal_digest"):
+        return 0
     """
     Broadcast the 'tonight + overnight' digest to all configured channels.
     Both channels get the full upcoming match list (chronological); Free
@@ -871,6 +898,8 @@ def build_tomorrow_message(
 
 
 async def push_tomorrow_digest(db: AsyncSession, run_date: date | None = None) -> int:
+    if not await _publication_allowed(db, "tomorrow_digest"):
+        return 0
     """
     Broadcast tomorrow's full single-match slate plus the AI Advisory's Acca-of-
     the-Day to TiTiBet Free and Pro. Called by the 19:00 UTC (21:00 CAT) evening
@@ -978,6 +1007,8 @@ async def push_value_band_alert(
     *,
     force: bool = False,
 ) -> int:
+    if not await _publication_allowed(db, "value_band"):
+        return 0
     """
     Send the Value Band alert to the Pro channel only.
 
@@ -1291,6 +1322,8 @@ async def push_results_report(
 
 
 async def push_morning_digest(db: AsyncSession, free_reveal_count: int = FREE_REVEAL_COUNT) -> int:
+    if not await _publication_allowed(db, "morning_digest"):
+        return 0
     """
     Broadcast today's signal list at 06:00 CAT (04:00 UTC).
 
