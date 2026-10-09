@@ -14,8 +14,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-import jwt
-from jwt import PyJWTError as JWTError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import get_settings
@@ -24,9 +22,7 @@ from app.core.migrations import run_migrations
 from app.routers import signals, tracker, analytics, backtest, advisor, arb as arb_router
 from app.routers import leaderboard as leaderboard_router
 from app.routers import loss_analysis as loss_analysis_router
-from app.routers import auth as auth_router
 from app.routers import admin as admin_router
-from app.routers import payments as payments_router
 from app.scheduler import get_scheduler
 import app.models.user  # noqa: F401 — ensures users table is created by init_db
 
@@ -57,15 +53,11 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             auth = request.headers.get("Authorization") or ""
             if auth.startswith("Bearer "):
                 token = auth.removeprefix("Bearer ").strip()
-                try:
-                    jwt.decode(
-                        token,
-                        settings.jwt_secret,
-                        algorithms=[settings.jwt_algorithm],
-                    )
+                # Production API-key/JWT enforcement is retained for non-local runs.
+                # Local access is explicitly enabled only in development/test.
+                from app.core.auth import jwt_is_valid
+                if jwt_is_valid(token):
                     return await call_next(request)
-                except JWTError:
-                    pass
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Invalid or missing API key"},
@@ -372,9 +364,13 @@ app.add_middleware(
 )
 app.add_middleware(APIKeyMiddleware)
 
-app.include_router(auth_router.router)
+if not settings.local_access_enabled:
+    from app.routers import auth as auth_router
+    from app.routers import payments as payments_router
+    app.include_router(auth_router.router)
 app.include_router(admin_router.router)
-app.include_router(payments_router.router)
+if not settings.local_access_enabled:
+    app.include_router(payments_router.router)
 app.include_router(signals.router)
 app.include_router(tracker.router)
 app.include_router(analytics.router)

@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     source_revision: str = ""
     backend_port: int = 8010
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Development-only access switch. This must never be enabled in production.
+    app_env: str = "development"
+    local_access_enabled: bool = False
 
     # Scheduler sync times (HH:MM UTC, comma-separated)
     # 04:00 UTC (06:00 CAT) — morning refresh: today ingestion + signals + settlement
@@ -121,12 +124,16 @@ class Settings(BaseSettings):
             "change-me-in-production-use-a-long-random-string",
             "",
         }
-        if self.jwt_secret in insecure_defaults:
+        if self.jwt_secret in insecure_defaults and not (
+            self.local_access_enabled and self.app_env.lower() in {"development", "test"}
+        ):
             raise ValueError(
                 "JWT_SECRET is not set or is the insecure default. "
                 "Set a strong random secret in backend/.env before starting the server. "
                 "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
             )
+        if self.local_access_enabled and self.app_env.lower() not in {"development", "test"}:
+            raise ValueError("LOCAL_ACCESS_ENABLED is allowed only when APP_ENV is development or test")
         self.db_url = resolve_database_url(self.db_url)
         if self.tracking_quote_max_age_minutes <= 0:
             raise ValueError("TRACKING_QUOTE_MAX_AGE_MINUTES must be positive")

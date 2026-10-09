@@ -8,7 +8,7 @@
 
 import { useAuth } from '../context/AuthContext'
 
-export const TIER_RANK = { free: 0, pro: 1 }
+export const TIER_RANK = { free: 0, pro: 1, elite: 2 }
 
 export default function useTier() {
   const { user } = useAuth()
@@ -19,7 +19,7 @@ export default function useTier() {
   // (free has no subscription_status but is always usable).
   const isActive = tier === 'free' || status === 'active'
 
-  const isPro = isActive && tier === 'pro'
+  const isPro = isActive && (tier === 'pro' || tier === 'elite')
 
   /**
    * Returns true when the current user meets or exceeds the required tier.
